@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use rusqlite::{Connection, params};
+use serde_json::Value;
 use thiserror::Error;
 
-use crate::types::{Drawer, SourceType};
+use crate::types::{Drawer, SourceType, TaxonomyEntry};
 
 const SCHEMA_SQL: &str = r#"
 PRAGMA foreign_keys = ON;
@@ -63,6 +64,8 @@ pub enum DbError {
     },
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+    #[error("failed to parse taxonomy keywords JSON")]
+    Json(#[from] serde_json::Error),
     #[error("failed to register sqlite-vec auto extension: {0}")]
     RegisterVec(String),
 }
@@ -124,6 +127,34 @@ impl Database {
 
         Ok(())
     }
+
+    pub fn taxonomy_entries(&self) -> Result<Vec<TaxonomyEntry>, DbError> {
+        let mut statement = self.conn.prepare(
+            "SELECT wing, room, display_name, keywords FROM taxonomy ORDER BY wing, room",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            let (wing, room, display_name, keywords_json) = row?;
+            let keywords = parse_keywords(keywords_json.as_deref())?;
+            entries.push(TaxonomyEntry {
+                wing,
+                room,
+                display_name,
+                keywords,
+            });
+        }
+
+        Ok(entries)
+    }
 }
 
 fn register_sqlite_vec() -> Result<(), DbError> {
@@ -150,4 +181,21 @@ fn source_type_as_str(source_type: &SourceType) -> &'static str {
         SourceType::Conversation => "conversation",
         SourceType::Manual => "manual",
     }
+}
+
+fn parse_keywords(raw: Option<&str>) -> Result<Vec<String>, DbError> {
+    let Some(raw) = raw else {
+        return Ok(Vec::new());
+    };
+
+    let value: Value = serde_json::from_str(raw)?;
+    let keywords = value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    Ok(keywords)
 }

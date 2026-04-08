@@ -26,6 +26,12 @@ fn test_search_result_has_citation() {
         room: None,
         source_file: Some("/a.rs".into()),
         similarity: 0.95,
+        route: RouteDecision {
+            wing: Some("w".into()),
+            room: None,
+            confidence: 1.0,
+            reason: "explicit filters provided: w".into(),
+        },
     };
 
     assert!(result.source_file.is_some());

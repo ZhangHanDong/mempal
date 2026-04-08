@@ -40,6 +40,14 @@ pub struct TaxonomyEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteDecision {
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub confidence: f32,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SearchResult {
     pub drawer_id: String,
     pub content: String,
@@ -47,4 +55,5 @@ pub struct SearchResult {
     pub room: Option<String>,
     pub source_file: Option<String>,
     pub similarity: f32,
+    pub route: RouteDecision,
 }

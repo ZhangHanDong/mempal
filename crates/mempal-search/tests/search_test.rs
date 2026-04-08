@@ -62,6 +62,16 @@ fn insert_drawer(
         .expect("vector insert should succeed");
 }
 
+fn insert_taxonomy(db: &Database, wing: &str, room: &str, keywords: &[&str]) {
+    let keywords = serde_json::to_string(keywords).expect("keywords JSON should serialize");
+    db.conn()
+        .execute(
+            "INSERT INTO taxonomy (wing, room, display_name, keywords) VALUES (?1, ?2, ?3, ?4)",
+            (wing, room, room, keywords.as_str()),
+        )
+        .expect("taxonomy insert should succeed");
+}
+
 #[tokio::test]
 async fn test_search_basic() {
     let dir = tempdir().expect("temp dir should be created");
@@ -194,6 +204,7 @@ async fn test_search_citation() {
 
     assert_eq!(results[0].source_file.as_deref(), Some("/path/to/file.py"));
     assert!(!results[0].drawer_id.is_empty());
+    assert!(results[0].route.reason.contains("global"));
 }
 
 #[tokio::test]
@@ -207,4 +218,39 @@ async fn test_search_empty_db() {
         .expect("empty search should succeed");
 
     assert!(results.is_empty());
+}
+
+#[tokio::test]
+async fn test_search_routes_from_taxonomy() {
+    let dir = tempdir().expect("temp dir should be created");
+    let db = Database::open(&dir.path().join("test.db")).expect("database should open");
+    let embedder = TestEmbedder;
+
+    insert_taxonomy(&db, "myapp", "auth", &["auth", "login", "clerk"]);
+    insert_drawer(
+        &db,
+        "d1",
+        "We switched to Clerk because login customization was easier.",
+        "myapp",
+        Some("auth"),
+        "/tmp/auth.md",
+    );
+    insert_drawer(
+        &db,
+        "d2",
+        "Deployment notes for fly.io.",
+        "myapp",
+        Some("deploy"),
+        "/tmp/deploy.md",
+    );
+
+    let results = search(&db, &embedder, "why did we switch to clerk", None, None, 10)
+        .await
+        .expect("search should succeed");
+
+    assert!(!results.is_empty());
+    assert!(results.iter().all(|result| result.room.as_deref() == Some("auth")));
+    assert_eq!(results[0].route.wing.as_deref(), Some("myapp"));
+    assert_eq!(results[0].route.room.as_deref(), Some("auth"));
+    assert!(results[0].route.confidence >= 0.5);
 }
