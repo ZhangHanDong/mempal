@@ -1,11 +1,20 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "rest")]
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use mempal_aaak::{AaakCodec, AaakMeta};
+#[cfg(feature = "rest")]
+use mempal_api::{
+    ApiState,
+    ConfiguredEmbedderFactory as ApiConfiguredEmbedderFactory,
+    DEFAULT_REST_ADDR,
+    serve as serve_rest_api,
+};
 use mempal_core::{
     config::Config,
     db::Database,
@@ -418,10 +427,75 @@ fn status_command(db: &Database) -> Result<()> {
 }
 
 async fn serve_command(config: &Config, _mcp: bool) -> Result<()> {
+    if _mcp {
+        return serve_mcp_command(config).await;
+    }
+
+    #[cfg(feature = "rest")]
+    {
+        return serve_mcp_and_rest_command(config).await;
+    }
+
+    #[cfg(not(feature = "rest"))]
+    {
+        serve_mcp_command(config).await
+    }
+}
+
+async fn serve_mcp_command(config: &Config) -> Result<()> {
     let server = MempalMcpServer::new(expand_home(&config.db_path), config.clone());
     let service = server.serve_stdio().await?;
     service.waiting().await?;
     Ok(())
+}
+
+#[cfg(feature = "rest")]
+async fn serve_mcp_and_rest_command(config: &Config) -> Result<()> {
+    let db_path = expand_home(&config.db_path);
+    let listener = tokio::net::TcpListener::bind(DEFAULT_REST_ADDR)
+        .await
+        .with_context(|| format!("failed to bind REST server to {DEFAULT_REST_ADDR}"))?;
+    let local_addr = listener
+        .local_addr()
+        .context("failed to resolve REST server address")?;
+    eprintln!("REST listening on http://{local_addr}");
+
+    let state = ApiState::new(
+        db_path.clone(),
+        Arc::new(ApiConfiguredEmbedderFactory::new(config.clone())),
+    );
+    let mut rest_task = tokio::spawn(async move {
+        serve_rest_api(listener, state)
+            .await
+            .context("REST server failed")
+    });
+
+    let server = MempalMcpServer::new(db_path, config.clone());
+    let service = server.serve_stdio().await?;
+    let mut mcp_task = Box::pin(async move {
+        service.waiting().await.context("MCP server failed")?;
+        Ok(())
+    });
+
+    tokio::select! {
+        mcp_result = &mut mcp_task => {
+            rest_task.abort();
+            match rest_task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => return Err(error),
+                Err(join_error) if join_error.is_cancelled() => {}
+                Err(join_error) => {
+                    return Err(anyhow::Error::new(join_error).context("failed to join REST task"));
+                }
+            }
+            mcp_result
+        }
+        rest_result = &mut rest_task => match rest_result {
+            Ok(Ok(())) => bail!("REST server exited unexpectedly"),
+            Ok(Err(error)) => Err(error),
+            Err(join_error) => Err(anyhow::Error::new(join_error).context("failed to join REST task")),
+        },
+    }
 }
 
 async fn build_embedder(config: &Config) -> Result<Box<dyn Embedder>> {

@@ -3,3 +3,25 @@ name = "mempal-api"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+
+[features]
+default = []
+rest = ["dep:axum", "dep:tower-http", "dep:tokio"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+axum = { workspace = true, optional = true }
+mempal-core = { path = "../mempal-core" }
+mempal-embed = { path = "../mempal-embed" }
+mempal-search = { path = "../mempal-search" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
+tower.workspace = true

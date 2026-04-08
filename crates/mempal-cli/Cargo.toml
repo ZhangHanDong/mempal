@@ -8,10 +8,15 @@ license.workspace = true
 name = "mempal"
 path = "src/main.rs"
 
+[features]
+default = []
+rest = ["dep:mempal-api", "mempal-api/rest"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
 mempal-aaak = { path = "../mempal-aaak" }
+mempal-api = { path = "../mempal-api", optional = true }
 mempal-core = { path = "../mempal-core" }
 mempal-embed = { path = "../mempal-embed" }
 mempal-ingest = { path = "../mempal-ingest" }
