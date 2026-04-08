@@ -62,16 +62,25 @@ pub enum DbError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to read database metadata for {path}")]
+    Metadata {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
     #[error("failed to parse taxonomy keywords JSON")]
     Json(#[from] serde_json::Error),
+    #[error("invalid source_type stored in database: {0}")]
+    InvalidSourceType(String),
     #[error("failed to register sqlite-vec auto extension: {0}")]
     RegisterVec(String),
 }
 
 pub struct Database {
     conn: Connection,
+    path: PathBuf,
 }
 
 impl Database {
@@ -91,11 +100,18 @@ impl Database {
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA_SQL)?;
 
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            path: path.to_path_buf(),
+        })
     }
 
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub fn insert_drawer(&self, drawer: &Drawer) -> Result<(), DbError> {
@@ -155,6 +171,78 @@ impl Database {
 
         Ok(entries)
     }
+
+    pub fn upsert_taxonomy_entry(&self, entry: &TaxonomyEntry) -> Result<(), DbError> {
+        let keywords = serde_json::to_string(&entry.keywords)?;
+        self.conn.execute(
+            r#"
+            INSERT INTO taxonomy (wing, room, display_name, keywords)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(wing, room) DO UPDATE SET
+                display_name = excluded.display_name,
+                keywords = excluded.keywords
+            "#,
+            (
+                entry.wing.as_str(),
+                entry.room.as_str(),
+                entry.display_name.as_deref(),
+                keywords.as_str(),
+            ),
+        )?;
+
+        Ok(())
+    }
+
+    pub fn recent_drawers(&self, limit: usize) -> Result<Vec<Drawer>, DbError> {
+        let limit = i64::try_from(limit)
+            .map_err(|_| rusqlite::Error::InvalidParameterName("limit".to_string()))?;
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, content, wing, room, source_file, source_type, added_at, chunk_index
+            FROM drawers
+            ORDER BY CAST(added_at AS INTEGER) DESC, id DESC
+            LIMIT ?1
+            "#,
+        )?;
+        let rows = statement.query_map([limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+            ))
+        })?;
+
+        let mut drawers = Vec::new();
+        for row in rows {
+            let (id, content, wing, room, source_file, source_type, added_at, chunk_index) = row?;
+            drawers.push(Drawer {
+                id,
+                content,
+                wing,
+                room,
+                source_file,
+                source_type: source_type_from_str(&source_type)?,
+                added_at,
+                chunk_index,
+            });
+        }
+
+        Ok(drawers)
+    }
+
+    pub fn database_size_bytes(&self) -> Result<u64, DbError> {
+        fs::metadata(&self.path)
+            .map(|metadata| metadata.len())
+            .map_err(|source| DbError::Metadata {
+                path: self.path.clone(),
+                source,
+            })
+    }
 }
 
 fn register_sqlite_vec() -> Result<(), DbError> {
@@ -180,6 +268,15 @@ fn source_type_as_str(source_type: &SourceType) -> &'static str {
         SourceType::Project => "project",
         SourceType::Conversation => "conversation",
         SourceType::Manual => "manual",
+    }
+}
+
+fn source_type_from_str(source_type: &str) -> Result<SourceType, DbError> {
+    match source_type {
+        "project" => Ok(SourceType::Project),
+        "conversation" => Ok(SourceType::Conversation),
+        "manual" => Ok(SourceType::Manual),
+        other => Err(DbError::InvalidSourceType(other.to_string())),
     }
 }
 
