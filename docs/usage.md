@@ -1,10 +1,27 @@
 # mempal Usage Guide
 
-This guide focuses on the behavior that exists in the repository today: local CLI workflows, MCP usage, AAAK output, and the optional REST API.
+This guide is for the repository as it exists today: local CLI workflows, MCP usage, AAAK output, the optional REST server, and the native LongMemEval harness.
+
+`mempal` is a local memory system for coding agents. It stores raw text in SQLite, builds embeddings for retrieval, and always returns citations such as `drawer_id` and `source_file`.
+
+## Mental Model
+
+Before using the CLI, keep four nouns straight:
+
+- `wing`: the top-level scope, usually one project or knowledge domain
+- `room`: a sub-scope inside a wing, usually inferred from directory names or edited by taxonomy
+- `drawer`: one stored memory item or chunk
+- `source_file`: where the drawer came from; for directory ingest, stored relative to the ingest root
+
+`mempal` is raw-first:
+
+- original text lives in the `drawers` table
+- vectors live in `drawer_vectors`
+- AAAK is output-only and does not replace stored raw text
 
 ## Install
 
-Local CLI install:
+Install the CLI locally:
 
 ```bash
 cargo install --path crates/mempal-cli --locked
@@ -23,7 +40,7 @@ cargo run -p mempal-cli -- --help
 cargo run -p mempal-cli --features rest -- serve --help
 ```
 
-## Configure
+## Configuration
 
 Config file path:
 
@@ -31,7 +48,7 @@ Config file path:
 ~/.mempal/config.toml
 ```
 
-Defaults:
+Default config:
 
 ```toml
 db_path = "~/.mempal/palace.db"
@@ -40,7 +57,7 @@ db_path = "~/.mempal/palace.db"
 backend = "onnx"
 ```
 
-Use an external embedding service instead of ONNX:
+Use an external embedding API instead of local ONNX:
 
 ```toml
 db_path = "~/.mempal/palace.db"
@@ -55,80 +72,130 @@ Notes:
 
 - ONNX is the default backend.
 - First ONNX use downloads `all-MiniLM-L6-v2` model assets.
-- If `config.toml` is missing, mempal still works with defaults.
+- If `config.toml` is missing, `mempal` still works with defaults.
+- The benchmark and search commands use whatever embedder backend is configured here.
 
-## Initialize A Project
+## Command Cheat Sheet
 
-`init` scans the project tree, infers room names from directories, and seeds taxonomy entries.
+Use this when you already know the concepts and just need the right command quickly.
+
+| Command | Purpose |
+|---------|---------|
+| `mempal init <DIR>` | infer a `wing` and seed initial taxonomy rooms from a project tree |
+| `mempal ingest --wing <WING> <DIR>` | chunk, embed, and store a project tree |
+| `mempal search <QUERY>` | search drawers, with optional `--wing` and `--room` filters |
+| `mempal wake-up` | generate a compact context refresh for an agent |
+| `mempal compress <TEXT>` | format arbitrary text as AAAK |
+| `mempal taxonomy list` | inspect current routing keywords |
+| `mempal taxonomy edit <WING> <ROOM> --keywords ...` | tune routing behavior |
+| `mempal status` | inspect DB size, counts, schema version, and deleted drawers |
+| `mempal delete <DRAWER_ID>` | soft-delete one drawer |
+| `mempal purge [--before ...]` | permanently remove soft-deleted drawers |
+| `mempal serve --mcp` | run the MCP server over stdio |
+| `mempal bench longmemeval <DATA_FILE>` | run the native LongMemEval retrieval benchmark |
+
+## First 5 Minutes
+
+This is the shortest realistic flow for a new project.
+
+### 1. Inspect the inferred taxonomy
+
+Preview which `wing` and `room` names `mempal` will infer:
 
 ```bash
-mempal init ~/code/myapp
+mempal init ~/code/myapp --dry-run
 ```
 
 Typical output:
 
 ```text
+dry_run=true
 wing: myapp
 rooms:
 - auth
 - deploy
+- docs
 ```
 
-## Ingest Memory
-
-Ingest a project tree into one `wing`:
+Write those taxonomy entries:
 
 ```bash
-mempal ingest ~/code/myapp --wing myapp
+mempal init ~/code/myapp
 ```
 
-The current CLI accepts `--format convos` as an optional explicit format selector, but normal usage can omit it:
-
-```bash
-mempal ingest ~/code/myapp --wing myapp --format convos
-```
-
-Preview an ingest without writing drawers or vectors:
+### 2. Preview ingest before writing
 
 ```bash
 mempal ingest ~/code/myapp --wing myapp --dry-run
 ```
 
-The command reports dry-run mode plus file, chunk, and skip counts:
+Typical output:
 
 ```text
-dry_run=false files=12 chunks=34 skipped=2
+dry_run=true files=12 chunks=34 skipped=2
 ```
 
-Each CLI ingest also appends a JSONL record to `~/.mempal/audit.jsonl` with the directory, wing, dry-run flag, and resulting counts.
+This reads, normalizes, chunks, and counts, but does not write drawers or vectors.
 
-## Search
+### 3. Ingest the project
 
-Basic search:
+```bash
+mempal ingest ~/code/myapp --wing myapp
+```
+
+Optional explicit format selector:
+
+```bash
+mempal ingest ~/code/myapp --wing myapp --format convos
+```
+
+Every ingest appends a JSONL audit record to:
+
+```text
+~/.mempal/audit.jsonl
+```
+
+### 4. Search
 
 ```bash
 mempal search "auth decision clerk"
 ```
 
-Search with JSON output:
+Structured JSON output:
 
 ```bash
 mempal search "auth decision clerk" --json
 ```
 
-Search within a wing:
+Restrict to a wing:
 
 ```bash
 mempal search "database decision" --wing myapp
 ```
 
-Search within a wing and room:
+Restrict to a wing and room:
 
 ```bash
 mempal search "token refresh bug" --wing myapp --room auth
 ```
 
-What you get back:
+### 5. Generate a context refresh
+
+```bash
+mempal wake-up
+```
+
+Compact AAAK-formatted refresh:
+
+```bash
+mempal wake-up --format aaak
+```
+
+## Core Workflows
+
+### Search
+
+What a search result includes:
 
 - `drawer_id`
 - `content`
@@ -139,38 +206,38 @@ What you get back:
 - `route`
 
 `route` explains whether the query used explicit filters or taxonomy routing.
-`source_file` is stored relative to the ingest root, so citations stay stable whether the tree was ingested via an absolute or relative path.
 
-## Wake-Up Summaries
+`source_file` is stored relative to the ingest root, so citations stay stable whether the project was ingested via an absolute or relative path.
 
-Default wake-up output is a compact context refresh for agents:
+If you care about deterministic scope, pass `--wing` and optionally `--room` explicitly instead of relying on routing.
+
+### Wake-Up and AAAK
+
+`wake-up` emits a short memory summary for agent context refresh:
 
 ```bash
 mempal wake-up
 ```
 
-AAAK-formatted wake-up:
+AAAK output:
 
 ```bash
 mempal wake-up --format aaak
-```
-
-## AAAK Compression
-
-Compress arbitrary text into AAAK format:
-
-```bash
 mempal compress "Kai recommended Clerk over Auth0 based on pricing and DX"
 ```
 
-Example output:
+Example AAAK output:
 
-```
+```text
 V1|manual|compress|1744156800|cli
 0:KAI+CLK+AUT|kai_clerk_auth0|"Kai recommended Clerk over Auth0 based on pricing and DX"|★★★★|determ|DECISION
 ```
 
-Each field: `id:ENTITIES|topics|"quote"|stars|emotions|FLAGS`. Entities are 3-letter uppercase codes. Stars indicate importance (1-5). Emotions and flags are auto-detected from content.
+AAAK is an output formatter only:
+
+- it does not affect how drawers are stored
+- it is not required for ingest or search
+- benchmark `--mode aaak` means "index AAAK-formatted retrieval text", not "change the storage layer"
 
 ### Chinese Text
 
@@ -180,19 +247,11 @@ AAAK supports Chinese and mixed Chinese-English text:
 mempal compress "张三推荐Clerk替换Auth0，因为价格更优"
 ```
 
-Chinese entities and topics are extracted with [jieba-rs](https://crates.io/crates/jieba-rs): POS tagging identifies names/places/organizations (`nr*`/`ns`/`nt`/`nz`) for entities, and nouns/verbs/adjectives (`n*`/`v*`/`a*`) become topics. Emotion and flag detection includes Chinese signal words (决定, 架构, 部署, etc.).
+Chinese entities and topics are extracted with `jieba-rs` POS tagging. People, places, organizations, and content words are turned into entity/topic fields before AAAK formatting.
 
-### Wake-Up with AAAK
+For the full format specification, see [`docs/aaak-dialect.md`](aaak-dialect.md).
 
-```bash
-mempal wake-up --format aaak
-```
-
-This encodes the most recent drawers in AAAK format for compact agent context refresh.
-
-AAAK is an output formatter only. It does not replace raw drawer storage in SQLite. See [`docs/aaak-dialect.md`](aaak-dialect.md) for the full format specification.
-
-## Taxonomy
+### Taxonomy
 
 List taxonomy entries:
 
@@ -206,9 +265,13 @@ Edit or add taxonomy keywords:
 mempal taxonomy edit myapp auth --keywords "auth,login,clerk"
 ```
 
-This improves automatic routing for future searches.
+Use taxonomy when:
 
-## Status
+- you want routing to pick the right room more reliably
+- your repo directory layout is not enough
+- you want search behavior to reflect domain language instead of folder names
+
+### Status
 
 Show storage stats:
 
@@ -218,53 +281,91 @@ mempal status
 
 The command reports:
 
-- schema version
-- total drawer count
-- taxonomy entry count
+- `schema_version`
+- `drawer_count`
+- `deleted_drawers` when soft-deleted content exists
+- `taxonomy_entries`
 - DB file size
-- per-`wing` and per-`room` drawer counts
+- per-`wing` and per-`room` counts
 
-Schema version is backed by SQLite `PRAGMA user_version`. On open, `mempal` applies any bundled forward migrations needed to bring an older local database up to the current binary's schema.
+Schema version is backed by SQLite `PRAGMA user_version`. On open, `mempal` applies bundled forward migrations needed to bring an older local database up to the current binary's schema.
 
-## Benchmark LongMemEval
+### Delete and Purge
 
-`mempal` includes a native LongMemEval harness that reuses the dataset shape and retrieval metrics documented in `mempalace`, while indexing and searching through `mempal` itself.
+These are destructive operations. Use them carefully.
 
-Run the default session-granularity raw benchmark:
+Soft-delete one drawer:
 
 ```bash
-mempal bench longmemeval /path/to/longmemeval_s_cleaned.json
+mempal delete drawer_myapp_auth_1234abcd
 ```
 
-Switch retrieval modes:
+Current behavior:
+
+- looks up the drawer first
+- soft-deletes it
+- prints a short summary of what was deleted
+- writes an audit log entry
+- does not permanently remove it yet
+
+Permanent removal:
 
 ```bash
-mempal bench longmemeval /path/to/longmemeval_s_cleaned.json --mode aaak
-mempal bench longmemeval /path/to/longmemeval_s_cleaned.json --mode rooms
+mempal purge
 ```
 
-Useful options:
-
-- `--granularity session|turn`
-- `--limit N`
-- `--skip N`
-- `--top-k N`
-- `--out path/to/results.jsonl`
-
-Example:
+Purge only drawers soft-deleted before an ISO timestamp:
 
 ```bash
-mempal bench longmemeval /tmp/longmemeval-data/longmemeval_s_cleaned.json \
-  --mode rooms \
+mempal purge --before 2026-04-10T00:00:00Z
+```
+
+Important:
+
+- `delete` is reversible only until `purge` runs
+- `status` will tell you when deleted drawers are waiting to be purged
+
+## Common Recipes
+
+### Index a repo and search one subsystem
+
+```bash
+mempal init ~/code/myapp
+mempal ingest ~/code/myapp --wing myapp
+mempal search "token refresh bug" --wing myapp --room auth
+```
+
+### Preview a large ingest before committing disk and compute
+
+```bash
+mempal init ~/code/monorepo --dry-run
+mempal ingest ~/code/monorepo --wing monorepo --dry-run
+```
+
+### Tune routing when search keeps landing in the wrong room
+
+```bash
+mempal taxonomy list
+mempal taxonomy edit myapp deploy --keywords "render,railway,postgres,migration"
+mempal search "postgres migration" --wing myapp
+```
+
+### Refresh an AI agent before continuing work
+
+```bash
+mempal wake-up
+mempal wake-up --format aaak
+```
+
+### Run a fast benchmark sample instead of the full dataset
+
+```bash
+mempal bench longmemeval /path/to/longmemeval_s_cleaned.json \
   --limit 20 \
-  --out benchmarks/results_longmemeval_rooms_20.jsonl
+  --out benchmarks/results_longmemeval_20.jsonl
 ```
 
-The command prints session-level and turn-level recall / NDCG summaries, plus per-question-type session metrics. When `--out` is set, it also writes JSONL logs with ranked items and per-question metrics.
-
-## Serve MCP And REST
-
-### MCP-only mode
+## MCP Server
 
 Run stdio MCP explicitly:
 
@@ -272,30 +373,15 @@ Run stdio MCP explicitly:
 mempal serve --mcp
 ```
 
-If mempal was built without the `rest` feature, plain `mempal serve` also behaves this way.
+If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-### MCP + REST mode
+The MCP server exposes five tools:
 
-Build with REST enabled and start both interfaces:
-
-```bash
-mempal serve
-```
-
-Behavior with `--features rest`:
-
-- MCP runs over stdio.
-- REST listens on `127.0.0.1:3080`.
-- CORS allows localhost origins only.
-
-### MCP Tool Names
-
-The server exposes four tools:
-
-- `mempal_status` — includes `aaak_spec` in the response, dynamically generated from code constants (emotion codes, flags, live example). The AI learns the AAAK format on first call without any hardcoded spec.
-- `mempal_search` — vector search with routing
-- `mempal_ingest` — store a single drawer
-- `mempal_taxonomy` — list or edit taxonomy
+- `mempal_status`
+- `mempal_search`
+- `mempal_ingest`
+- `mempal_delete`
+- `mempal_taxonomy`
 
 Example request shapes:
 
@@ -313,7 +399,26 @@ Example request shapes:
   "content": "decided to use Clerk for auth",
   "wing": "myapp",
   "room": "auth",
-  "source": "/repo/README.md"
+  "source": "/repo/README.md",
+  "dry_run": false
+}
+```
+
+Preview an ingest without writing (returns the predicted `drawer_id`):
+
+```json
+{
+  "content": "decided to use Clerk for auth",
+  "wing": "myapp",
+  "dry_run": true
+}
+```
+
+Soft-delete a drawer:
+
+```json
+{
+  "drawer_id": "drawer_myapp_auth_1234abcd"
 }
 ```
 
@@ -326,74 +431,161 @@ Example request shapes:
 }
 ```
 
-## REST API
+`mempal_status` also returns the self-describing memory protocol and a dynamically generated AAAK spec so AI clients can learn the tool without a hardcoded prompt.
 
-### `GET /api/status`
+## REST Server
+
+Build with `--features rest` to enable REST:
+
+```bash
+mempal serve
+```
+
+With REST enabled:
+
+- MCP still runs over stdio
+- REST listens on `127.0.0.1:3080`
+- CORS only allows localhost origins
+
+Endpoints:
+
+- `GET /api/status`
+- `GET /api/search?q=...&wing=...&room=...&top_k=...`
+- `POST /api/ingest`
+- `GET /api/taxonomy`
+
+Examples:
 
 ```bash
 curl 'http://127.0.0.1:3080/api/status'
-```
-
-Example response:
-
-```json
-{
-  "drawer_count": 1,
-  "taxonomy_count": 1,
-  "db_size_bytes": 1658880,
-  "wings": [
-    {
-      "wing": "myapp",
-      "room": null,
-      "drawer_count": 1
-    }
-  ]
-}
-```
-
-### `GET /api/search`
-
-```bash
 curl 'http://127.0.0.1:3080/api/search?q=clerk&wing=myapp'
-```
-
-Supported query params:
-
-- `q`
-- `wing`
-- `room`
-- `top_k`
-
-### `POST /api/ingest`
-
-```bash
 curl -X POST 'http://127.0.0.1:3080/api/ingest' \
   -H 'content-type: application/json' \
   -d '{"content":"decided to use Clerk","wing":"myapp","room":"auth"}'
-```
-
-Example response:
-
-```json
-{
-  "drawer_id": "drawer_myapp_auth_1234abcd"
-}
-```
-
-### `GET /api/taxonomy`
-
-```bash
 curl 'http://127.0.0.1:3080/api/taxonomy'
 ```
 
-Returns the current `wing`/`room` taxonomy entries with keywords.
+## Benchmark LongMemEval
+
+`mempal` includes a native LongMemEval harness. It reuses the dataset shape and retrieval metrics documented in `mempalace`, while indexing and searching through `mempal` itself.
+
+Default session-granularity raw benchmark:
+
+```bash
+mempal bench longmemeval /path/to/longmemeval_s_cleaned.json
+```
+
+Other modes:
+
+```bash
+mempal bench longmemeval /path/to/longmemeval_s_cleaned.json --mode aaak
+mempal bench longmemeval /path/to/longmemeval_s_cleaned.json --mode rooms
+```
+
+Turn granularity and results log:
+
+```bash
+mempal bench longmemeval /path/to/longmemeval_s_cleaned.json \
+  --granularity turn \
+  --out benchmarks/results_longmemeval.jsonl
+```
+
+Supported options:
+
+- `--mode raw|aaak|rooms`
+- `--granularity session|turn`
+- `--limit N`
+- `--skip N`
+- `--top-k N`
+- `--out path/to/results.jsonl`
+
+What the benchmark does:
+
+- loads the cleaned LongMemEval JSON
+- builds a temporary benchmark DB per question
+- indexes retrieval text using the configured embedder
+- runs retrieval and reports `Recall@k` and `NDCG@k`
+
+What it does not do:
+
+- it does not generate final answers with an LLM
+- it is not the same as the official answer-generation evaluation pipeline
+- `raw` mode does not automatically mean zero API cost if your embedder backend is configured as `api`
+
+For the current local benchmark snapshot in this repository, see [`benchmarks/longmemeval_s_summary.md`](../benchmarks/longmemeval_s_summary.md).
+
+## Identity File
+
+If you use `wake-up` regularly with AI agents, you can add a user-edited identity file:
+
+```bash
+mkdir -p ~/.mempal
+$EDITOR ~/.mempal/identity.txt
+```
+
+Example:
+
+```text
+Role: Rust backend engineer at Acme.
+Current focus: auth rewrite, Clerk migration.
+Working style: small reversible edits, verify before asserting.
+```
+
+`wake-up` can include this as part of the agent context refresh.
+
+## FAQ
+
+### Search results look wrong or too broad
+
+- Pass `--wing` explicitly. Global search is convenient, but it broadens retrieval.
+- Pass `--room` when you already know the subsystem.
+- Inspect taxonomy with `mempal taxonomy list` and add better keywords with `mempal taxonomy edit`.
+- Check which embedder backend you are using. Different embedding models shift retrieval behavior.
+
+### Search returns irrelevant results for Chinese (or other non-English) queries
+
+The default embedding model (MiniLM-L6-v2) is English-centric. Non-English queries produce low-quality vectors and often match the wrong drawers entirely.
+
+**For AI agents**: MEMORY_PROTOCOL rule 3a tells agents to translate queries to English before calling `mempal_search`. This is handled automatically by agents that read the protocol.
+
+**For CLI users**: translate your query to English manually, or use the `--wing` filter to narrow scope:
+
+```bash
+# Poor results:
+mempal search "它不再是一个高级原型"
+
+# Good results:
+mempal search "no longer just an advanced prototype"
+```
+
+This is a limitation of the embedding model, not the search engine. Switching to a multilingual model (e.g., multilingual-e5, BGE-M3) would fix this at the vector level but requires re-embedding all existing drawers.
+
+### Why did ingest store relative paths instead of absolute ones?
+
+`mempal` stores `source_file` relative to the ingest root on purpose. This keeps citations stable if you ingest the same project through different absolute paths.
+
+### Is `raw` benchmark mode always zero API cost?
+
+No. `raw` only means raw retrieval text. API cost depends on the embedder backend:
+
+- local `onnx` backend: zero external API calls
+- `api` backend: embedding requests still go to the configured API
+
+### Why is `--granularity turn` so much slower?
+
+Because it expands one session into many more indexed items. On the current `LongMemEval s_cleaned` runs in this repository, `raw + turn` was dramatically slower than `raw + session` while not improving overall retrieval quality enough to justify being the default.
+
+### Should I use `delete` freely because it is soft-delete?
+
+Use it carefully anyway. `delete` is safer than hard removal, but once `mempal purge` runs, the data is permanently gone.
 
 ## Verify Changes
 
-After modifying behavior, the repo currently uses these commands for validation:
+If you modify code or behavior in this repository, the current validation baseline is:
 
 ```bash
 cargo test --workspace
 cargo test --workspace --all-features
-cargo clippy --workspace --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all --check
 ```
