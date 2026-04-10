@@ -91,7 +91,11 @@ pub fn search_by_vector(
     }
     let total_count: i64 = db
         .conn()
-        .query_row("SELECT COUNT(*) FROM drawers", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM drawers WHERE deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
         .map_err(SearchError::CountTotalDrawers)?;
 
     let query_json =

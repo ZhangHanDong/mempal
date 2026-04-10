@@ -55,6 +55,25 @@ pub struct IngestRequest {
     pub wing: String,
     pub room: Option<String>,
     pub source: Option<String>,
+
+    /// If true, return the drawer_id that WOULD be created without actually
+    /// writing to the database. Use this to preview before committing.
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct DeleteRequest {
+    /// The drawer_id to soft-delete. The drawer is marked with a deleted_at
+    /// timestamp but not physically removed. Use `mempal purge` CLI to
+    /// permanently remove soft-deleted drawers.
+    pub drawer_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct DeleteResponse {
+    pub drawer_id: String,
+    pub deleted: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

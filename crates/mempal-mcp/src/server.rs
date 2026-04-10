@@ -17,8 +17,9 @@ use rmcp::{
 };
 
 use crate::tools::{
-    IngestRequest, IngestResponse, ScopeCount, SearchRequest, SearchResponse, SearchResultDto,
-    StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse,
+    DeleteRequest, DeleteResponse, IngestRequest, IngestResponse, ScopeCount, SearchRequest,
+    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
+    TaxonomyResponse,
 };
 
 #[derive(Clone)]
@@ -129,12 +130,19 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_ingest",
-        description = "Persist a decision, bug fix, or design insight to project memory. Call this when a decision is reached in conversation — include the rationale, not just the outcome. Wing is required; let mempal auto-route the room."
+        description = "Persist a decision, bug fix, or design insight to project memory. Call this when a decision is reached in conversation — include the rationale, not just the outcome. Wing is required; let mempal auto-route the room. Set dry_run=true to preview the drawer_id without writing."
     )]
     async fn mempal_ingest(
         &self,
         Parameters(request): Parameters<IngestRequest>,
     ) -> std::result::Result<Json<IngestResponse>, ErrorData> {
+        let room = request.room.as_deref();
+        let drawer_id = build_drawer_id(&request.wing, room, &request.content);
+
+        if request.dry_run.unwrap_or(false) {
+            return Ok(Json(IngestResponse { drawer_id }));
+        }
+
         let embedder = self.embedder_factory.build().await.map_err(|error| {
             ErrorData::internal_error(format!("failed to build embedder: {error}"), None)
         })?;
@@ -146,8 +154,6 @@ impl MempalMcpServer {
             .next()
             .ok_or_else(|| ErrorData::internal_error("embedder returned no vector", None))?;
         let db = self.open_db()?;
-        let room = request.room.as_deref();
-        let drawer_id = build_drawer_id(&request.wing, room, &request.content);
 
         if !db.drawer_exists(&drawer_id).map_err(db_error)? {
             let source_file = source_file_or_synthetic(&drawer_id, request.source.as_deref());
@@ -166,6 +172,30 @@ impl MempalMcpServer {
         }
 
         Ok(Json(IngestResponse { drawer_id }))
+    }
+
+    #[tool(
+        name = "mempal_delete",
+        description = "Soft-delete a drawer by ID. The drawer is marked with a deleted_at timestamp and excluded from search results, but not physically removed. Use the CLI `mempal purge` to permanently remove soft-deleted drawers. Returns the drawer_id and whether it was found."
+    )]
+    async fn mempal_delete(
+        &self,
+        Parameters(request): Parameters<DeleteRequest>,
+    ) -> std::result::Result<Json<DeleteResponse>, ErrorData> {
+        let db = self.open_db()?;
+        let deleted = db
+            .soft_delete_drawer(&request.drawer_id)
+            .map_err(db_error)?;
+        let message = if deleted {
+            format!("drawer {} soft-deleted", request.drawer_id)
+        } else {
+            format!("drawer {} not found or already deleted", request.drawer_id)
+        };
+        Ok(Json(DeleteResponse {
+            drawer_id: request.drawer_id,
+            deleted,
+            message,
+        }))
     }
 
     #[tool(

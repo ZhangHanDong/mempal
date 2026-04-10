@@ -38,6 +38,8 @@ struct Cli {
 enum Commands {
     Init {
         dir: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
     },
     Ingest {
         dir: PathBuf,
@@ -69,6 +71,14 @@ enum Commands {
     Bench {
         #[command(subcommand)]
         command: BenchCommands,
+    },
+    Delete {
+        drawer_id: String,
+    },
+    Purge {
+        /// Only purge drawers soft-deleted before this ISO timestamp
+        #[arg(long)]
+        before: Option<String>,
     },
     Taxonomy {
         #[command(subcommand)]
@@ -129,7 +139,7 @@ async fn run() -> Result<()> {
     let db = Database::open(&expand_home(&config.db_path)).context("failed to open database")?;
 
     match cli.command {
-        Commands::Init { dir } => init_command(&db, &dir),
+        Commands::Init { dir, dry_run } => init_command(&db, &dir, dry_run),
         Commands::Ingest {
             dir,
             wing,
@@ -154,6 +164,8 @@ async fn run() -> Result<()> {
             )
             .await
         }
+        Commands::Delete { drawer_id } => delete_command(&db, &drawer_id),
+        Commands::Purge { before } => purge_command(&db, before.as_deref()),
         Commands::WakeUp { format } => wake_up_command(&db, format.as_deref()),
         Commands::Compress { text } => compress_command(&text),
         Commands::Bench { command } => bench_command(&config, command).await,
@@ -191,7 +203,7 @@ async fn bench_command(config: &Config, command: BenchCommands) -> Result<()> {
     }
 }
 
-fn init_command(db: &Database, dir: &Path) -> Result<()> {
+fn init_command(db: &Database, dir: &Path, dry_run: bool) -> Result<()> {
     let wing = dir
         .file_name()
         .and_then(|name| name.to_str())
@@ -199,17 +211,20 @@ fn init_command(db: &Database, dir: &Path) -> Result<()> {
         .to_string();
     let rooms = detect_rooms(dir)?;
 
-    for room in &rooms {
-        let keywords = serde_json::to_string(&vec![room.clone()])
-            .context("failed to serialize taxonomy keywords")?;
-        db.conn()
-            .execute(
-                "INSERT OR IGNORE INTO taxonomy (wing, room, display_name, keywords) VALUES (?1, ?2, ?3, ?4)",
-                (&wing, room, room, keywords.as_str()),
-            )
-            .with_context(|| format!("failed to insert taxonomy room {room}"))?;
+    if !dry_run {
+        for room in &rooms {
+            let keywords = serde_json::to_string(&vec![room.clone()])
+                .context("failed to serialize taxonomy keywords")?;
+            db.conn()
+                .execute(
+                    "INSERT OR IGNORE INTO taxonomy (wing, room, display_name, keywords) VALUES (?1, ?2, ?3, ?4)",
+                    (&wing, room, room, keywords.as_str()),
+                )
+                .with_context(|| format!("failed to insert taxonomy room {room}"))?;
+        }
     }
 
+    println!("dry_run={dry_run}");
     println!("wing: {wing}");
     if rooms.is_empty() {
         println!("rooms: none detected");
@@ -484,6 +499,77 @@ fn compress_command(text: &str) -> Result<()> {
     Ok(())
 }
 
+fn delete_command(db: &Database, drawer_id: &str) -> Result<()> {
+    // Show what we're about to delete
+    let drawer = db
+        .get_drawer(drawer_id)
+        .context("failed to look up drawer")?;
+    match drawer {
+        Some(drawer) => {
+            db.soft_delete_drawer(drawer_id)
+                .context("failed to soft-delete drawer")?;
+            append_audit_entry(db, "delete", &serde_json::json!({ "drawer_id": drawer_id }))
+                .context("failed to append audit log")?;
+            println!("soft-deleted {}", drawer_id);
+            println!(
+                "  wing={} room={} source={}",
+                drawer.wing,
+                drawer.room.as_deref().unwrap_or("default"),
+                drawer.source_file.as_deref().unwrap_or("(none)")
+            );
+            println!("  content: {}", truncate_for_summary(&drawer.content, 100));
+            println!("  (use `mempal purge` to permanently remove)");
+        }
+        None => {
+            bail!("drawer not found: {drawer_id}");
+        }
+    }
+    Ok(())
+}
+
+fn purge_command(db: &Database, before: Option<&str>) -> Result<()> {
+    let deleted_count = db
+        .deleted_drawer_count()
+        .context("failed to count deleted drawers")?;
+    if deleted_count == 0 {
+        println!("no soft-deleted drawers to purge");
+        return Ok(());
+    }
+
+    let purged = db
+        .purge_deleted(before)
+        .context("failed to purge deleted drawers")?;
+    append_audit_entry(
+        db,
+        "purge",
+        &serde_json::json!({ "before": before, "purged": purged }),
+    )
+    .context("failed to append audit log")?;
+    println!("permanently removed {purged} drawer(s)");
+    Ok(())
+}
+
+fn append_audit_entry(db: &Database, command: &str, details: &serde_json::Value) -> Result<()> {
+    let audit_path = db
+        .path()
+        .parent()
+        .map(|parent| parent.join("audit.jsonl"))
+        .unwrap_or_else(|| PathBuf::from("audit.jsonl"));
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&audit_path)
+        .with_context(|| format!("failed to open audit log {}", audit_path.display()))?;
+    let entry = serde_json::json!({
+        "timestamp": current_timestamp(),
+        "command": command,
+        "details": details,
+    });
+    writeln!(file, "{entry}")
+        .with_context(|| format!("failed to write audit log {}", audit_path.display()))?;
+    Ok(())
+}
+
 fn taxonomy_command(db: &Database, command: TaxonomyCommands) -> Result<()> {
     match command {
         TaxonomyCommands::List => taxonomy_list_command(db),
@@ -552,8 +638,15 @@ fn status_command(db: &Database) -> Result<()> {
         .database_size_bytes()
         .context("failed to compute database size")?;
 
+    let deleted_count = db
+        .deleted_drawer_count()
+        .context("failed to count deleted drawers")?;
+
     println!("schema_version: {schema_version}");
     println!("drawer_count: {drawer_count}");
+    if deleted_count > 0 {
+        println!("deleted_drawers: {deleted_count} (use `mempal purge` to remove)");
+    }
     println!("taxonomy_entries: {taxonomy_count}");
     println!("db_size_bytes: {db_size_bytes}");
 

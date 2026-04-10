@@ -103,10 +103,11 @@ async fn test_mcp_server_start() -> anyhow::Result<()> {
         .map(|tool| tool.name.as_ref())
         .collect::<Vec<_>>();
 
-    assert_eq!(names.len(), 4);
+    assert_eq!(names.len(), 5);
     assert!(names.contains(&"mempal_status"));
     assert!(names.contains(&"mempal_search"));
     assert!(names.contains(&"mempal_ingest"));
+    assert!(names.contains(&"mempal_delete"));
     assert!(names.contains(&"mempal_taxonomy"));
 
     client.cancel().await?;
@@ -330,7 +331,7 @@ async fn test_mcp_status_and_taxonomy() -> anyhow::Result<()> {
         .expect("status payload should exist");
     assert_eq!(
         status_payload.get("schema_version").and_then(Value::as_u64),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         status_payload.get("drawer_count").and_then(Value::as_i64),

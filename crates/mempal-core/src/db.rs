@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use crate::types::{Drawer, SourceType, TaxonomyEntry};
 
-const CURRENT_SCHEMA_VERSION: u32 = 1;
+const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 const V1_SCHEMA_SQL: &str = r#"
 PRAGMA foreign_keys = ON;
@@ -204,6 +204,7 @@ impl Database {
             r#"
             SELECT id, content, wing, room, source_file, source_type, added_at, chunk_index
             FROM drawers
+            WHERE deleted_at IS NULL
             ORDER BY CAST(added_at AS INTEGER) DESC, id DESC
             LIMIT ?1
             "#,
@@ -241,7 +242,7 @@ impl Database {
 
     pub fn drawer_exists(&self, drawer_id: &str) -> Result<bool, DbError> {
         let exists = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM drawers WHERE id = ?1)",
+            "SELECT EXISTS(SELECT 1 FROM drawers WHERE id = ?1 AND deleted_at IS NULL)",
             [drawer_id],
             |row| row.get::<_, i64>(0),
         )?;
@@ -258,9 +259,11 @@ impl Database {
     }
 
     pub fn drawer_count(&self) -> Result<i64, DbError> {
-        Ok(self
-            .conn
-            .query_row("SELECT COUNT(*) FROM drawers", [], |row| row.get(0))?)
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM drawers WHERE deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn taxonomy_count(&self) -> Result<i64, DbError> {
@@ -274,6 +277,7 @@ impl Database {
             r#"
             SELECT wing, room, COUNT(*)
             FROM drawers
+            WHERE deleted_at IS NULL
             GROUP BY wing, room
             ORDER BY wing, room
             "#,
@@ -288,6 +292,93 @@ impl Database {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn get_drawer(&self, drawer_id: &str) -> Result<Option<Drawer>, DbError> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, content, wing, room, source_file, source_type, added_at, chunk_index
+            FROM drawers
+            WHERE id = ?1 AND deleted_at IS NULL
+            "#,
+        )?;
+        let mut rows = statement.query_map([drawer_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+            ))
+        })?;
+
+        match rows.next() {
+            Some(row) => {
+                let (id, content, wing, room, source_file, source_type, added_at, chunk_index) =
+                    row?;
+                Ok(Some(Drawer {
+                    id,
+                    content,
+                    wing,
+                    room,
+                    source_file,
+                    source_type: source_type_from_str(&source_type)?,
+                    added_at,
+                    chunk_index,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn soft_delete_drawer(&self, drawer_id: &str) -> Result<bool, DbError> {
+        let timestamp = crate::utils::current_timestamp();
+        let affected = self.conn.execute(
+            "UPDATE drawers SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL",
+            params![timestamp, drawer_id],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn purge_deleted(&self, before: Option<&str>) -> Result<u64, DbError> {
+        // First collect IDs to purge, then delete from both tables
+        let ids: Vec<String> = if let Some(before) = before {
+            let mut stmt = self.conn.prepare(
+                "SELECT id FROM drawers WHERE deleted_at IS NOT NULL AND deleted_at < ?1",
+            )?;
+            stmt.query_map([before], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id FROM drawers WHERE deleted_at IS NOT NULL")?;
+            stmt.query_map([], |row| row.get(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        for id in &ids {
+            self.conn
+                .execute("DELETE FROM drawer_vectors WHERE id = ?1", [id])?;
+            self.conn
+                .execute("DELETE FROM drawers WHERE id = ?1", [id])?;
+        }
+
+        Ok(ids.len() as u64)
+    }
+
+    pub fn deleted_drawer_count(&self) -> Result<i64, DbError> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM drawers WHERE deleted_at IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn database_size_bytes(&self) -> Result<u64, DbError> {
@@ -334,11 +425,22 @@ fn set_user_version(conn: &Connection, version: u32) -> Result<(), DbError> {
     Ok(())
 }
 
+const V2_MIGRATION_SQL: &str = r#"
+ALTER TABLE drawers ADD COLUMN deleted_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_drawers_deleted_at ON drawers(deleted_at);
+"#;
+
 fn migrations() -> &'static [Migration] {
-    static MIGRATIONS: &[Migration] = &[Migration {
-        version: CURRENT_SCHEMA_VERSION,
-        sql: V1_SCHEMA_SQL,
-    }];
+    static MIGRATIONS: &[Migration] = &[
+        Migration {
+            version: 1,
+            sql: V1_SCHEMA_SQL,
+        },
+        Migration {
+            version: 2,
+            sql: V2_MIGRATION_SQL,
+        },
+    ];
     MIGRATIONS
 }
 
