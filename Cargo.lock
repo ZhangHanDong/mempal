@@ -1487,60 +1487,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "mempal-aaak"
-version = "0.1.0"
-dependencies = [
- "bimap",
- "jieba-rs",
- "mempal-core",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "mempal-api"
+name = "mempal"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "mempal-core",
- "mempal-embed",
- "mempal-search",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower",
- "tower-http",
-]
-
-[[package]]
-name = "mempal-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
+ "bimap",
  "clap",
- "mempal-aaak",
- "mempal-api",
- "mempal-core",
- "mempal-embed",
- "mempal-ingest",
- "mempal-mcp",
- "mempal-search",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "mempal-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
+ "jieba-rs",
+ "model2vec-rs",
+ "ort",
+ "reqwest",
+ "rmcp",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1548,68 +1507,11 @@ dependencies = [
  "sqlite-vec",
  "tempfile",
  "thiserror",
- "toml",
-]
-
-[[package]]
-name = "mempal-embed"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "axum",
- "mempal-core",
- "model2vec-rs",
- "ort",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
  "tokenizers 0.22.2",
  "tokio",
-]
-
-[[package]]
-name = "mempal-ingest"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "mempal-core",
- "mempal-embed",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "mempal-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "mempal-aaak",
- "mempal-core",
- "mempal-embed",
- "mempal-search",
- "rmcp",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "mempal-search"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "mempal-core",
- "mempal-embed",
- "rusqlite",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
+ "toml",
+ "tower",
+ "tower-http",
 ]
 
 [[package]]
@@ -2341,7 +2243,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
- "tokio-stream",
  "tokio-util",
  "tracing",
 ]
@@ -2916,17 +2817,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
- "tokio",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
-dependencies = [
- "futures-core",
- "pin-project-lite",
  "tokio",
 ]
 
