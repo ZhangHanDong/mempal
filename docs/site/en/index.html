@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mempal — Project Memory for Coding Agents</title>
+<meta name="description" content="Single binary project memory tool. Hybrid search, knowledge graph, multi-agent coordination. cargo install mempal">
+<style>
+:root {
+  --bg: #0d1117; --fg: #c9d1d9; --accent: #58a6ff; --accent2: #7ee787;
+  --card: #161b22; --border: #30363d; --dim: #8b949e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.lang-bar { background: var(--card); border-bottom: 1px solid var(--border); text-align: center; padding: 8px; font-size: 14px; }
+.lang-bar a { margin: 0 12px; color: var(--dim); }
+.lang-bar a.active { color: var(--accent); font-weight: 600; }
+
+.hero { max-width: 900px; margin: 0 auto; padding: 80px 24px 40px; text-align: center; }
+.hero h1 { font-size: 48px; font-weight: 700; margin-bottom: 16px; }
+.hero h1 span { color: var(--accent2); }
+.hero .tagline { font-size: 20px; color: var(--dim); margin-bottom: 32px; }
+.hero .install { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 24px; font-family: 'SF Mono', Consolas, monospace; font-size: 18px; display: inline-block; margin-bottom: 16px; }
+.hero .install code { color: var(--accent2); }
+.hero .links { margin-top: 16px; }
+.hero .links a { margin: 0 12px; padding: 8px 20px; border-radius: 6px; font-weight: 500; }
+.hero .links .primary { background: var(--accent); color: #0d1117; }
+.hero .links .secondary { border: 1px solid var(--border); color: var(--fg); }
+
+.features { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+.features h2 { font-size: 28px; margin-bottom: 32px; text-align: center; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+.card .icon { font-size: 32px; margin-bottom: 12px; }
+.card h3 { font-size: 18px; margin-bottom: 8px; color: var(--fg); }
+.card p { font-size: 14px; color: var(--dim); }
+
+.arch { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+.arch h2 { font-size: 28px; margin-bottom: 24px; text-align: center; }
+.arch pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; font-size: 13px; line-height: 1.5; color: var(--dim); }
+
+.stats { max-width: 900px; margin: 0 auto; padding: 40px 24px; text-align: center; }
+.stats .row { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; }
+.stats .stat .num { font-size: 36px; font-weight: 700; color: var(--accent2); }
+.stats .stat .label { font-size: 14px; color: var(--dim); }
+
+footer { text-align: center; padding: 40px 24px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--border); margin-top: 40px; }
+
+@media (max-width: 600px) { .hero h1 { font-size: 32px; } .hero .tagline { font-size: 16px; } }
+</style>
+</head>
+<body>
+
+<div class="lang-bar">
+  <a href="../">中文</a>
+  <a href="." class="active">English</a>
+  <a href="../ja/">日本語</a>
+</div>
+
+<section class="hero">
+  <h1><span>mempal</span></h1>
+  <p class="tagline">Project memory for coding agents. Single binary, hybrid search, find past decisions with citations in seconds.</p>
+  <div class="install"><code>cargo install mempal</code></div>
+  <div class="links">
+    <a href="https://github.com/ZhangHanDong/mempal" class="primary">GitHub</a>
+    <a href="https://crates.io/crates/mempal" class="secondary">crates.io</a>
+    <a href="https://zhanghandong.github.io/mempalace-book/en/ch26-why-rewrite-in-rust.html" class="secondary">Design Book</a>
+  </div>
+</section>
+
+<section class="features">
+  <h2>Core Features</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="icon">🔍</div>
+      <h3>Hybrid Search</h3>
+      <p>BM25 keyword matching + vector semantic search, merged via Reciprocal Rank Fusion. Exact-match error codes and understand semantic similarity.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🧠</div>
+      <h3>Knowledge Graph</h3>
+      <p>Subject-predicate-object triples with temporal validity. Timeline view, stats, and relationship invalidation when facts expire.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌐</div>
+      <h3>Cross-Project Tunnels</h3>
+      <p>Automatic discovery when the same room appears in multiple wings (projects). Search results include inline tunnel hints.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🤖</div>
+      <h3>Self-Describing Protocol</h3>
+      <p>MEMORY_PROTOCOL (9 rules) embedded in MCP ServerInfo. Any agent learns the workflow on connect — zero configuration.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌍</div>
+      <h3>Multilingual Embedding</h3>
+      <p>model2vec-rs (BGE-M3 distilled) as default embedder. Zero native dependencies, supports Chinese, Japanese, Korean, English.</p>
+    </div>
+    <div class="card">
+      <div class="icon">📦</div>
+      <h3>Single-File Storage</h3>
+      <p>Everything in ~/.mempal/palace.db (SQLite + sqlite-vec). Backup is cp. Migration is scp. No server process.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔗</div>
+      <h3>7 MCP Tools</h3>
+      <p>status, search, ingest, delete, taxonomy, kg, tunnels. Each tool carries field-level documentation in its JSON schema.</p>
+    </div>
+    <div class="card">
+      <div class="icon">📝</div>
+      <h3>Agent Diary</h3>
+      <p>Cross-session behavioral learning. Agents record OBSERVATION / LESSON / PATTERN entries. Future sessions search and learn.</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔒</div>
+      <h3>Safe Operations</h3>
+      <p>Soft-delete + purge two-step deletion. Audit logging. Semantic dedup detection. Dry-run preview mode.</p>
+    </div>
+  </div>
+</section>
+
+<section class="arch">
+  <h2>Data Flow</h2>
+  <pre>
+query → BM25 (FTS5)         → keyword ranking
+      → Vector (sqlite-vec) → semantic similarity ranking
+      → RRF Fusion (k=60)   → merged ranking
+      → Wing/Room filter     → scoped results
+      → Tunnel hints         → cross-project references
+      → Citations (drawer_id + source_file)
+  </pre>
+</section>
+
+<section class="stats">
+  <div class="row">
+    <div class="stat"><div class="num">8.5MB</div><div class="label">Release Binary</div></div>
+    <div class="stat"><div class="num">95.2%</div><div class="label">R@5 Retrieval</div></div>
+    <div class="stat"><div class="num">0</div><div class="label">Native Dependencies</div></div>
+    <div class="stat"><div class="num">5</div><div class="label">Ingest Formats</div></div>
+  </div>
+</section>
+
+<footer>
+  MIT License &middot; <a href="https://github.com/ZhangHanDong/mempal">GitHub</a> &middot; <a href="https://crates.io/crates/mempal">crates.io</a>
+</footer>
+
+</body>
+</html>

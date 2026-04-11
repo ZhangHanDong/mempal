@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mempal — Coding Agent 的项目记忆工具</title>
+<meta name="description" content="单二进制项目记忆工具，混合检索，知识图谱，跨 Agent 协作。cargo install mempal">
+<style>
+:root {
+  --bg: #0d1117; --fg: #c9d1d9; --accent: #58a6ff; --accent2: #7ee787;
+  --card: #161b22; --border: #30363d; --dim: #8b949e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.6; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.lang-bar { background: var(--card); border-bottom: 1px solid var(--border); text-align: center; padding: 8px; font-size: 14px; }
+.lang-bar a { margin: 0 12px; color: var(--dim); }
+.lang-bar a.active { color: var(--accent); font-weight: 600; }
+
+.hero { max-width: 900px; margin: 0 auto; padding: 80px 24px 40px; text-align: center; }
+.hero h1 { font-size: 48px; font-weight: 700; margin-bottom: 16px; }
+.hero h1 span { color: var(--accent2); }
+.hero .tagline { font-size: 20px; color: var(--dim); margin-bottom: 32px; }
+.hero .install { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 24px; font-family: 'SF Mono', Consolas, monospace; font-size: 18px; display: inline-block; margin-bottom: 16px; }
+.hero .install code { color: var(--accent2); }
+.hero .links { margin-top: 16px; }
+.hero .links a { margin: 0 12px; padding: 8px 20px; border-radius: 6px; font-weight: 500; }
+.hero .links .primary { background: var(--accent); color: #0d1117; }
+.hero .links .secondary { border: 1px solid var(--border); color: var(--fg); }
+
+.features { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+.features h2 { font-size: 28px; margin-bottom: 32px; text-align: center; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+.card .icon { font-size: 32px; margin-bottom: 12px; }
+.card h3 { font-size: 18px; margin-bottom: 8px; color: var(--fg); }
+.card p { font-size: 14px; color: var(--dim); }
+
+.arch { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+.arch h2 { font-size: 28px; margin-bottom: 24px; text-align: center; }
+.arch pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; font-size: 13px; line-height: 1.5; color: var(--dim); }
+
+.stats { max-width: 900px; margin: 0 auto; padding: 40px 24px; text-align: center; }
+.stats .row { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; }
+.stats .stat { }
+.stats .stat .num { font-size: 36px; font-weight: 700; color: var(--accent2); }
+.stats .stat .label { font-size: 14px; color: var(--dim); }
+
+footer { text-align: center; padding: 40px 24px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--border); margin-top: 40px; }
+
+@media (max-width: 600px) {
+  .hero h1 { font-size: 32px; }
+  .hero .tagline { font-size: 16px; }
+  .stats .row { gap: 20px; }
+}
+</style>
+</head>
+<body>
+
+<div class="lang-bar">
+  <a href="." class="active">中文</a>
+  <a href="en/">English</a>
+  <a href="ja/">日本語</a>
+</div>
+
+<section class="hero">
+  <h1><span>mempal</span></h1>
+  <p class="tagline">Coding Agent 的项目记忆工具。单二进制，混合检索，10 秒内带出处找回历史决策。</p>
+  <div class="install"><code>cargo install mempal</code></div>
+  <div class="links">
+    <a href="https://github.com/ZhangHanDong/mempal" class="primary">GitHub</a>
+    <a href="https://crates.io/crates/mempal" class="secondary">crates.io</a>
+    <a href="https://zhanghandong.github.io/mempalace-book/ch26-why-rewrite-in-rust.html" class="secondary">设计书稿</a>
+  </div>
+</section>
+
+<section class="features">
+  <h2>核心特性</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="icon">🔍</div>
+      <h3>混合检索</h3>
+      <p>BM25 关键词匹配 + 向量语义搜索，通过 RRF 融合。精确匹配错误码、函数名，也能理解语义相似性。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🧠</div>
+      <h3>知识图谱</h3>
+      <p>三元组（主语-谓语-宾语）+ 时态验证。支持 timeline 视图和 stats 统计。关系会过期。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌐</div>
+      <h3>跨项目隧道</h3>
+      <p>当同一 Room 出现在多个 Wing（项目）中，自动发现跨域链接。搜索结果内联 tunnel 提示。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🤖</div>
+      <h3>自描述协议</h3>
+      <p>MEMORY_PROTOCOL（9 条规则）嵌入 MCP ServerInfo。任何 agent 连接后立刻知道怎么用——零配置。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌍</div>
+      <h3>多语言嵌入</h3>
+      <p>model2vec-rs（BGE-M3 蒸馏）作为默认嵌入器。零原生依赖，支持中日韩英等多语言。</p>
+    </div>
+    <div class="card">
+      <div class="icon">📦</div>
+      <h3>单文件存储</h3>
+      <p>一切数据在 ~/.mempal/palace.db（SQLite + sqlite-vec）。备份是 cp，迁移是 scp。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔗</div>
+      <h3>7 个 MCP 工具</h3>
+      <p>status、search、ingest、delete、taxonomy、kg、tunnels。每个工具自带字段级文档。</p>
+    </div>
+    <div class="card">
+      <div class="icon">📝</div>
+      <h3>Agent 日记</h3>
+      <p>跨 session 行为学习。agent 记录 OBSERVATION / LESSON / PATTERN，未来 session 可搜索。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔒</div>
+      <h3>安全操作</h3>
+      <p>Soft-delete + purge 两步删除。审计日志。语义去重检测。dry-run 预览模式。</p>
+    </div>
+  </div>
+</section>
+
+<section class="arch">
+  <h2>数据流</h2>
+  <pre>
+query → BM25 (FTS5)         → 关键词排序
+      → Vector (sqlite-vec) → 语义相似度排序
+      → RRF 融合 (k=60)     → 合并排序
+      → Wing/Room 过滤      → 范围限定
+      → Tunnel 提示         → 跨项目引用
+      → 引用（drawer_id + source_file）
+  </pre>
+</section>
+
+<section class="stats">
+  <div class="row">
+    <div class="stat"><div class="num">8.5MB</div><div class="label">Release 二进制</div></div>
+    <div class="stat"><div class="num">95.2%</div><div class="label">R@5 检索精度</div></div>
+    <div class="stat"><div class="num">0</div><div class="label">原生依赖</div></div>
+    <div class="stat"><div class="num">5</div><div class="label">导入格式</div></div>
+  </div>
+</section>
+
+<footer>
+  MIT License &middot; <a href="https://github.com/ZhangHanDong/mempal">GitHub</a> &middot; <a href="https://crates.io/crates/mempal">crates.io</a>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mempal — コーディングエージェントのプロジェクトメモリツール</title>
+<meta name="description" content="シングルバイナリのプロジェクトメモリツール。ハイブリッド検索、ナレッジグラフ、マルチエージェント連携。cargo install mempal">
+<style>
+:root {
+  --bg: #0d1117; --fg: #c9d1d9; --accent: #58a6ff; --accent2: #7ee787;
+  --card: #161b22; --border: #30363d; --dim: #8b949e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', system-ui, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.8; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.lang-bar { background: var(--card); border-bottom: 1px solid var(--border); text-align: center; padding: 8px; font-size: 14px; }
+.lang-bar a { margin: 0 12px; color: var(--dim); }
+.lang-bar a.active { color: var(--accent); font-weight: 600; }
+
+.hero { max-width: 900px; margin: 0 auto; padding: 80px 24px 40px; text-align: center; }
+.hero h1 { font-size: 48px; font-weight: 700; margin-bottom: 16px; }
+.hero h1 span { color: var(--accent2); }
+.hero .tagline { font-size: 20px; color: var(--dim); margin-bottom: 32px; }
+.hero .install { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 24px; font-family: 'SF Mono', Consolas, monospace; font-size: 18px; display: inline-block; margin-bottom: 16px; }
+.hero .install code { color: var(--accent2); }
+.hero .links { margin-top: 16px; }
+.hero .links a { margin: 0 12px; padding: 8px 20px; border-radius: 6px; font-weight: 500; }
+.hero .links .primary { background: var(--accent); color: #0d1117; }
+.hero .links .secondary { border: 1px solid var(--border); color: var(--fg); }
+
+.features { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+.features h2 { font-size: 28px; margin-bottom: 32px; text-align: center; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+.card .icon { font-size: 32px; margin-bottom: 12px; }
+.card h3 { font-size: 18px; margin-bottom: 8px; color: var(--fg); }
+.card p { font-size: 14px; color: var(--dim); }
+
+.arch { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+.arch h2 { font-size: 28px; margin-bottom: 24px; text-align: center; }
+.arch pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; overflow-x: auto; font-size: 13px; line-height: 1.5; color: var(--dim); }
+
+.stats { max-width: 900px; margin: 0 auto; padding: 40px 24px; text-align: center; }
+.stats .row { display: flex; justify-content: center; gap: 40px; flex-wrap: wrap; }
+.stats .stat .num { font-size: 36px; font-weight: 700; color: var(--accent2); }
+.stats .stat .label { font-size: 14px; color: var(--dim); }
+
+footer { text-align: center; padding: 40px 24px; color: var(--dim); font-size: 13px; border-top: 1px solid var(--border); margin-top: 40px; }
+
+@media (max-width: 600px) { .hero h1 { font-size: 32px; } .hero .tagline { font-size: 16px; } }
+</style>
+</head>
+<body>
+
+<div class="lang-bar">
+  <a href="../">中文</a>
+  <a href="../en/">English</a>
+  <a href="." class="active">日本語</a>
+</div>
+
+<section class="hero">
+  <h1><span>mempal</span></h1>
+  <p class="tagline">コーディングエージェントのためのプロジェクトメモリ。シングルバイナリ、ハイブリッド検索、数秒で引用付きの過去の決定を検索。</p>
+  <div class="install"><code>cargo install mempal</code></div>
+  <div class="links">
+    <a href="https://github.com/ZhangHanDong/mempal" class="primary">GitHub</a>
+    <a href="https://crates.io/crates/mempal" class="secondary">crates.io</a>
+    <a href="https://zhanghandong.github.io/mempalace-book/en/ch26-why-rewrite-in-rust.html" class="secondary">設計書</a>
+  </div>
+</section>
+
+<section class="features">
+  <h2>主要機能</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="icon">🔍</div>
+      <h3>ハイブリッド検索</h3>
+      <p>BM25 キーワードマッチング + ベクトル意味検索を RRF（Reciprocal Rank Fusion）で統合。エラーコードの完全一致も意味的類似性も対応。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🧠</div>
+      <h3>ナレッジグラフ</h3>
+      <p>主語-述語-目的語のトリプル + 時間的妥当性。タイムラインビュー、統計情報、事実の無効化をサポート。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌐</div>
+      <h3>クロスプロジェクトトンネル</h3>
+      <p>同じ Room が複数の Wing（プロジェクト）に存在する場合、自動的にクロスドメインリンクを検出。検索結果にトンネルヒントを表示。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🤖</div>
+      <h3>自己記述プロトコル</h3>
+      <p>MEMORY_PROTOCOL（9つのルール）を MCP ServerInfo に埋め込み。エージェントは接続時にワークフローを自動的に学習——設定不要。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🌍</div>
+      <h3>多言語エンベディング</h3>
+      <p>model2vec-rs（BGE-M3 蒸留）をデフォルトエンベッダーとして使用。ネイティブ依存関係ゼロ。中国語、日本語、韓国語、英語に対応。</p>
+    </div>
+    <div class="card">
+      <div class="icon">📦</div>
+      <h3>単一ファイルストレージ</h3>
+      <p>すべてのデータは ~/.mempal/palace.db（SQLite + sqlite-vec）に格納。バックアップは cp、移行は scp。サーバープロセス不要。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔗</div>
+      <h3>7つの MCP ツール</h3>
+      <p>status、search、ingest、delete、taxonomy、kg、tunnels。各ツールは JSON スキーマにフィールドレベルのドキュメントを搭載。</p>
+    </div>
+    <div class="card">
+      <div class="icon">📝</div>
+      <h3>エージェントダイアリー</h3>
+      <p>セッション間の行動学習。エージェントが OBSERVATION / LESSON / PATTERN を記録。将来のセッションで検索・学習可能。</p>
+    </div>
+    <div class="card">
+      <div class="icon">🔒</div>
+      <h3>安全な操作</h3>
+      <p>ソフトデリート + パージの2段階削除。監査ログ。セマンティック重複検出。ドライラン プレビューモード。</p>
+    </div>
+  </div>
+</section>
+
+<section class="arch">
+  <h2>データフロー</h2>
+  <pre>
+query → BM25 (FTS5)         → キーワードランキング
+      → Vector (sqlite-vec) → 意味的類似度ランキング
+      → RRF 統合 (k=60)     → マージランキング
+      → Wing/Room フィルター → スコープ限定
+      → トンネルヒント       → クロスプロジェクト参照
+      → 引用（drawer_id + source_file）
+  </pre>
+</section>
+
+<section class="stats">
+  <div class="row">
+    <div class="stat"><div class="num">8.5MB</div><div class="label">リリースバイナリ</div></div>
+    <div class="stat"><div class="num">95.2%</div><div class="label">R@5 検索精度</div></div>
+    <div class="stat"><div class="num">0</div><div class="label">ネイティブ依存</div></div>
+    <div class="stat"><div class="num">5</div><div class="label">インジェスト形式</div></div>
+  </div>
+</section>
+
+<footer>
+  MIT License &middot; <a href="https://github.com/ZhangHanDong/mempal">GitHub</a> &middot; <a href="https://crates.io/crates/mempal">crates.io</a>
+</footer>
+
+</body>
+</html>
