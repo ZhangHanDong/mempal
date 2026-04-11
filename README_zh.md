@@ -131,6 +131,18 @@ mempal kg stats
 
 三元组支持时态验证——关系过期后可标记为无效。
 
+## Agent 日记
+
+跨 session 行为学习——agent 记录观察、教训和模式：
+
+```bash
+# 搜索日记
+mempal search "lesson" --wing agent-diary
+mempal search "pattern" --wing agent-diary --room claude
+```
+
+日记通过现有的 `mempal_ingest` 工具写入，`wing="agent-diary"`，`room=agent 名字`。MEMORY_PROTOCOL Rule 5a 教 agent 在 session 结束时写日记。可与 Claude Code 的 auto-dream 集成，实现自动记忆整理。
+
 ## 导入格式（5 种）
 
 | 格式 | 自动检测方式 |
