@@ -209,3 +209,18 @@ mempal reindex
 - Specs: [`specs/`](specs)
 - Plans: [`docs/plans/`](docs/plans)
 - Benchmark: [`benchmarks/longmemeval_s_summary.md`](benchmarks/longmemeval_s_summary.md) — includes the older 384d baseline and the newer model2vec 256d run
+
+## Book: MemPalace — Reforging Memory in Rust
+
+mempal 的设计分析和完整技术叙事，收录在《MemPalace: AI 记忆的第一性原理》Part 10（第 26-30 章）：
+
+- [中文版](https://zhanghandong.github.io/mempalace-book/ch26-why-rewrite-in-rust.html)
+- [English](https://zhanghandong.github.io/mempalace-book/en/ch26-why-rewrite-in-rust.html)
+
+| 章节 | 内容 |
+|------|------|
+| 第 26 章 | 为什么用 Rust 重铸 — 触发点、重写判断、语言选择 |
+| 第 27 章 | 保留了什么、改变了什么 — 5 维度对比 + 架构图 |
+| 第 28 章 | 自描述协议 — MEMORY_PROTOCOL、7 条规则、agent 生命周期 |
+| 第 29 章 | 多 Agent 协作 — Claude↔Codex 接力、反模式发现、agent 日记 |
+| 第 30 章 | 诚实的差距 — benchmark 数据、6 个 gap |
