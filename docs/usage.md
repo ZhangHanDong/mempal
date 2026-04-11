@@ -514,6 +514,59 @@ What it does not do:
 
 For the current local benchmark snapshot in this repository, see [`benchmarks/longmemeval_s_summary.md`](../benchmarks/longmemeval_s_summary.md).
 
+## Recommended: Auto-Remind After Commit
+
+mempal works best when AI agents save decision context after every commit — not just the code diff, but *why* the change was made, what was considered, and what's left to do. This is MEMORY_PROTOCOL Rule 4 (SAVE AFTER DECISIONS).
+
+The problem: agents forget. The solution: a Claude Code hook that reminds the agent after every `git commit`.
+
+### Setup for Claude Code
+
+Create `.claude/settings.json` in your project root:
+
+```json
+{
+  "hooks": {
+    "afterToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if echo \"$TOOL_INPUT\" | grep -q 'git commit'; then echo 'MEMPAL REMINDER: You just committed code. Call mempal_ingest to save the decision context (what was built, why, what was considered). Rule 4: SAVE AFTER DECISIONS.'; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+After this, every time the agent runs `git commit`, it sees a reminder to save the decision to mempal. The agent still decides *what* to save — the hook just ensures it doesn't forget.
+
+### What makes a good decision record
+
+Bad (just restating the diff):
+```
+Added CI workflow
+```
+
+Good (captures context a future agent needs):
+```
+Added CI with default + all-features matrix. Deliberately omitted rustfmt
+because formatting drift exists in 2 test files — cleanup is a separate
+commit. Follow-up: cargo fmt --all then add fmt check step. This completes
+priority #1 from drawer_mempal_default_a295458d.
+```
+
+The difference: a future agent reading the good version knows what was omitted, why, and what to do next. The bad version tells them nothing they can't learn from `git log`.
+
+### For other AI tools
+
+- **Codex**: Configure in `~/.codex/instructions.md` — add "After every commit, call mempal_ingest with decision context"
+- **Cursor**: Add to `.cursorrules` — same instruction
+- **Any MCP client**: The MEMORY_PROTOCOL in `mempal_status` already contains Rule 4; the hook is a reinforcement for clients that sometimes skip it
+
 ## Identity File
 
 If you use `wake-up` regularly with AI agents, you can add a user-edited identity file:
