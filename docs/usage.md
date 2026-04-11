@@ -81,14 +81,20 @@ Use this when you already know the concepts and just need the right command quic
 
 | Command | Purpose |
 |---------|---------|
-| `mempal init <DIR>` | infer a `wing` and seed initial taxonomy rooms from a project tree |
-| `mempal ingest --wing <WING> <DIR>` | chunk, embed, and store a project tree |
-| `mempal search <QUERY>` | search drawers, with optional `--wing` and `--room` filters |
-| `mempal wake-up` | generate a compact context refresh for an agent |
+| `mempal init <DIR> [--dry-run]` | infer a `wing` and seed initial taxonomy rooms from a project tree |
+| `mempal ingest --wing <WING> <DIR> [--dry-run]` | chunk, embed, and store a project tree |
+| `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
+| `mempal wake-up [--format aaak]` | context refresh sorted by importance (not just recency) |
 | `mempal compress <TEXT>` | format arbitrary text as AAAK |
+| `mempal kg add <S> <P> <O> [--source-drawer ID]` | add a knowledge graph triple |
+| `mempal kg query [--subject S] [--predicate P] [--object O]` | query triples |
+| `mempal kg timeline <ENTITY>` | chronological view of an entity's relationships |
+| `mempal kg stats` | knowledge graph statistics |
+| `mempal tunnels` | discover rooms shared across multiple wings |
 | `mempal taxonomy list` | inspect current routing keywords |
 | `mempal taxonomy edit <WING> <ROOM> --keywords ...` | tune routing behavior |
-| `mempal status` | inspect DB size, counts, schema version, and deleted drawers |
+| `mempal reindex` | re-embed all drawers after model/backend change |
+| `mempal status` | schema version, drawer counts, triples, deleted drawers, scopes |
 | `mempal delete <DRAWER_ID>` | soft-delete one drawer |
 | `mempal purge [--before ...]` | permanently remove soft-deleted drawers |
 | `mempal serve --mcp` | run the MCP server over stdio |
@@ -375,13 +381,15 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes five tools:
+The MCP server exposes seven tools:
 
-- `mempal_status`
-- `mempal_search`
-- `mempal_ingest`
-- `mempal_delete`
-- `mempal_taxonomy`
+- `mempal_status` — state + protocol + AAAK spec
+- `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints
+- `mempal_ingest` — store memories with optional importance (0-5) and dry_run
+- `mempal_delete` — soft-delete with audit
+- `mempal_taxonomy` — list or edit routing keywords
+- `mempal_kg` — knowledge graph: add/query/invalidate/timeline/stats
+- `mempal_tunnels` — cross-wing room discovery
 
 Example request shapes:
 

@@ -1,324 +1,199 @@
 # mempal
 
-Rust implementation of a project memory tool for coding agents.
-
-`mempal` stores raw project memory in SQLite, indexes embeddings with `sqlite-vec`, and lets agents recover prior decisions with citations in a few commands. The current repository includes the full P0-P4 scope: CLI, ingest pipeline, vector search, routing, MCP server, AAAK formatting, and a feature-gated REST API.
+Project memory for coding agents. Single binary, `cargo install mempal`, find past decisions with citations in seconds.
 
 ## What It Does
 
-- Stores raw memory drawers in a single SQLite database at `~/.mempal/palace.db` by default.
-- Embeds content with a pluggable `Embedder` abstraction.
-- Uses ONNX locally by default with `all-MiniLM-L6-v2`; the model and tokenizer are downloaded on first use.
-- Searches with required citations: every result includes `drawer_id` and `source_file`.
-- Routes queries through taxonomy-aware `wing` and `room` scopes.
-- Exposes the same memory through CLI, MCP, and optional REST interfaces.
-- Supports AAAK compression as an output-side formatter instead of a storage format.
+```
+Agent writes code → commits → mempal saves the decision context
+Next session (any agent) → mempal search → finds the decision with source citation
+```
+
+- **Hybrid search**: BM25 keyword matching + vector semantic search, merged via Reciprocal Rank Fusion
+- **Knowledge graph**: subject-predicate-object triples with temporal validity (valid_from/valid_to)
+- **Cross-project tunnels**: automatic discovery when the same room appears in multiple wings
+- **Self-describing protocol**: MEMORY_PROTOCOL embedded in MCP ServerInfo teaches any agent how to use mempal — no system prompt configuration required
+- **Multilingual**: model2vec-rs (BGE-M3 distilled) as default embedder, zero native dependencies
+- **Single file**: everything lives in `~/.mempal/palace.db` (SQLite + sqlite-vec)
 
 ## Quick Start
 
-Local install:
-
 ```bash
 cargo install --path crates/mempal-cli --locked
+
+mempal init ~/code/myapp
+mempal ingest ~/code/myapp --wing myapp
+mempal search "auth decision clerk"
+mempal wake-up
 ```
 
-Install with REST support:
+With REST support:
 
 ```bash
 cargo install --path crates/mempal-cli --locked --features rest
 ```
 
-Index a project and search it:
-
-```bash
-mempal init ~/code/myapp
-mempal ingest ~/code/myapp --wing myapp
-mempal ingest ~/code/myapp --wing myapp --dry-run
-mempal search "auth decision clerk" --json
-mempal wake-up
-```
-
-Need a complete walkthrough instead of the short path above: see [`docs/usage.md`](docs/usage.md).
-
-Typical output flow:
-
-```bash
-mempal taxonomy list
-mempal taxonomy edit myapp auth --keywords "auth,login,clerk"
-mempal search "how did we decide auth?" --wing myapp
-mempal wake-up --format aaak
-```
-
 ## Configuration
 
-Config is loaded from `~/.mempal/config.toml`. If the file is missing, mempal uses built-in defaults.
-
-Default behavior:
-
-- `db_path = "~/.mempal/palace.db"`
-- `embed.backend = "onnx"`
-- `embed.api_endpoint = None`
-- `embed.api_model = None`
-
-Example config:
+Config at `~/.mempal/config.toml` (optional, defaults work without it):
 
 ```toml
 db_path = "~/.mempal/palace.db"
 
 [embed]
-backend = "onnx"
+backend = "model2vec"                          # default, zero native deps
+# model = "minishlab/potion-multilingual-128M" # default multilingual model
 ```
 
-Switch to an external embedding API:
+Other backends:
 
 ```toml
-db_path = "~/.mempal/palace.db"
+# Local ONNX (requires --features onnx)
+[embed]
+backend = "onnx"
 
+# External API
 [embed]
 backend = "api"
 api_endpoint = "http://localhost:11434/api/embeddings"
 api_model = "nomic-embed-text"
 ```
 
-## Command Overview
+## Commands
 
-`mempal` currently exposes these subcommands:
+| Command | Purpose |
+|---------|---------|
+| `mempal init <DIR> [--dry-run]` | Infer wing/rooms from project tree |
+| `mempal ingest <DIR> --wing <W> [--dry-run]` | Chunk, embed, and store |
+| `mempal search <QUERY> [--wing W] [--room R] [--json]` | Hybrid search (BM25 + vector + RRF) |
+| `mempal wake-up [--format aaak]` | Context refresh, sorted by importance |
+| `mempal compress <TEXT>` | AAAK format output |
+| `mempal delete <DRAWER_ID>` | Soft-delete a drawer |
+| `mempal purge [--before TIMESTAMP]` | Permanently remove soft-deleted drawers |
+| `mempal kg add <S> <P> <O>` | Add a knowledge graph triple |
+| `mempal kg query [--subject S] [--predicate P]` | Query triples |
+| `mempal kg timeline <ENTITY>` | Chronological view of an entity |
+| `mempal kg stats` | Knowledge graph statistics |
+| `mempal tunnels` | Cross-wing room links |
+| `mempal taxonomy list / edit` | Manage routing keywords |
+| `mempal reindex` | Re-embed all drawers after model change |
+| `mempal status` | DB stats, schema version, scopes |
+| `mempal serve [--mcp]` | MCP server (+ REST with feature) |
+| `mempal bench longmemeval <FILE>` | LongMemEval retrieval benchmark |
 
-- `init`: infer taxonomy rooms from a project tree and seed the taxonomy table.
-- `ingest`: detect files, normalize content, chunk, embed, and store drawers. `--dry-run` previews file/chunk/skip counts without writing drawers or vectors.
-- `search`: vector search with optional `wing` and `room` filters.
-- `wake-up`: emit a short memory summary for agent context refresh.
-- `compress`: convert arbitrary text into AAAK output.
-- `bench`: run benchmark adapters against external evaluation datasets.
-- `taxonomy`: list or edit taxonomy entries.
-- `serve`: run MCP stdio, and with `rest` enabled also run the local REST API.
-- `status`: print drawer counts, taxonomy counts, DB size, and per-scope counts.
-- `status`: print schema version, drawer counts, taxonomy counts, DB size, and per-scope counts.
+## MCP Server (7 tools)
 
-For exact CLI syntax:
+`mempal serve --mcp` exposes these tools via Model Context Protocol:
+
+| Tool | Purpose |
+|------|---------|
+| `mempal_status` | State + protocol + AAAK spec (teaches agent on first call) |
+| `mempal_search` | Hybrid search with tunnel hints and citations |
+| `mempal_ingest` | Store memories with optional importance (0-5) and dry_run |
+| `mempal_delete` | Soft-delete with audit trail |
+| `mempal_taxonomy` | List or edit routing keywords |
+| `mempal_kg` | Knowledge graph: add/query/invalidate/timeline/stats |
+| `mempal_tunnels` | Cross-wing room discovery |
+
+The server embeds MEMORY_PROTOCOL (9 behavioral rules) in the MCP `initialize.instructions` field. Any MCP client learns the workflow automatically.
+
+## Memory Protocol
+
+mempal teaches agents these rules through self-description:
+
+0. **FIRST-TIME SETUP** — call `mempal_status` to discover wings before filtering
+1. **WAKE UP** — different clients have different pre-load mechanisms
+2. **VERIFY BEFORE ASSERTING** — search before stating project facts
+3. **QUERY WHEN UNCERTAIN** — search on "why did we...", "last time we..."
+3a. **TRANSLATE TO ENGLISH** — translate non-English queries before searching
+4. **SAVE AFTER DECISIONS** — persist rationale, not just outcomes
+5. **CITE EVERYTHING** — reference drawer_id and source_file
+5a. **KEEP A DIARY** — record behavioral observations in wing="agent-diary"
+
+## Search Architecture
+
+```
+query → BM25 (FTS5)     → ranked by keyword match
+      → Vector (sqlite-vec) → ranked by semantic similarity
+      → RRF Fusion (k=60)   → merged ranking
+      → Wing/Room filter     → scoped results
+      → Tunnel hints         → cross-project references
+```
+
+## Knowledge Graph
 
 ```bash
-mempal --help
-mempal serve --help
+mempal kg add "Kai" "recommends" "Clerk"
+mempal kg add "Clerk" "replaced" "Auth0" --source-drawer drawer_xxx
+mempal kg timeline "Kai"
+mempal kg stats
 ```
 
-## Interfaces
+Triples support temporal validity — relationships can be invalidated when they expire.
 
-### CLI
+## Ingest Formats (5)
 
-The CLI is the primary interface for local indexing and search.
+| Format | Auto-detected by |
+|--------|-----------------|
+| Claude Code JSONL | `type` + `message` fields |
+| ChatGPT JSON | Array or `mapping` tree |
+| Codex CLI JSONL | `session_meta` + `event_msg` entries |
+| Slack DM JSON | `type: "message"` + `user` + `text` |
+| Plain text | Fallback |
+
+## AAAK Compression
+
+Output-only format readable by any LLM without decoding:
 
 ```bash
-mempal search "database decision postgresql analytics" --json --wing myproject
+mempal compress "Kai recommended Clerk over Auth0 based on pricing and DX"
+# V1|manual|compress|1744156800|cli
+# 0:KAI+CLK+AUT|kai_clerk_auth0|"Kai recommended Clerk over Auth0..."|★★★★|determ|DECISION
 ```
 
-### Benchmarking
+Chinese text uses jieba-rs POS tagging for proper word segmentation.
 
-`mempal` can run a native LongMemEval harness while reusing the same dataset shape and retrieval metrics documented in `mempalace`.
-
-```bash
-mempal bench longmemeval /path/to/longmemeval_s_cleaned.json
-mempal bench longmemeval /path/to/longmemeval_s_cleaned.json --mode aaak
-mempal bench longmemeval /path/to/longmemeval_s_cleaned.json --mode rooms --limit 20
-mempal bench longmemeval /path/to/longmemeval_s_cleaned.json --granularity turn --out benchmarks/results_longmemeval.jsonl
-```
-
-Supported modes:
-
-- `raw`: ingest raw user text
-- `aaak`: ingest AAAK-formatted text, query with raw questions
-- `rooms`: install benchmark taxonomy rooms and let `mempal` route by taxonomy
-
-Current `s_cleaned` snapshot, aligned to the public `mempalace` LongMemEval framing:
-
-| System | Mode | LongMemEval R@5 | External API Calls | Notes |
-|--------|------|-----------------|--------------------|-------|
-| `mempal` | raw + session | **96.6%** | Zero | Local ONNX embedder, full `500`-question run |
-| `mempal` | aaak + session | **95.2%** | Zero | Slightly below raw, but much closer than MemPalace's published AAAK result |
-| `mempal` | rooms + session | **87.8%** | Zero | Current taxonomy routing regresses on LongMemEval |
-| `mempalace` | Raw (published) | **96.6%** | Zero | Public README claim |
-| `mempalace` | AAAK (published) | **84.2%** | Zero | Public README claim |
-
-Interpretation:
-
-- `mempal` matches the published `mempalace` raw baseline on LongMemEval R@5.
-- `mempal` AAAK still regresses relative to raw, but far less than the published `mempalace` AAAK number.
-- `rooms` is not ready to be the default benchmark mode in `mempal`.
-- These numbers are honest only for the retrieval-only `LongMemEval s_cleaned` path. They do **not** imply parity on held-out, LoCoMo, rerank, or full answer-generation benchmarks.
-
-Artifacts from the local runs in this repository:
-
-- [`benchmarks/longmemeval_s_summary.md`](benchmarks/longmemeval_s_summary.md)
-
-The full JSONL ranking logs are generated locally under `benchmarks/*.jsonl` but are not checked into git.
-
-Cost note:
-
-- The zero-API claim above applies to the default local ONNX backend. If `mempal` is configured with `[embed] backend = "api"`, then even `raw` mode will incur embedding API calls.
-
-### MCP
-
-`mempal serve --mcp` runs the MCP server over stdio.
-
-Available tools:
-
-- `mempal_status` — returns counts, DB size, scope breakdown, dynamically generated `aaak_spec`, and `memory_protocol` (a behavioral guide teaching the AI when to search/save). AI learns its own workflow on first call; zero system prompt configuration.
-- `mempal_search` — vector search with optional wing/room filters, every result carries `drawer_id` + `source_file`
-- `mempal_ingest` — store a single memory drawer from raw content
-- `mempal_taxonomy` — list or edit taxonomy entries
-
-If mempal is built without the `rest` feature, plain `mempal serve` also runs MCP stdio only.
-
-### Memory Protocol and Identity
-
-mempal teaches AI agents their workflow through two self-describing outputs:
-
-1. **Memory protocol** — embedded in `mempal_status` response and `mempal wake-up` output. Tells the AI when to verify facts, when to save decisions, and how to cite sources.
-2. **L0 identity** — read from `~/.mempal/identity.txt`. A user-edited plain text file describing role, working style, and key projects. Loaded into wake-up output automatically.
-
-Create an identity file (optional but recommended):
-
-```bash
-mkdir -p ~/.mempal
-$EDITOR ~/.mempal/identity.txt
-```
-
-Example content:
-
-```
-Role: Rust backend engineer at Acme.
-Current focus: auth rewrite, Clerk migration.
-Working style: small reversible edits, verify before asserting.
-```
-
-### Optional: Claude Code Hooks
-
-For AIs that forget to save proactively, mempal ships reference hook scripts in `hooks/`:
-
-- `hooks/mempal_save_hook.sh` — a `Stop` hook that reminds the AI to save decisions every Nth conversation turn (configurable via `MEMPAL_SAVE_INTERVAL`, default 10).
-- `hooks/mempal_precompact_hook.sh` — a `PreCompact` hook that forces an emergency save before context compression.
-
-Both hooks are **optional**. mempal works without them — the memory protocol embedded in `mempal_status` is the primary mechanism for teaching the AI to self-manage memory. The hook scripts exist as a safety net.
-
-Install by adding to `~/.claude/settings.json` or project-level `.claude/settings.local.json`:
-
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "matcher": "*",
-      "hooks": [{"type": "command", "command": "/absolute/path/to/mempal/hooks/mempal_save_hook.sh"}]
-    }],
-    "PreCompact": [{
-      "hooks": [{"type": "command", "command": "/absolute/path/to/mempal/hooks/mempal_precompact_hook.sh"}]
-    }]
-  }
-}
-```
-
-### REST
-
-Build with `--features rest` to enable the REST server.
-
-With the `rest` feature enabled:
-
-- `mempal serve` starts MCP stdio and REST together.
-- REST binds to `127.0.0.1:3080`.
-- CORS only allows localhost origins.
-
-Endpoints:
-
-- `GET /api/status`
-- `GET /api/search?q=...&wing=...&room=...&top_k=...`
-- `POST /api/ingest`
-- `GET /api/taxonomy`
-
-Example:
-
-```bash
-curl 'http://127.0.0.1:3080/api/status'
-curl 'http://127.0.0.1:3080/api/search?q=clerk&wing=myapp'
-curl -X POST 'http://127.0.0.1:3080/api/ingest' \
-  -H 'content-type: application/json' \
-  -d '{"content":"decided to use Clerk","wing":"myapp","room":"auth"}'
-```
-
-## AAAK Format
-
-AAAK is a compressed memory dialect readable by any LLM without decoding. It is **output-only** — raw text always stays in the drawer, AAAK just reformats it for compact context windows.
-
-### Format Example
-
-```
-V1|myapp|auth|2026-04-08|readme
-0:KAI+CLK|clerk_auth|"Kai recommended Clerk over Auth0 based on pricing"|★★★★|determ|DECISION
-```
-
-Each line is a Zettel (memory card) with pipe-separated fields: entity codes, topics, quoted content, importance stars, emotion, and semantic flags. Documents can also include `T:` (tunnel/link) and `ARC:` (emotion arc) lines.
-
-### AAAK CLI Usage
-
-```bash
-# Compress arbitrary text
-mempal compress "We chose Clerk over Auth0 because pricing was better"
-
-# Wake-up summary in AAAK format
-mempal wake-up --format aaak
-```
-
-### Chinese Support
-
-AAAK uses **jieba-rs** for real Chinese word segmentation and POS tagging — not bigram heuristics. It correctly identifies person names, places, organizations, and content words:
-
-```bash
-mempal compress "阿里巴巴集团在杭州发布了新的云服务产品"
-# → entities: 阿里巴巴 (nz), 杭州 (ns)
-# → topics: 集团, 发布, 服务
-
-mempal compress "张三推荐Clerk替换Auth0，因为价格更优"
-# → entities: 张三 (nr), CLK, AUT
-# → topics: 推荐, 替换, 价格
-```
-
-Mixed Chinese-English text, fullwidth punctuation, and Chinese emotion/flag keywords (决定, 架构, 部署, etc.) all work naturally. Jieba's dictionary is lazy-loaded on first use.
-
-For the full format spec, see [`docs/aaak-dialect.md`](docs/aaak-dialect.md).
-
-## Architecture Notes
-
-- Storage is always raw-first: drawer text lives in `drawers`, vectors live in `drawer_vectors`.
-- SQLite schema version is tracked via `PRAGMA user_version`; opening the database applies bundled forward migrations up to the current binary's supported version.
-- AAAK is output-only and is not part of ingest or search internals.
-- Search results are citation-bearing by construction.
-- `source_file` values are stored relative to the ingest root, so re-ingesting the same tree via absolute or relative paths stays citation-stable.
-- Routing is deterministic and explainable through `route.reason` and `route.confidence`.
-- The repository is organized as a workspace:
+## Architecture
 
 | Crate | Responsibility |
-| --- | --- |
-| `mempal-core` | Types, config, SQLite schema, taxonomy access |
-| `mempal-embed` | `Embedder` trait, ONNX embedder, API embedder |
-| `mempal-ingest` | Detection, normalization, chunking, ingest pipeline |
-| `mempal-search` | Vector search, filtering, query routing |
-| `mempal-aaak` | AAAK encode/decode and roundtrip verification |
-| `mempal-mcp` | MCP server with four tools |
+|-------|---------------|
+| `mempal-core` | Types, SQLite schema v4, taxonomy, triples |
+| `mempal-embed` | Embedder trait (model2vec default, ort optional) |
+| `mempal-ingest` | Format detection, normalization, chunking (5 formats) |
+| `mempal-search` | Hybrid search (BM25 + vector + RRF), routing, tunnels |
+| `mempal-aaak` | AAAK encode/decode with BNF grammar + roundtrip tests |
+| `mempal-mcp` | MCP server (7 tools) |
 | `mempal-api` | Feature-gated REST API |
 | `mempal-cli` | CLI entrypoint |
 
-## Development
+Key design choices:
+- **model2vec-rs** default embedder — zero native deps, multilingual (BGE-M3 distilled)
+- **ort (ONNX)** available behind `onnx` feature flag for max quality
+- **FTS5** for BM25 keyword search — synced via SQLite triggers
+- **Soft-delete** with audit trail — `mempal delete` + `mempal purge`
+- **Importance ranking** — drawers have 0-5 importance, wake-up sorts by importance
+- **Semantic dedup** — ingest warns (doesn't block) when similar content exists
 
-Common verification commands:
+## Development
 
 ```bash
 cargo test --workspace
 cargo test --workspace --all-features
-cargo clippy --workspace --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all --check
 ```
 
-Useful docs in this repo:
+After changing the embedding model, re-embed existing drawers:
+
+```bash
+mempal reindex
+```
+
+## Docs
 
 - Design: [`docs/specs/2026-04-08-mempal-design.md`](docs/specs/2026-04-08-mempal-design.md)
 - Usage guide: [`docs/usage.md`](docs/usage.md)
 - AAAK dialect: [`docs/aaak-dialect.md`](docs/aaak-dialect.md)
 - Specs: [`specs/`](specs)
-- Implementation plans: [`docs/plans/`](docs/plans)
+- Plans: [`docs/plans/`](docs/plans)
+- Benchmark: [`benchmarks/longmemeval_s_summary.md`](benchmarks/longmemeval_s_summary.md)
