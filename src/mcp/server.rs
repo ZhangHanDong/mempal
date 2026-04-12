@@ -1,11 +1,12 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::core::{
     db::Database,
     types::{Drawer, SourceType, Triple},
     utils::{build_drawer_id, build_triple_id, current_timestamp, source_file_or_synthetic},
 };
+use crate::cowork::{PeekError, PeekRequest as CoworkPeekRequest, Tool, peek_partner};
 use crate::embed::EmbedderFactory;
 use crate::search::{resolve_route, search_with_vector};
 use anyhow::Context;
@@ -18,9 +19,9 @@ use rmcp::{
 
 use super::tools::{
     DeleteRequest, DeleteResponse, DuplicateWarning, IngestRequest, IngestResponse, KgRequest,
-    KgResponse, KgStatsDto, ScopeCount, SearchRequest, SearchResponse, SearchResultDto,
-    StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse, TripleDto, TunnelDto,
-    TunnelsResponse,
+    KgResponse, KgStatsDto, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount,
+    SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
+    TaxonomyRequest, TaxonomyResponse, TripleDto, TunnelDto, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -28,6 +29,9 @@ pub struct MempalMcpServer {
     db_path: PathBuf,
     embedder_factory: Arc<dyn EmbedderFactory>,
     tool_router: ToolRouter<Self>,
+    /// Captured via `initialize` override so `auto` peek mode can infer the
+    /// partner from the calling MCP client's self-reported name.
+    client_name: Arc<Mutex<Option<String>>>,
 }
 
 impl MempalMcpServer {
@@ -43,6 +47,7 @@ impl MempalMcpServer {
             db_path,
             embedder_factory,
             tool_router: Self::tool_router(),
+            client_name: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -382,6 +387,66 @@ impl MempalMcpServer {
             .collect();
         Ok(Json(TunnelsResponse { tunnels }))
     }
+
+    #[tool(
+        name = "mempal_peek_partner",
+        description = "Read the partner coding agent's LIVE session log (Claude Code ↔ Codex) without storing it in mempal. Returns the most recent user+assistant messages from their active session file. Use this for CURRENT partner state; use mempal_search for CRYSTALLIZED past decisions. Peek is a pure read — it never writes to mempal drawers. Pass tool=\"auto\" to infer the partner from MCP ClientInfo, or tool=\"claude\"/\"codex\" explicitly."
+    )]
+    async fn mempal_peek_partner(
+        &self,
+        Parameters(request): Parameters<PeekPartnerRequest>,
+    ) -> std::result::Result<Json<PeekPartnerResponse>, ErrorData> {
+        let tool = Tool::from_str_ci(&request.tool).ok_or_else(|| {
+            ErrorData::invalid_params(
+                format!(
+                    "unknown tool `{}`: expected claude|codex|auto",
+                    request.tool
+                ),
+                None,
+            )
+        })?;
+
+        let caller_tool = self
+            .client_name
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .and_then(|n| Tool::from_str_ci(&n));
+
+        let cwd = std::env::current_dir()
+            .map_err(|e| ErrorData::internal_error(format!("cwd unavailable: {e}"), None))?;
+
+        let cowork_req = CoworkPeekRequest {
+            tool,
+            limit: request.limit.unwrap_or(30),
+            since: request.since,
+            cwd,
+            caller_tool,
+            home_override: None,
+        };
+
+        let resp = peek_partner(cowork_req).map_err(|e| match e {
+            PeekError::CannotInferPartner | PeekError::SelfPeek => {
+                ErrorData::invalid_params(e.to_string(), None)
+            }
+            PeekError::Io(_) | PeekError::Parse(_) => {
+                ErrorData::internal_error(e.to_string(), None)
+            }
+        })?;
+
+        Ok(Json(PeekPartnerResponse {
+            partner_tool: resp.partner_tool.as_str().to_string(),
+            session_path: resp.session_path,
+            session_mtime: resp.session_mtime,
+            partner_active: resp.partner_active,
+            messages: resp
+                .messages
+                .into_iter()
+                .map(PeekMessageDto::from)
+                .collect(),
+            truncated: resp.truncated,
+        }))
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -394,6 +459,27 @@ impl ServerHandler for MempalMcpServer {
         // mechanism; `mempal_status` keeps the same text as a fallback/reference.
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(crate::core::protocol::MEMORY_PROTOCOL)
+    }
+
+    fn initialize(
+        &self,
+        request: rmcp::model::InitializeRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl std::future::Future<Output = std::result::Result<rmcp::model::InitializeResult, ErrorData>>
+    + Send
+    + '_ {
+        // Capture the calling client's tool name so `mempal_peek_partner`
+        // with `tool: "auto"` can infer which partner to read (e.g.,
+        // caller=claude-code ⇒ peek codex; caller=codex-cli ⇒ peek claude).
+        if let Ok(mut guard) = self.client_name.lock() {
+            *guard = Some(request.client_info.name.clone());
+        }
+        // Preserve rmcp's default behavior: store peer_info so downstream
+        // rmcp internals can read client capabilities.
+        if context.peer.peer_info().is_none() {
+            context.peer.set_peer_info(request);
+        }
+        std::future::ready(Ok(self.get_info().into()))
     }
 }
 

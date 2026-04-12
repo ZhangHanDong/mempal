@@ -196,6 +196,51 @@ pub struct TunnelDto {
     pub wings: Vec<String>,
 }
 
+// --- Cowork peek ---
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct PeekPartnerRequest {
+    /// Which agent tool's session to read. "auto" uses MCP ClientInfo.name
+    /// to infer the partner (Claude ↔ Codex); "claude" or "codex" bypasses
+    /// inference. If you explicitly name your own tool the call is rejected
+    /// to prevent self-peek.
+    pub tool: String,
+
+    /// Maximum number of user+assistant messages to return. Default 30.
+    pub limit: Option<usize>,
+
+    /// Optional RFC3339 timestamp cutoff — only messages strictly newer than
+    /// this are returned.
+    pub since: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PeekPartnerResponse {
+    pub partner_tool: String,
+    pub session_path: Option<String>,
+    pub session_mtime: Option<String>,
+    pub partner_active: bool,
+    pub messages: Vec<PeekMessageDto>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PeekMessageDto {
+    pub role: String,
+    pub at: String,
+    pub text: String,
+}
+
+impl From<crate::cowork::PeekMessage> for PeekMessageDto {
+    fn from(m: crate::cowork::PeekMessage) -> Self {
+        Self {
+            role: m.role,
+            at: m.at,
+            text: m.text,
+        }
+    }
+}
+
 impl From<SearchResult> for SearchResultDto {
     fn from(value: SearchResult) -> Self {
         Self {
