@@ -1,12 +1,11 @@
 //! Codex session reader.
 
-use crate::cowork::peek::{PeekError, PeekMessage, parse_rfc3339};
+use crate::cowork::peek::{PeekError, PeekMessage, days_to_ymd, parse_rfc3339};
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
-use walkdir::WalkDir;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Read the first line of a Codex rollout jsonl and extract `payload.cwd`
 /// from the `session_meta` entry. Returns `None` if the file can't be
@@ -26,37 +25,65 @@ pub fn read_session_cwd(path: &Path) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Walk a Codex sessions base directory (e.g. `~/.codex/sessions`), find
-/// all `rollout-*.jsonl` files whose `session_meta.payload.cwd` matches
-/// `target_cwd`, and return the latest one by mtime.
+/// Scan the **last 7 days** of the Codex sessions directory
+/// (`~/.codex/sessions/YYYY/MM/DD/`) for `rollout-*.jsonl` files whose
+/// `session_meta.payload.cwd` matches `target_cwd`. Returns the latest
+/// matching file by mtime.
+///
+/// The window is anchored at `SystemTime::now()`. Sessions older than 7
+/// days are not considered, per spec (`specs/p6-cowork-peek-and-decide.spec.md`
+/// Decisions line "扫最近 7 天的目录"). This keeps the scan bounded even
+/// when `~/.codex/sessions` has accumulated months of history.
 pub fn find_latest_session_for_cwd(
     base: &Path,
     target_cwd: &str,
 ) -> Result<Option<(PathBuf, SystemTime)>, PeekError> {
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    find_latest_session_for_cwd_at(base, target_cwd, now_secs)
+}
+
+/// Testable variant of `find_latest_session_for_cwd` that accepts an
+/// explicit "now" in epoch seconds. Same window semantics — scans the
+/// day `floor(now / 86400)` and the 6 preceding days.
+pub(crate) fn find_latest_session_for_cwd_at(
+    base: &Path,
+    target_cwd: &str,
+    now_epoch_secs: i64,
+) -> Result<Option<(PathBuf, SystemTime)>, PeekError> {
+    let today_days = now_epoch_secs.div_euclid(86400);
     let mut candidates: Vec<(PathBuf, SystemTime)> = Vec::new();
 
-    for entry in WalkDir::new(base)
-        .max_depth(6)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if !path.is_file() {
+    for offset in 0..7i64 {
+        let (year, month, day) = days_to_ymd(today_days - offset);
+        let day_dir = base
+            .join(format!("{year:04}"))
+            .join(format!("{month:02}"))
+            .join(format!("{day:02}"));
+        let Ok(entries) = fs::read_dir(&day_dir) else {
             continue;
-        }
-        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if !name.starts_with("rollout-") {
-            continue;
-        }
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.starts_with("rollout-") {
+                continue;
+            }
 
-        if let Some(cwd) = read_session_cwd(path) {
-            if cwd == target_cwd {
-                if let Ok(metadata) = entry.metadata() {
-                    if let Ok(mtime) = metadata.modified() {
-                        candidates.push((path.to_path_buf(), mtime));
+            if let Some(cwd) = read_session_cwd(&path) {
+                if cwd == target_cwd {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(mtime) = metadata.modified() {
+                            candidates.push((path.clone(), mtime));
+                        }
                     }
                 }
             }
@@ -202,11 +229,23 @@ mod tests {
         assert!(truncated);
     }
 
+    // "Now" for the deterministic unit tests: 2026-04-13T12:00:00Z.
+    // Pick this so the 7-day window covers 2026-04-07..2026-04-13
+    // (both existing fixtures 2026/04/12 and 2026/04/13 are in range).
+    const FIXED_NOW_EPOCH_2026_04_13: i64 = {
+        // days_from_civil(2026, 4, 13) = 20556 → * 86400 + 12h
+        20556_i64 * 86400 + 12 * 3600
+    };
+
     #[test]
     fn walks_codex_dir_filtering_by_cwd() {
         let base = Path::new("tests/fixtures/cowork/codex");
-        let result =
-            find_latest_session_for_cwd(base, "/tmp/fake-project").expect("find session");
+        let result = find_latest_session_for_cwd_at(
+            base,
+            "/tmp/fake-project",
+            FIXED_NOW_EPOCH_2026_04_13,
+        )
+        .expect("find session");
         assert!(result.is_some());
         let (path, _mtime) = result.unwrap();
         assert!(
@@ -218,9 +257,32 @@ mod tests {
     #[test]
     fn walks_codex_dir_excludes_other_projects() {
         let base = Path::new("tests/fixtures/cowork/codex");
-        let result =
-            find_latest_session_for_cwd(base, "/tmp/fake-project").expect("find session");
+        let result = find_latest_session_for_cwd_at(
+            base,
+            "/tmp/fake-project",
+            FIXED_NOW_EPOCH_2026_04_13,
+        )
+        .expect("find session");
         let path = result.unwrap().0;
         assert!(!path.to_string_lossy().contains("otherproject"));
+    }
+
+    #[test]
+    fn seven_day_window_excludes_sessions_older_than_7_days() {
+        // Fixture 2026/04/12 is 1 day before "now" (2026-04-13), IN window.
+        // Fixture 2026/04/06 would be 7 days before "now", OUT of window.
+        // Simulate an "8-day-old" session by advancing the injected now
+        // to 2026-04-20T00:00:00Z: days window becomes 04/14..04/20, and
+        // the 04/13 fixture (valid cwd match) falls OUT of the window.
+        let base = Path::new("tests/fixtures/cowork/codex");
+        // 2026-04-20T00:00:00Z → days_from_civil(2026, 4, 20) = 20563
+        let now_epoch = 20563_i64 * 86400;
+        let result =
+            find_latest_session_for_cwd_at(base, "/tmp/fake-project", now_epoch)
+                .expect("find session");
+        assert!(
+            result.is_none(),
+            "04/13 fixture must fall outside the 04/14..04/20 window, got {result:?}"
+        );
     }
 }

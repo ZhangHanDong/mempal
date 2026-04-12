@@ -131,7 +131,7 @@ pub fn format_rfc3339(t: SystemTime) -> String {
 
 /// Howard Hinnant's civil_from_days — convert days since 1970-01-01 to
 /// (year, month, day) in the proleptic Gregorian calendar.
-fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
+pub(crate) fn days_to_ymd(mut days: i64) -> (i64, u32, u32) {
     days += 719468;
     let era = if days >= 0 { days } else { days - 146096 } / 146097;
     let doe = (days - era * 146097) as u64;
