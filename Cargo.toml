@@ -1,6 +1,6 @@
 [package]
 name = "mempal"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 description = "Project memory for coding agents. Single binary, hybrid search, knowledge graph."
