@@ -254,12 +254,9 @@ mod tests {
     #[test]
     fn walks_codex_dir_filtering_by_cwd() {
         let base = Path::new("tests/fixtures/cowork/codex");
-        let result = find_latest_session_for_cwd_at(
-            base,
-            "/tmp/fake-project",
-            FIXED_NOW_EPOCH_2026_04_13,
-        )
-        .expect("find session");
+        let result =
+            find_latest_session_for_cwd_at(base, "/tmp/fake-project", FIXED_NOW_EPOCH_2026_04_13)
+                .expect("find session");
         assert!(result.is_some());
         let (path, _mtime) = result.unwrap();
         assert!(
@@ -271,12 +268,9 @@ mod tests {
     #[test]
     fn walks_codex_dir_excludes_other_projects() {
         let base = Path::new("tests/fixtures/cowork/codex");
-        let result = find_latest_session_for_cwd_at(
-            base,
-            "/tmp/fake-project",
-            FIXED_NOW_EPOCH_2026_04_13,
-        )
-        .expect("find session");
+        let result =
+            find_latest_session_for_cwd_at(base, "/tmp/fake-project", FIXED_NOW_EPOCH_2026_04_13)
+                .expect("find session");
         let path = result.unwrap().0;
         assert!(!path.to_string_lossy().contains("otherproject"));
     }
@@ -299,9 +293,8 @@ mod tests {
         // 2026-04-12T21:00Z = 2026-04-13T05:00 in Asia/Shanghai.
         // days_from_civil(2026, 4, 12) = 20555.
         let now_epoch = 20555_i64 * 86400 + 21 * 3600;
-        let result =
-            find_latest_session_for_cwd_at(base, "/tmp/fake-project", now_epoch)
-                .expect("find session");
+        let result = find_latest_session_for_cwd_at(base, "/tmp/fake-project", now_epoch)
+            .expect("find session");
         assert!(
             result.is_some(),
             "expected to find the 2026/04/13 fixture at UTC 2026-04-12T21:00 \
@@ -326,9 +319,8 @@ mod tests {
         let base = Path::new("tests/fixtures/cowork/codex");
         // days_from_civil(2026, 4, 22) = 20565
         let now_epoch = 20565_i64 * 86400;
-        let result =
-            find_latest_session_for_cwd_at(base, "/tmp/fake-project", now_epoch)
-                .expect("find session");
+        let result = find_latest_session_for_cwd_at(base, "/tmp/fake-project", now_epoch)
+            .expect("find session");
         assert!(
             result.is_none(),
             "04/13 fixture must fall outside the 04/15..04/23 window, got {result:?}"

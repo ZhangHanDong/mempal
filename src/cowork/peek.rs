@@ -119,7 +119,10 @@ pub fn infer_partner(requested: Tool, caller_tool: Option<Tool>) -> Result<Tool,
 
 /// Format a SystemTime as RFC3339 UTC (seconds precision).
 pub fn format_rfc3339(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let days = (secs / 86400) as i64;
     let sec_of_day = secs % 86400;
     let hour = sec_of_day / 3600;
@@ -245,8 +248,7 @@ pub(crate) fn parse_rfc3339(s: &str) -> Option<i64> {
         return None;
     }
 
-    let local_secs =
-        days * 86400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64;
+    let local_secs = days * 86400 + hour as i64 * 3600 + minute as i64 * 60 + second as i64;
     Some(local_secs - offset_secs)
 }
 
@@ -304,8 +306,7 @@ fn peek_codex(request: &PeekRequest, target: Tool) -> Result<PeekResponse, PeekE
         return Ok(empty_response(target));
     };
 
-    let (messages, truncated) =
-        parse_codex_jsonl(&path, request.since.as_deref(), request.limit)?;
+    let (messages, truncated) = parse_codex_jsonl(&path, request.since.as_deref(), request.limit)?;
 
     Ok(PeekResponse {
         partner_tool: target,
@@ -441,15 +442,36 @@ mod tests {
         // instead of being rejected. Round-trip validation fixes this.
 
         // Non-leap-year dates that look valid positionally but aren't:
-        assert!(parse_rfc3339("2026-02-31T00:00:00Z").is_none(), "Feb 31 is impossible");
-        assert!(parse_rfc3339("2025-04-31T00:00:00Z").is_none(), "April has 30 days");
-        assert!(parse_rfc3339("2025-06-31T00:00:00Z").is_none(), "June has 30 days");
-        assert!(parse_rfc3339("2025-02-29T00:00:00Z").is_none(), "2025 is not a leap year");
-        assert!(parse_rfc3339("1900-02-29T00:00:00Z").is_none(), "1900 is a century non-leap year");
+        assert!(
+            parse_rfc3339("2026-02-31T00:00:00Z").is_none(),
+            "Feb 31 is impossible"
+        );
+        assert!(
+            parse_rfc3339("2025-04-31T00:00:00Z").is_none(),
+            "April has 30 days"
+        );
+        assert!(
+            parse_rfc3339("2025-06-31T00:00:00Z").is_none(),
+            "June has 30 days"
+        );
+        assert!(
+            parse_rfc3339("2025-02-29T00:00:00Z").is_none(),
+            "2025 is not a leap year"
+        );
+        assert!(
+            parse_rfc3339("1900-02-29T00:00:00Z").is_none(),
+            "1900 is a century non-leap year"
+        );
 
         // Valid dates must still parse:
-        assert!(parse_rfc3339("2024-02-29T00:00:00Z").is_some(), "2024 is a leap year");
-        assert!(parse_rfc3339("2000-02-29T00:00:00Z").is_some(), "2000 is a century leap year (div 400)");
+        assert!(
+            parse_rfc3339("2024-02-29T00:00:00Z").is_some(),
+            "2024 is a leap year"
+        );
+        assert!(
+            parse_rfc3339("2000-02-29T00:00:00Z").is_some(),
+            "2000 is a century leap year (div 400)"
+        );
         assert!(parse_rfc3339("2025-04-30T00:00:00Z").is_some());
         assert!(parse_rfc3339("2025-12-31T00:00:00Z").is_some());
     }

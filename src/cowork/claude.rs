@@ -27,12 +27,7 @@ pub fn latest_session_file(project_dir: &Path) -> Option<(PathBuf, SystemTime)> 
     let entries = fs::read_dir(project_dir).ok()?;
     entries
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .map(|x| x == "jsonl")
-                .unwrap_or(false)
-        })
+        .filter(|e| e.path().extension().map(|x| x == "jsonl").unwrap_or(false))
         .filter_map(|e| {
             let mtime = e.metadata().ok()?.modified().ok()?;
             Some((e.path(), mtime))
@@ -127,7 +122,9 @@ fn extract_message(val: &Value) -> Option<PeekMessage> {
                 .filter_map(|b| {
                     let block_type = b.get("type").and_then(|v| v.as_str())?;
                     if block_type == "text" {
-                        b.get("text").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        b.get("text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     } else {
                         None
                     }
@@ -216,8 +213,7 @@ mod tests {
         // `"...10:00:00+08:00"`, so the broken implementation drops all 3.
         let fixture = Path::new("tests/fixtures/cowork/claude_since/session.jsonl");
         let since = Some("2026-04-13T10:00:00+08:00");
-        let (messages, _) =
-            parse_jsonl_messages(fixture, since, 30).expect("parse");
+        let (messages, _) = parse_jsonl_messages(fixture, since, 30).expect("parse");
         assert_eq!(
             messages.len(),
             2,

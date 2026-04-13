@@ -156,9 +156,8 @@ fn test_peek_partner_reports_inactive_session() {
     // YYYY/MM/DD dir (inside the 7-day scan window), but its mtime is
     // decades old so partner_active should be false.
     let (ty, tm, td) = today_ymd();
-    let codex_path = codex_day_dir(&home, ty, tm, td).join(format!(
-        "rollout-{ty:04}-{tm:02}-{td:02}T12-00-00-x.jsonl"
-    ));
+    let codex_path = codex_day_dir(&home, ty, tm, td)
+        .join(format!("rollout-{ty:04}-{tm:02}-{td:02}T12-00-00-x.jsonl"));
     Command::new("touch")
         .arg("-t")
         .arg("198001010000")
@@ -297,9 +296,18 @@ fn test_peek_partner_has_no_mempal_side_effects() {
     let triples_after = db.triple_count().expect("triple count");
     let schema_after = db.schema_version().expect("schema version");
 
-    assert_eq!(drawers_before, drawers_after, "drawer_count changed after peek");
-    assert_eq!(triples_before, triples_after, "triple_count changed after peek");
-    assert_eq!(schema_before, schema_after, "schema_version changed after peek");
+    assert_eq!(
+        drawers_before, drawers_after,
+        "drawer_count changed after peek"
+    );
+    assert_eq!(
+        triples_before, triples_after,
+        "triple_count changed after peek"
+    );
+    assert_eq!(
+        schema_before, schema_after,
+        "schema_version changed after peek"
+    );
 
     // palace.db file mtime may only advance if Database::open (re-)opens
     // the file for write during migration checks. Since migrations only
