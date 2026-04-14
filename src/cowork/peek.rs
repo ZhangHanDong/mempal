@@ -35,6 +35,32 @@ impl Tool {
             Tool::Auto => "auto",
         }
     }
+
+    /// Returns the canonical directory name used under
+    /// `~/.mempal/cowork-inbox/<dir_name>/`.
+    ///
+    /// Semantic note: `Tool::Auto` maps to `"auto"` — this is syntactically
+    /// valid but unreachable under the current push/drain API because
+    /// `partner()` returns `None` for `Auto`, so `Auto` cannot flow into
+    /// `inbox_path` in the handler or CLI paths. The `"auto"` return is
+    /// dead defensive output kept for completeness.
+    pub fn dir_name(self) -> &'static str {
+        match self {
+            Tool::Claude => "claude",
+            Tool::Codex => "codex",
+            Tool::Auto => "auto",
+        }
+    }
+
+    /// Returns the partner tool for push addressing.
+    /// Claude → Codex, Codex → Claude, Auto → None.
+    pub fn partner(self) -> Option<Self> {
+        match self {
+            Tool::Claude => Some(Tool::Codex),
+            Tool::Codex => Some(Tool::Claude),
+            Tool::Auto => None,
+        }
+    }
 }
 
 /// Peek request — parameters to `peek_partner`.
