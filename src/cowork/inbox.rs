@@ -216,6 +216,43 @@ pub fn drain(
     Ok(messages)
 }
 
+/// Format drained messages as plain text for prepend-to-prompt hooks.
+pub fn format_plain(from: Tool, messages: &[InboxMessage]) -> String {
+    if messages.is_empty() {
+        return String::new();
+    }
+    let mut out = format!(
+        "[Partner inbox from {} ({} message{} since last check):]\n",
+        from.dir_name(),
+        messages.len(),
+        if messages.len() == 1 { "" } else { "s" }
+    );
+    for msg in messages {
+        out.push_str(&format!("- {}: {}\n", msg.pushed_at, msg.content));
+    }
+    out.push_str("[End partner inbox]\n");
+    out
+}
+
+/// Format drained messages as Codex native hook JSON envelope.
+/// Returns empty string when no messages.
+pub fn format_codex_hook_json(
+    from: Tool,
+    messages: &[InboxMessage],
+) -> Result<String, InboxError> {
+    if messages.is_empty() {
+        return Ok(String::new());
+    }
+    let plain = format_plain(from, messages);
+    let envelope = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": plain
+        }
+    });
+    Ok(envelope.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,5 +720,64 @@ mod tests {
 
         let path_a = inbox_path(tmp_home.path(), Tool::Codex, &proj_a).unwrap();
         assert!(path_a.exists(), "proj-a inbox still present");
+    }
+
+    #[test]
+    fn format_plain_empty_messages_returns_empty_string() {
+        let out = format_plain(Tool::Codex, &[]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn format_plain_includes_count_and_message_lines() {
+        let msgs = vec![
+            InboxMessage {
+                pushed_at: "2026-04-15T01:00:00Z".into(),
+                from: "codex".into(),
+                content: "first".into(),
+            },
+            InboxMessage {
+                pushed_at: "2026-04-15T01:01:00Z".into(),
+                from: "codex".into(),
+                content: "second".into(),
+            },
+        ];
+        let out = format_plain(Tool::Codex, &msgs);
+        assert!(out.contains("Partner inbox from codex"));
+        assert!(out.contains("2 messages"));
+        assert!(out.contains("first"));
+        assert!(out.contains("second"));
+        assert!(out.contains("[End partner inbox]"));
+    }
+
+    #[test]
+    fn format_codex_hook_json_wraps_plain_in_correct_envelope() {
+        let msgs = vec![InboxMessage {
+            pushed_at: "2026-04-15T01:00:00Z".into(),
+            from: "claude".into(),
+            content: "test\nwith\nnewlines and \"quotes\"".into(),
+        }];
+        let out = format_codex_hook_json(Tool::Claude, &msgs).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            parsed["hookSpecificOutput"]["hookEventName"],
+            "UserPromptSubmit"
+        );
+
+        let ac = parsed["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        let expected_plain = format_plain(Tool::Claude, &msgs);
+        assert_eq!(ac, expected_plain);
+
+        assert!(ac.contains("test\nwith\nnewlines"));
+        assert!(ac.contains("\"quotes\""));
+    }
+
+    #[test]
+    fn format_codex_hook_json_empty_returns_empty_string() {
+        let out = format_codex_hook_json(Tool::Claude, &[]).unwrap();
+        assert!(out.is_empty());
     }
 }
