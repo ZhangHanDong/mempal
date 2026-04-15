@@ -1123,7 +1123,17 @@ fn cowork_status_command(cwd: PathBuf) -> Result<()> {
 /// script and optionally merge Codex global hooks.json entry.
 fn cowork_install_hooks_command(global_codex: bool) -> Result<()> {
     let inner: Result<(), Box<dyn std::error::Error>> = (|| {
-        // Claude Code hook (project-local)
+        // Claude Code hook (project-local) — TWO artifacts are needed:
+        //   1. `.claude/hooks/user-prompt-submit.sh`  (the drain script)
+        //   2. `.claude/settings.json` hooks.UserPromptSubmit entry
+        //      registering that script with Claude Code's hook system.
+        //
+        // Claude Code does NOT auto-discover shell files by filename; a hook
+        // must be declared in settings.json with type=command + command=path.
+        // Dropping only the script file silently leaves the hook dead —
+        // that was the P8 install-hooks ship bug surfaced by the first real
+        // E2E run. This install now handles both artifacts with the same
+        // self-heal classification used on the Codex side.
         let cwd = std::env::current_dir()?;
         let claude_dir = cwd.join(".claude/hooks");
         std::fs::create_dir_all(&claude_dir)?;
@@ -1145,6 +1155,99 @@ mempal cowork-drain --target claude --cwd "${CLAUDE_PROJECT_CWD:-$PWD}" 2>/dev/n
             "✓ installed Claude Code hook at {}",
             claude_script.display()
         );
+
+        // Merge the hook registration into .claude/settings.json.
+        const CANONICAL_CLAUDE_CMD: &str = "bash .claude/hooks/user-prompt-submit.sh";
+        let settings_path = cwd.join(".claude/settings.json");
+        let mut settings: serde_json::Value = if settings_path.exists() {
+            let s = std::fs::read_to_string(&settings_path)?;
+            serde_json::from_str(&s).map_err(|e| {
+                format!(
+                    "refusing to overwrite existing .claude/settings.json — \
+                     file is not valid JSON: {e}. Fix the file by hand and re-run."
+                )
+            })?
+        } else {
+            serde_json::json!({ "hooks": {} })
+        };
+        if !settings.is_object() {
+            return Err(
+                "refusing to overwrite .claude/settings.json — top-level value is not an object"
+                    .into(),
+            );
+        }
+        let hooks_field = settings
+            .as_object_mut()
+            .ok_or("settings.json root is not object")?
+            .entry("hooks")
+            .or_insert_with(|| serde_json::json!({}));
+        if !hooks_field.is_object() {
+            return Err("`hooks` field in .claude/settings.json is not an object".into());
+        }
+        let hooks_obj = hooks_field
+            .as_object_mut()
+            .ok_or("hooks field is not object")?;
+        let event_arr = hooks_obj
+            .entry("UserPromptSubmit")
+            .or_insert_with(|| serde_json::json!([]));
+        let event_arr = event_arr
+            .as_array_mut()
+            .ok_or("UserPromptSubmit in .claude/settings.json is not array")?;
+
+        let entry_has_drain_command = |entry: &serde_json::Value| -> Option<bool> {
+            let hooks = entry.get("hooks")?.as_array()?;
+            for handler in hooks {
+                let cmd = handler.get("command")?.as_str()?;
+                if cmd == CANONICAL_CLAUDE_CMD {
+                    return Some(true);
+                }
+                // Treat any UserPromptSubmit entry pointing at our script
+                // path OR invoking `mempal cowork-drain` directly as a
+                // stale/older-version install that must be healed.
+                if cmd.contains("user-prompt-submit.sh") || cmd.contains("mempal cowork-drain") {
+                    return Some(false);
+                }
+            }
+            None
+        };
+
+        let mut canonical_count = 0usize;
+        let mut has_stale = false;
+        for entry in event_arr.iter() {
+            match entry_has_drain_command(entry) {
+                Some(true) => canonical_count += 1,
+                Some(false) => has_stale = true,
+                None => {}
+            }
+        }
+
+        let needs_rewrite = has_stale || canonical_count != 1;
+        if !needs_rewrite {
+            println!(
+                "= Claude Code hook already registered in {} (no-op)",
+                settings_path.display()
+            );
+        } else {
+            event_arr.retain(|entry| entry_has_drain_command(entry).is_none());
+            event_arr.push(serde_json::json!({
+                "hooks": [{
+                    "type": "command",
+                    "command": CANONICAL_CLAUDE_CMD,
+                }]
+            }));
+            std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+            if has_stale {
+                println!(
+                    "✓ healed stale Claude Code drain hook in {}",
+                    settings_path.display()
+                );
+            } else {
+                println!(
+                    "✓ registered Claude Code hook in {}",
+                    settings_path.display()
+                );
+            }
+        }
 
         if global_codex {
             // Do NOT introduce `dirs` crate — use env::var_os("HOME") directly.
@@ -1254,8 +1357,13 @@ mempal cowork-drain --target claude --cwd "${CLAUDE_PROJECT_CWD:-$PWD}" 2>/dev/n
 
         println!();
         println!("Next steps:");
-        println!("  1. Restart Claude Code and Codex TUI so new hooks take effect");
-        println!("  2. Test: ask Claude to push a test message to codex;");
+        println!(
+            "  1. Claude Code picks up settings.json changes on the next prompt — no restart needed"
+        );
+        println!(
+            "  2. Restart Codex TUI so it re-reads ~/.codex/hooks.json (session-scoped cache)"
+        );
+        println!("  3. Test: ask Claude to push a test message to codex;");
         println!("     then in Codex, type anything — the message should be prepended");
 
         Ok(())

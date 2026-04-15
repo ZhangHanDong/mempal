@@ -367,6 +367,243 @@ fn cowork_install_hooks_writes_claude_hook_script_with_exec_bit() {
 }
 
 #[test]
+fn cowork_install_hooks_registers_claude_user_prompt_submit_in_settings_json() {
+    // The bug that this test exists to prevent: Claude Code does NOT
+    // auto-discover `.claude/hooks/*.sh` by filename convention. A hook
+    // must be registered under `hooks.UserPromptSubmit` in
+    // `.claude/settings.json` (type="command", command=<script path>) or
+    // it silently never fires. Without this guard, E2E would ship broken
+    // while 99/99 automated tests passed — exactly what happened once.
+    let tmp = TempDir::new().unwrap();
+    let output = Command::new(mempal_bin())
+        .args(["cowork-install-hooks"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let settings_path = tmp.path().join(".claude/settings.json");
+    assert!(
+        settings_path.exists(),
+        ".claude/settings.json must be created"
+    );
+    let content = fs::read_to_string(&settings_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    let arr = parsed["hooks"]["UserPromptSubmit"].as_array().unwrap();
+    assert_eq!(
+        arr.len(),
+        1,
+        "fresh install should produce exactly one UserPromptSubmit entry"
+    );
+    let handler = &arr[0]["hooks"][0];
+    assert_eq!(handler["type"], "command");
+    assert_eq!(
+        handler["command"],
+        "bash .claude/hooks/user-prompt-submit.sh"
+    );
+    // Claude Code UserPromptSubmit hooks must NOT carry a matcher (fires
+    // on every submit, no tool involvement).
+    assert!(arr[0].get("matcher").is_none() || arr[0]["matcher"].is_null());
+}
+
+#[test]
+fn cowork_install_hooks_preserves_existing_unrelated_settings_json_hooks() {
+    // Seeds .claude/settings.json with an existing PostToolUse hook and
+    // an unrelated UserPromptSubmit entry, then runs install-hooks. The
+    // existing entries must survive; only the UserPromptSubmit array gets
+    // the canonical drain command appended.
+    let tmp = TempDir::new().unwrap();
+    let claude_dir = tmp.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    let seed = serde_json::json!({
+        "hooks": {
+            "PostToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo post-tool-use guard"
+                    }]
+                }
+            ],
+            "UserPromptSubmit": [
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo unrelated prompt hook"
+                    }]
+                }
+            ]
+        }
+    });
+    let settings_path = claude_dir.join("settings.json");
+    fs::write(&settings_path, serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+
+    let output = Command::new(mempal_bin())
+        .args(["cowork-install-hooks"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+
+    let content = fs::read_to_string(&settings_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    // PostToolUse untouched.
+    let post = parsed["hooks"]["PostToolUse"].as_array().unwrap();
+    assert_eq!(post.len(), 1);
+    assert_eq!(post[0]["matcher"], "Bash");
+    assert_eq!(post[0]["hooks"][0]["command"], "echo post-tool-use guard");
+
+    // UserPromptSubmit: unrelated hook survives, canonical appended.
+    let ups = parsed["hooks"]["UserPromptSubmit"].as_array().unwrap();
+    assert_eq!(ups.len(), 2);
+    let commands: Vec<&str> = ups
+        .iter()
+        .flat_map(|entry| entry["hooks"].as_array().unwrap().iter())
+        .map(|h| h["command"].as_str().unwrap())
+        .collect();
+    assert!(commands.contains(&"echo unrelated prompt hook"));
+    assert!(commands.contains(&"bash .claude/hooks/user-prompt-submit.sh"));
+}
+
+#[test]
+fn cowork_install_hooks_heals_stale_claude_settings_entry() {
+    // Pre-existing stale drain entry in .claude/settings.json (e.g., old
+    // mempal version inlined the command directly or used a different
+    // script path). Re-running install-hooks must self-heal: remove the
+    // stale entry, append canonical, and preserve unrelated hooks.
+    let tmp = TempDir::new().unwrap();
+    let claude_dir = tmp.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    let seed = serde_json::json!({
+        "hooks": {
+            "UserPromptSubmit": [
+                {
+                    "hooks": [{
+                        "type": "command",
+                        // Stale: old-style inline command that bypassed the .sh file.
+                        "command": "mempal cowork-drain --target claude --cwd \"$PWD\""
+                    }]
+                },
+                {
+                    // Stale with matcher — should also be healed.
+                    "hooks": [{
+                        "type": "command",
+                        "command": "bash /some/old/path/user-prompt-submit.sh"
+                    }]
+                },
+                {
+                    // Unrelated — must survive.
+                    "hooks": [{
+                        "type": "command",
+                        "command": "echo unrelated survives"
+                    }]
+                }
+            ]
+        }
+    });
+    let settings_path = claude_dir.join("settings.json");
+    fs::write(&settings_path, serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+
+    let output = Command::new(mempal_bin())
+        .args(["cowork-install-hooks"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("healed stale Claude Code drain hook"),
+        "install-hooks output must mention healing, got: {stdout}"
+    );
+
+    let content = fs::read_to_string(&settings_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+    let ups = parsed["hooks"]["UserPromptSubmit"].as_array().unwrap();
+
+    let commands: Vec<&str> = ups
+        .iter()
+        .flat_map(|entry| entry["hooks"].as_array().unwrap().iter())
+        .map(|h| h["command"].as_str().unwrap())
+        .collect();
+
+    // Both stale entries removed.
+    assert!(
+        !commands
+            .iter()
+            .any(|c| c.contains("cowork-drain --target claude --cwd \"$PWD\"")),
+        "stale inline command must be removed, got: {commands:?}"
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|c| c.contains("/some/old/path/user-prompt-submit.sh")),
+        "stale path command must be removed, got: {commands:?}"
+    );
+    // Canonical present exactly once.
+    let canonical_count = commands
+        .iter()
+        .filter(|c| **c == "bash .claude/hooks/user-prompt-submit.sh")
+        .count();
+    assert_eq!(canonical_count, 1, "canonical must appear exactly once");
+    // Unrelated preserved.
+    assert!(
+        commands.contains(&"echo unrelated survives"),
+        "unrelated hook must be preserved, got: {commands:?}"
+    );
+}
+
+#[test]
+fn cowork_install_hooks_is_idempotent_for_claude_settings_json() {
+    // Running install-hooks 3 times on the same repo must leave
+    // .claude/settings.json with exactly one canonical drain entry and
+    // print "already registered (no-op)" on the 2nd and 3rd runs.
+    let tmp = TempDir::new().unwrap();
+
+    for i in 0..3 {
+        let output = Command::new(mempal_bin())
+            .args(["cowork-install-hooks"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if i == 0 {
+            assert!(
+                stdout.contains("registered Claude Code hook"),
+                "first run should register, got: {stdout}"
+            );
+        } else {
+            assert!(
+                stdout.contains("already registered"),
+                "run #{i} should be no-op, got: {stdout}"
+            );
+        }
+    }
+
+    let settings_path = tmp.path().join(".claude/settings.json");
+    let content = fs::read_to_string(&settings_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+    let ups = parsed["hooks"]["UserPromptSubmit"].as_array().unwrap();
+    let canonical_count = ups
+        .iter()
+        .flat_map(|entry| entry["hooks"].as_array().unwrap().iter())
+        .filter(|h| h["command"].as_str() == Some("bash .claude/hooks/user-prompt-submit.sh"))
+        .count();
+    assert_eq!(
+        canonical_count, 1,
+        "expected exactly 1 canonical entry after 3 invocations"
+    );
+}
+
+#[test]
 fn cowork_install_hooks_writes_correct_codex_hooks_json_shape() {
     let tmp = TempDir::new().unwrap();
     let fake_home = tmp.path().join("home");
