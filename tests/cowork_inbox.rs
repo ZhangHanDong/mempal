@@ -394,3 +394,56 @@ fn cowork_install_hooks_writes_correct_codex_hooks_json_shape() {
         "matcher must not be present"
     );
 }
+
+#[test]
+fn cowork_install_hooks_is_idempotent_for_global_codex() {
+    // Running `cowork-install-hooks --global-codex` multiple times must NOT
+    // append duplicate entries to ~/.codex/hooks.json. Otherwise, each user
+    // turn would trigger the drain hook N times (one per invocation).
+    let tmp = TempDir::new().unwrap();
+    let fake_home = tmp.path().join("home");
+    fs::create_dir_all(&fake_home).unwrap();
+    let proj = tmp.path().join("proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    // Run install-hooks --global-codex THREE times.
+    for _ in 0..3 {
+        let output = Command::new(mempal_bin())
+            .args(["cowork-install-hooks", "--global-codex"])
+            .current_dir(&proj)
+            .env("HOME", &fake_home)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+    }
+
+    let hooks_path = fake_home.join(".codex/hooks.json");
+    let content = fs::read_to_string(&hooks_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    // After 3 invocations, UserPromptSubmit array must still have exactly 1
+    // mempal cowork-drain entry.
+    let arr = parsed["hooks"]["UserPromptSubmit"].as_array().unwrap();
+    let mempal_entries = arr
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("hooks")
+                .and_then(|h| h.as_array())
+                .map(|inner| {
+                    inner.iter().any(|h| {
+                        h.get("command")
+                            .and_then(|c| c.as_str())
+                            .map(|cmd| cmd.contains("mempal cowork-drain"))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .count();
+    assert_eq!(
+        mempal_entries, 1,
+        "install-hooks must be idempotent; expected exactly 1 mempal drain \
+         entry after 3 invocations, got {mempal_entries}"
+    );
+}

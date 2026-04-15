@@ -1177,16 +1177,43 @@ mempal cowork-drain --target claude --cwd "${CLAUDE_PROJECT_CWD:-$PWD}" 2>/dev/n
                 .as_array_mut()
                 .ok_or("UserPromptSubmit is not array")?;
 
-            event_arr.push(serde_json::json!({
-                "hooks": [{
-                    "type": "command",
-                    "command": "mempal cowork-drain --target codex --format codex-hook-json --cwd-source stdin-json",
-                    "statusMessage": "mempal cowork drain"
-                }]
-            }));
+            // Idempotency check: scan existing entries to see if any inner
+            // `hooks[]` array already contains a command that looks like a
+            // mempal cowork-drain invocation. Running install-hooks N times
+            // must NOT produce N identical drain handlers.
+            let already_installed = event_arr.iter().any(|entry| {
+                entry
+                    .get("hooks")
+                    .and_then(|h| h.as_array())
+                    .map(|arr| {
+                        arr.iter().any(|handler| {
+                            handler
+                                .get("command")
+                                .and_then(|c| c.as_str())
+                                .map(|cmd| cmd.contains("mempal cowork-drain"))
+                                .unwrap_or(false)
+                        })
+                    })
+                    .unwrap_or(false)
+            });
 
-            std::fs::write(&hooks_path, serde_json::to_string_pretty(&root)?)?;
-            println!("✓ merged Codex hook into {}", hooks_path.display());
+            if already_installed {
+                println!(
+                    "= Codex hook already installed in {} (no-op)",
+                    hooks_path.display()
+                );
+            } else {
+                event_arr.push(serde_json::json!({
+                    "hooks": [{
+                        "type": "command",
+                        "command": "mempal cowork-drain --target codex --format codex-hook-json --cwd-source stdin-json",
+                        "statusMessage": "mempal cowork drain"
+                    }]
+                }));
+
+                std::fs::write(&hooks_path, serde_json::to_string_pretty(&root)?)?;
+                println!("✓ merged Codex hook into {}", hooks_path.display());
+            }
         }
 
         println!();

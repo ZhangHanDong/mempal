@@ -824,4 +824,150 @@ mod tests {
             baseline_schema
         );
     }
+
+    // =========================================================================
+    // mempal_cowork_push MCP handler tests (P8 task 7, Codex review round-2 #2)
+    // =========================================================================
+    //
+    // These tests exercise the HANDLER itself — caller identity inference,
+    // target auto-inference, self-push rejection, and InboxError → ErrorData
+    // mapping. They complement the integration tests in tests/cowork_inbox.rs,
+    // which only cover the CLI and inbox layers.
+
+    use super::super::tools::CoworkPushRequest;
+    use std::sync::Mutex as StdMutex;
+
+    // Tests below mutate $HOME env var to point mempal_home() at a tempdir.
+    // Rust's default test runner runs tests in parallel threads, so they
+    // would race on shared process state. Serialize them behind a process-
+    // wide Mutex. Every cowork push handler test must lock this for its
+    // entire lifetime.
+    static COWORK_HOME_LOCK: StdMutex<()> = StdMutex::new(());
+
+    fn setup_cowork_home(
+        tempdir: &TempDir,
+    ) -> (PathBuf, PathBuf, std::sync::MutexGuard<'static, ()>) {
+        // Lock FIRST before touching $HOME so no other parallel cowork
+        // test can observe a half-written env var.
+        let guard = COWORK_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempdir.path().to_path_buf();
+        let mempal_home = home.join(".mempal");
+        let repo = home.join("proj");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+        (mempal_home, repo, guard)
+    }
+
+    #[tokio::test]
+    async fn test_mcp_push_without_client_info_rejects_auto_target() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir);
+
+        // client_name is None because we never called initialize().
+        // Pushing without an explicit target must fail with "cannot infer".
+        let result = server
+            .mempal_cowork_push(Parameters(CoworkPushRequest {
+                content: "hello".into(),
+                target_tool: None,
+                cwd: repo.to_string_lossy().into_owned(),
+            }))
+            .await;
+
+        let err = match result {
+            Err(e) => e,
+            Ok(_) => panic!("expected push to fail when client_name is None"),
+        };
+        // MCP error message must mention inference failure.
+        assert!(
+            err.to_string().contains("cannot infer"),
+            "expected inference error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_push_succeeds_with_captured_client_name_and_auto_target() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir);
+
+        // Simulate a completed `initialize` handshake: caller identified
+        // as "claude-code" (Claude Code's standard MCP client name).
+        *server.client_name.lock().unwrap() = Some("claude-code".to_string());
+
+        let response = match server
+            .mempal_cowork_push(Parameters(CoworkPushRequest {
+                content: "from claude to partner".into(),
+                target_tool: None,
+                cwd: repo.to_string_lossy().into_owned(),
+            }))
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => panic!("push should succeed with valid client_name: {e}"),
+        };
+
+        // Target auto-inferred as partner of Claude → Codex.
+        assert_eq!(response.0.target_tool, "codex");
+        assert!(response.0.inbox_size_after > 0);
+
+        // Verify the message actually landed in the codex inbox by draining.
+        let messages = crate::cowork::inbox::drain(&mempal_home, Tool::Codex, &repo).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "from claude to partner");
+        assert_eq!(messages[0].from, "claude");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_push_self_push_rejected_via_inbox_error_mapping() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir);
+
+        // Caller is Codex, target explicitly Codex → SelfPush error from
+        // inbox::push. Handler must map it to InvalidParams MCP error.
+        *server.client_name.lock().unwrap() = Some("codex".to_string());
+
+        let err = match server
+            .mempal_cowork_push(Parameters(CoworkPushRequest {
+                content: "would be self push".into(),
+                target_tool: Some("codex".to_string()),
+                cwd: repo.to_string_lossy().into_owned(),
+            }))
+            .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("expected self-push to be rejected"),
+        };
+
+        assert!(
+            err.to_string().contains("self"),
+            "expected self-push error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_push_explicit_target_overrides_auto_inference() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir);
+
+        *server.client_name.lock().unwrap() = Some("claude-code".to_string());
+
+        // Caller=Claude; auto would infer Codex. Override explicitly to Codex
+        // (same effective target, but proves the explicit branch runs).
+        let response = match server
+            .mempal_cowork_push(Parameters(CoworkPushRequest {
+                content: "explicit target".into(),
+                target_tool: Some("codex".to_string()),
+                cwd: repo.to_string_lossy().into_owned(),
+            }))
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => panic!("explicit target push should succeed: {e}"),
+        };
+        assert_eq!(response.0.target_tool, "codex");
+
+        let messages = crate::cowork::inbox::drain(&mempal_home, Tool::Codex, &repo).unwrap();
+        assert_eq!(messages.len(), 1);
+    }
 }
