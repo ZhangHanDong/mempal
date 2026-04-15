@@ -604,6 +604,108 @@ fn cowork_install_hooks_is_idempotent_for_claude_settings_json() {
 }
 
 #[test]
+fn cowork_install_hooks_warns_when_codex_hooks_feature_flag_missing() {
+    // Spec finding #3 from E2E run: Codex's hooks runtime is gated behind
+    // the `codex_hooks` feature flag. In shipped codex-cli (<= 0.120.0) the
+    // flag is "under development" and OFF by default, so ~/.codex/hooks.json
+    // is silently ignored. install-hooks --global-codex must surface this
+    // clearly — otherwise users see "✓ merged Codex hook" and assume the
+    // pipeline is live when it isn't.
+    let tmp = TempDir::new().unwrap();
+    let fake_home = tmp.path().join("home");
+    fs::create_dir_all(fake_home.join(".codex")).unwrap();
+    // Seed a config.toml WITHOUT any features section — simulates the
+    // default state of a fresh codex-cli install.
+    fs::write(
+        fake_home.join(".codex/config.toml"),
+        "model = \"gpt-5-codex\"\n",
+    )
+    .unwrap();
+    let proj = tmp.path().join("proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    let output = Command::new(mempal_bin())
+        .args(["cowork-install-hooks", "--global-codex"])
+        .current_dir(&proj)
+        .env("HOME", &fake_home)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // The warning text must be specific enough that a user can act on it.
+    assert!(
+        stdout.contains("codex_hooks` feature is currently disabled"),
+        "install-hooks must warn about disabled codex_hooks feature, got stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("codex features enable codex_hooks"),
+        "warning must tell user the exact command to activate, got stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn cowork_install_hooks_no_warning_when_codex_hooks_feature_enabled() {
+    // Mirror test: when config.toml already has `codex_hooks = true`
+    // (either inline `features.codex_hooks = true` or under `[features]`),
+    // install-hooks must NOT print the warning.
+    for toml_content in [
+        "model = \"gpt-5-codex\"\n[features]\ncodex_hooks = true\n",
+        "model = \"gpt-5-codex\"\nfeatures.codex_hooks = true\n",
+    ] {
+        let tmp = TempDir::new().unwrap();
+        let fake_home = tmp.path().join("home");
+        fs::create_dir_all(fake_home.join(".codex")).unwrap();
+        fs::write(fake_home.join(".codex/config.toml"), toml_content).unwrap();
+        let proj = tmp.path().join("proj");
+        fs::create_dir_all(&proj).unwrap();
+
+        let output = Command::new(mempal_bin())
+            .args(["cowork-install-hooks", "--global-codex"])
+            .current_dir(&proj)
+            .env("HOME", &fake_home)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("codex_hooks` feature is currently disabled"),
+            "install-hooks must NOT warn when feature already enabled (toml: {toml_content:?}), got stdout:\n{stdout}"
+        );
+    }
+}
+
+#[test]
+fn cowork_install_hooks_warns_when_codex_hooks_feature_explicitly_false() {
+    // Edge case: user explicitly set codex_hooks = false (e.g., they
+    // tried it, had issues, disabled it). install-hooks must still warn
+    // — the installed hook is non-functional until they flip it back.
+    let tmp = TempDir::new().unwrap();
+    let fake_home = tmp.path().join("home");
+    fs::create_dir_all(fake_home.join(".codex")).unwrap();
+    fs::write(
+        fake_home.join(".codex/config.toml"),
+        "[features]\ncodex_hooks = false\n",
+    )
+    .unwrap();
+    let proj = tmp.path().join("proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    let output = Command::new(mempal_bin())
+        .args(["cowork-install-hooks", "--global-codex"])
+        .current_dir(&proj)
+        .env("HOME", &fake_home)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("codex_hooks` feature is currently disabled"),
+        "install-hooks must warn when feature is explicitly false, got stdout:\n{stdout}"
+    );
+}
+
+#[test]
 fn cowork_install_hooks_writes_correct_codex_hooks_json_shape() {
     let tmp = TempDir::new().unwrap();
     let fake_home = tmp.path().join("home");

@@ -1353,6 +1353,28 @@ mempal cowork-drain --target claude --cwd "${CLAUDE_PROJECT_CWD:-$PWD}" 2>/dev/n
                     println!("✓ merged Codex hook into {}", hooks_path.display());
                 }
             }
+
+            // Feature flag gate: Codex's hooks runtime is behind the
+            // `codex_hooks` feature flag, which is "under development" and
+            // OFF by default in shipped `codex-cli` (<= 0.120.0 at time of
+            // writing). When the flag is false, Codex silently ignores
+            // ~/.codex/hooks.json regardless of shape — the install above
+            // will appear to succeed but the hook will never fire. Surface
+            // this to the user so they can opt in explicitly with
+            // `codex features enable codex_hooks`.
+            if !codex_hooks_feature_enabled(&codex_dir) {
+                println!();
+                println!("⚠  Codex `codex_hooks` feature is currently disabled.");
+                println!("   This is an 'under development' feature in shipped Codex and is OFF");
+                println!("   by default. Without it, ~/.codex/hooks.json is silently ignored and");
+                println!("   the hook you just installed will never fire on user prompt submit.");
+                println!();
+                println!("   To activate:");
+                println!("     codex features enable codex_hooks");
+                println!();
+                println!("   Or equivalent: add `codex_hooks = true` under `[features]` in");
+                println!("     ~/.codex/config.toml");
+            }
         }
 
         println!();
@@ -1374,6 +1396,40 @@ mempal cowork-drain --target claude --cwd "${CLAUDE_PROJECT_CWD:-$PWD}" 2>/dev/n
         return Err(anyhow::anyhow!("cowork-install-hooks failed"));
     }
     Ok(())
+}
+
+/// Check whether the Codex `codex_hooks` feature flag is enabled in
+/// `<codex_dir>/config.toml`. Returns true only if the file contains a
+/// key `codex_hooks` (either as a bare key inside `[features]` or as a
+/// dotted top-level key `features.codex_hooks`) whose value is the literal
+/// `true`. Any other state — missing file, missing key, `false`, or
+/// unparseable — returns false and triggers the "install succeeded but
+/// Codex runtime will ignore it" warning in install-hooks.
+///
+/// This is a deliberate minimal string-scan parser. We do not pull in the
+/// `toml` crate because (a) the spec forbids new runtime dependencies and
+/// (b) a false warning is cheap while a false all-clear would hide the
+/// very bug this check exists to surface.
+fn codex_hooks_feature_enabled(codex_dir: &Path) -> bool {
+    let config_path = codex_dir.join("config.toml");
+    let Ok(content) = std::fs::read_to_string(&config_path) else {
+        return false;
+    };
+    for line in content.lines() {
+        // Drop any inline `#` comment tail. TOML doesn't allow `#` inside
+        // unquoted strings on the RHS of a key=value line, so this is safe
+        // for our narrow `codex_hooks = true` match.
+        let line = line.split('#').next().unwrap_or("").trim();
+        let Some((key, val)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let bare_key = key.strip_prefix("features.").unwrap_or(key);
+        if bare_key == "codex_hooks" && val.trim() == "true" {
+            return true;
+        }
+    }
+    false
 }
 
 fn parse_keywords_arg(keywords: &str) -> Vec<String> {
