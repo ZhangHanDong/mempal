@@ -28,7 +28,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P7）
+### 已完成的 Spec（P0-P8）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -47,10 +47,11 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p5-format-support.spec.md` | 完成 | Slack DM + Codex CLI 格式支持 |
 | `specs/p6-cowork-peek-and-decide.spec.md` | 完成 | Claude↔Codex 协作：live session peek（`mempal_peek_partner`）+ Rule 8/9 |
 | `specs/p7-search-structured-signals.spec.md` | 完成 | `mempal_search` 响应每条结果附带 5 个 AAAK-derived 结构化字段（`entities` / `topics` / `flags` / `emotions` / `importance_stars`），`content` 保持 raw |
+| `specs/p8-cowork-inbox-push.spec.md` | 完成 | 双向 cowork push — `mempal_cowork_push` MCP 工具 + `cowork-drain` / `cowork-status` / `cowork-install-hooks` CLI + 对称 UserPromptSubmit hook 注入（at-next-submit 交付） |
 
 ### 当前 Spec
 
-（无，P7 已完成）
+（无，P8 已完成）
 
 ### 实现计划
 
@@ -59,6 +60,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-11-p5-implementation.md` — P5（已完成）
 - `docs/plans/2026-04-13-p6-implementation.md` — P6（已完成）
 - `docs/plans/2026-04-13-p7-implementation.md` — P7（已完成）
+- `docs/plans/2026-04-15-p8-implementation.md` — P8（已完成）
 
 ### Spec 使用方式
 
@@ -77,9 +79,9 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **搜索结果强制带引用**：`SearchResult` 包含 `source_file`、`drawer_id`、`tunnel_hints`
 - **知识图谱**：triples 表已激活（手动 CRUD），支持时态验证
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
-- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，9 条规则
+- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，10 条规则
 
-## MCP 工具（8 个）
+## MCP 工具（9 个）
 
 | 工具 | 作用 |
 |------|------|
@@ -91,6 +93,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_kg` | 知识图谱三元组（add/query/invalidate） |
 | `mempal_tunnels` | 跨 Wing 链接发现 |
 | `mempal_peek_partner` | 读 partner agent 当前 session（live，不存储） |
+| `mempal_cowork_push` | 主动投递 ephemeral handoff 到 partner inbox（at-next-submit 交付） |
 
 ## Workspace 结构
 
