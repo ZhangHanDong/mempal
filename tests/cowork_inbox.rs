@@ -265,3 +265,132 @@ fn cowork_drain_stdin_json_malformed_payload_graceful_degrade() {
         );
     }
 }
+
+#[test]
+fn cowork_status_cli_lists_both_inboxes_without_draining() {
+    let tmp = TempDir::new().unwrap();
+    let mempal_home = tmp.path().join(".mempal");
+    let repo = setup_repo(&tmp, "proj");
+
+    push(
+        &mempal_home,
+        Tool::Codex,
+        Tool::Claude,
+        &repo,
+        "for claude a".into(),
+        "t".into(),
+    )
+    .unwrap();
+    push(
+        &mempal_home,
+        Tool::Codex,
+        Tool::Claude,
+        &repo,
+        "for claude b".into(),
+        "t".into(),
+    )
+    .unwrap();
+    push(
+        &mempal_home,
+        Tool::Claude,
+        Tool::Codex,
+        &repo,
+        "for codex".into(),
+        "t".into(),
+    )
+    .unwrap();
+
+    let output = Command::new(mempal_bin())
+        .args(["cowork-status", "--cwd", repo.to_str().unwrap()])
+        .env("HOME", tmp.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("claude inbox"), "{stdout}");
+    assert!(stdout.contains("2 messages"), "{stdout}");
+    assert!(stdout.contains("codex inbox"), "{stdout}");
+    assert!(stdout.contains("1 message"), "{stdout}");
+
+    // cowork-status must NOT drain
+    let drained = drain(&mempal_home, Tool::Claude, &repo).unwrap();
+    assert_eq!(drained.len(), 2, "cowork-status must not have drained");
+}
+
+#[test]
+fn cowork_install_hooks_writes_claude_hook_script_with_exec_bit() {
+    let tmp = TempDir::new().unwrap();
+    let output = Command::new(mempal_bin())
+        .args(["cowork-install-hooks"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+
+    let script = tmp.path().join(".claude/hooks/user-prompt-submit.sh");
+    assert!(script.exists(), "hook script not created");
+    let content = fs::read_to_string(&script).unwrap();
+    assert!(content.contains("mempal cowork-drain"));
+    assert!(content.contains("--target claude"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&script).unwrap().permissions().mode();
+        assert_ne!(mode & 0o100, 0, "owner execute bit must be set");
+    }
+}
+
+#[test]
+fn cowork_install_hooks_writes_correct_codex_hooks_json_shape() {
+    let tmp = TempDir::new().unwrap();
+    let fake_home = tmp.path().join("home");
+    fs::create_dir_all(&fake_home).unwrap();
+    // current_dir must also be writable for the Claude hook part
+    let proj = tmp.path().join("proj");
+    fs::create_dir_all(&proj).unwrap();
+
+    let output = Command::new(mempal_bin())
+        .args(["cowork-install-hooks", "--global-codex"])
+        .current_dir(&proj)
+        .env("HOME", &fake_home)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let hooks_path = fake_home.join(".codex/hooks.json");
+    assert!(hooks_path.exists(), "hooks.json not created");
+    let content = fs::read_to_string(&hooks_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+    // Nested shape verification
+    assert!(parsed["hooks"].is_object());
+    assert!(parsed["hooks"]["UserPromptSubmit"].is_array());
+    assert!(
+        parsed["hooks"]["UserPromptSubmit"]
+            .as_array()
+            .unwrap()
+            .len()
+            >= 1
+    );
+
+    let entry = &parsed["hooks"]["UserPromptSubmit"][0];
+    assert!(entry["hooks"].is_array());
+    let handler = &entry["hooks"][0];
+    assert_eq!(handler["type"], "command");
+    let cmd = handler["command"].as_str().unwrap();
+    assert!(cmd.contains("mempal cowork-drain"));
+    assert!(cmd.contains("--target codex"));
+    assert!(cmd.contains("--format codex-hook-json"));
+    assert!(cmd.contains("--cwd-source stdin-json"));
+    assert!(!cmd.contains("$PWD"), "must not reference $PWD");
+    assert!(
+        entry.get("matcher").is_none() || entry["matcher"].is_null(),
+        "matcher must not be present"
+    );
+}
