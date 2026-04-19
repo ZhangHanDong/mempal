@@ -227,6 +227,12 @@ pub fn search_by_vector(
         )
         .map_err(SearchError::CountTotalDrawers)?;
 
+    // sqlite-vec vec0 MATCH ... k = ? has a hard upper bound of 4096.
+    // Clamp to stay under the limit; BM25 side of the hybrid rerank still
+    // covers candidates that fall outside the KNN top-4096 by vector distance.
+    const SQLITE_VEC_KNN_MAX: i64 = 4096;
+    let knn_k: i64 = total_count.min(SQLITE_VEC_KNN_MAX);
+
     let query_json =
         serde_json::to_string(query_vector).map_err(SearchError::SerializeQueryVector)?;
     let top_k = i64::try_from(top_k).map_err(|_| SearchError::InvalidTopK)?;
@@ -257,7 +263,7 @@ pub fn search_by_vector(
         .query_map(
             (
                 query_json.as_str(),
-                total_count,
+                knn_k,
                 applied_wing,
                 applied_room,
                 top_k,
