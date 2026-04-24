@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::context::assemble_context_with_vector;
 use crate::core::{
     anchor::{self, DerivedAnchor},
     db::Database,
@@ -34,12 +35,12 @@ use rmcp::{
 use serde_json::Value;
 
 use super::tools::{
-    CoworkPushRequest, CoworkPushResponse, DeleteRequest, DeleteResponse, DuplicateWarning,
-    FactCheckRequest, FactCheckResponse, IngestRequest, IngestResponse, KgRequest, KgResponse,
-    KgStatsDto, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest,
-    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
-    TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest,
-    TunnelsResponse,
+    ContextRequest, ContextResponse, CoworkPushRequest, CoworkPushResponse, DeleteRequest,
+    DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, IngestRequest,
+    IngestResponse, KgRequest, KgResponse, KgStatsDto, PeekMessageDto, PeekPartnerRequest,
+    PeekPartnerResponse, ScopeCount, SearchRequest, SearchResponse, SearchResultDto,
+    StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse, TriggerHintsDto,
+    TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -101,6 +102,17 @@ impl MempalMcpServer {
         let request = serde_json::from_value(value)
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         self.mempal_search(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn context_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<ContextResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_context(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -584,6 +596,70 @@ impl MempalMcpServer {
                 .map(SearchResultDto::with_signals_from_result)
                 .collect(),
         }))
+    }
+
+    #[tool(
+        name = "mempal_context",
+        description = "Assemble a mind-model runtime context pack from typed memory. Use this when you need ordered guidance rather than raw search results: dao_tian -> dao_ren -> shu -> qi, with evidence opt-in. Returns source-backed items with drawer_id/source_file citations and trigger_hints metadata, but never executes skills."
+    )]
+    async fn mempal_context(
+        &self,
+        Parameters(request): Parameters<ContextRequest>,
+    ) -> std::result::Result<Json<ContextResponse>, ErrorData> {
+        let max_items = request.max_items.unwrap_or(12);
+        if max_items == 0 {
+            return Err(ErrorData::invalid_params(
+                "max_items must be greater than 0",
+                None,
+            ));
+        }
+
+        let domain = parse_domain(request.domain.as_deref())?.unwrap_or(MemoryDomain::Project);
+        let cwd = match request.cwd.as_deref() {
+            Some(value) if !value.trim().is_empty() => PathBuf::from(value),
+            Some(_) => {
+                return Err(ErrorData::invalid_params(
+                    "cwd must not be empty when provided",
+                    None,
+                ));
+            }
+            None => std::env::current_dir().map_err(|error| {
+                ErrorData::internal_error(
+                    format!("failed to read current directory: {error}"),
+                    None,
+                )
+            })?,
+        };
+
+        let embedder = self.embedder_factory.build().await.map_err(|error| {
+            ErrorData::internal_error(format!("failed to build embedder: {error}"), None)
+        })?;
+        let query_vector = embedder
+            .embed(&[request.query.as_str()])
+            .await
+            .map_err(|error| ErrorData::internal_error(format!("embedding failed: {error}"), None))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| ErrorData::internal_error("embedder returned no query vector", None))?;
+
+        let db = self.open_db()?;
+        let pack = assemble_context_with_vector(
+            &db,
+            crate::context::ContextRequest {
+                query: request.query,
+                domain,
+                field: request
+                    .field
+                    .unwrap_or_else(|| anchor::DEFAULT_FIELD.to_string()),
+                cwd,
+                include_evidence: request.include_evidence.unwrap_or(false),
+                max_items,
+            },
+            &query_vector,
+        )
+        .map_err(context_error)?;
+
+        Ok(Json(ContextResponse::from(pack)))
     }
 
     #[tool(
@@ -1284,6 +1360,20 @@ fn fact_check_error(error: crate::factcheck::FactCheckError) -> ErrorData {
     }
 }
 
+fn context_error(error: crate::context::ContextError) -> ErrorData {
+    match error {
+        crate::context::ContextError::DeriveAnchor(_) => {
+            ErrorData::invalid_params(error.to_string(), None)
+        }
+        crate::context::ContextError::EmbedQuery(_)
+        | crate::context::ContextError::MissingQueryVector
+        | crate::context::ContextError::Search(_)
+        | crate::context::ContextError::LoadDrawer(_) => {
+            ErrorData::internal_error(format!("context assembly failed: {error}"), None)
+        }
+    }
+}
+
 const DEDUP_THRESHOLD: f32 = 0.85;
 
 fn check_semantic_duplicate(
@@ -1513,6 +1603,48 @@ mod tests {
             .expect("insert vector");
     }
 
+    fn insert_knowledge_drawer(
+        db_path: &Path,
+        id: &str,
+        tier: KnowledgeTier,
+        status: KnowledgeStatus,
+        statement: &str,
+        content: &str,
+    ) {
+        let db = Database::open(db_path).expect("open db");
+        let drawer = Drawer {
+            id: id.to_string(),
+            content: content.to_string(),
+            wing: "mempal".to_string(),
+            room: Some("context".to_string()),
+            source_file: Some(format!("knowledge://project/context/{id}")),
+            source_type: SourceType::Manual,
+            added_at: "1713000000".to_string(),
+            chunk_index: Some(0),
+            normalize_version: 1,
+            importance: 3,
+            memory_kind: MemoryKind::Knowledge,
+            domain: MemoryDomain::Project,
+            field: anchor::DEFAULT_FIELD.to_string(),
+            anchor_kind: AnchorKind::Repo,
+            anchor_id: anchor::LEGACY_REPO_ANCHOR_ID.to_string(),
+            parent_anchor_id: None,
+            provenance: None,
+            statement: Some(statement.to_string()),
+            tier: Some(tier),
+            status: Some(status),
+            supporting_refs: vec!["drawer_supporting_ev".to_string()],
+            counterexample_refs: Vec::new(),
+            teaching_refs: Vec::new(),
+            verification_refs: Vec::new(),
+            scope_constraints: None,
+            trigger_hints: None,
+        };
+        db.insert_drawer(&drawer).expect("insert knowledge drawer");
+        db.insert_vector(id, &[0.1, 0.2, 0.3])
+            .expect("insert vector");
+    }
+
     fn insert_triple(
         db_path: &Path,
         subject: &str,
@@ -1657,6 +1789,209 @@ mod tests {
         assert_eq!(
             db.schema_version().expect("schema version"),
             baseline_schema
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_returns_tier_ordered_sections() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_qi",
+            KnowledgeTier::Qi,
+            KnowledgeStatus::Promoted,
+            "Use cargo test.",
+            "debug failing build qi",
+        );
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_shu",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Reproduce before patching.",
+            "debug failing build shu",
+        );
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_dao_ren",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Promoted,
+            "Software changes need executable feedback.",
+            "debug failing build dao ren",
+        );
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_dao_tian",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Evidence precedes assertion.",
+            "debug failing build dao tian",
+        );
+
+        let response = server
+            .context_json_for_test(serde_json::json!({
+                "query": "debug failing build"
+            }))
+            .await
+            .expect("context should succeed");
+        let names = response
+            .sections
+            .iter()
+            .map(|section| section.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["dao_tian", "dao_ren", "shu", "qi"]);
+        for section in response.sections {
+            assert_eq!(section.items.len(), 1);
+            assert!(!section.items[0].drawer_id.is_empty());
+            assert!(!section.items[0].source_file.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_defaults_match_cli_context_defaults() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_shu",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Debug by reproducing.",
+            "debug default body",
+        );
+
+        let response = server
+            .context_json_for_test(serde_json::json!({ "query": "debug" }))
+            .await
+            .expect("context should succeed");
+        assert_eq!(response.domain, "project");
+        assert_eq!(response.field, "general");
+        assert!(!response.anchors.is_empty());
+        assert!(
+            response
+                .sections
+                .iter()
+                .all(|section| section.name != "evidence")
+        );
+        assert_eq!(response.sections[0].name, "shu");
+        assert_eq!(response.sections[0].items[0].drawer_id, "drawer_shu");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_include_evidence_appends_evidence_section() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_qi",
+            KnowledgeTier::Qi,
+            KnowledgeStatus::Promoted,
+            "Use cargo test.",
+            "observed failure qi",
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "observed failure",
+            "mempal",
+            Some("context"),
+            "/tmp/evidence.md",
+            2,
+        );
+
+        let response = server
+            .context_json_for_test(serde_json::json!({
+                "query": "observed failure",
+                "include_evidence": true
+            }))
+            .await
+            .expect("context should succeed");
+        let names = response
+            .sections
+            .iter()
+            .map(|section| section.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["qi", "evidence"]);
+        assert_eq!(response.sections[1].items[0].drawer_id, "drawer_evidence");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_rejects_max_items_zero() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let error = server
+            .context_json_for_test(serde_json::json!({
+                "query": "debug",
+                "max_items": 0
+            }))
+            .await
+            .expect_err("max_items=0 should reject");
+        assert!(error.to_string().contains("max_items"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_rejects_unsupported_domain() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let error = server
+            .context_json_for_test(serde_json::json!({
+                "query": "debug",
+                "domain": "invalid"
+            }))
+            .await
+            .expect_err("invalid domain should reject");
+        assert!(error.to_string().contains("domain"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_has_no_db_side_effects() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_shu",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Debug by reproducing.",
+            "debug side-effect body",
+        );
+
+        let db = Database::open(&db_path).expect("open db");
+        let baseline_schema = db.schema_version().expect("schema");
+        let baseline_drawers = db.drawer_count().expect("drawers");
+        let baseline_triples = db.triple_count().expect("triples");
+        let baseline_taxonomy = db.taxonomy_count().expect("taxonomy");
+        let baseline_scopes = db.scope_counts().expect("scopes");
+
+        for _ in 0..3 {
+            let response = server
+                .context_json_for_test(serde_json::json!({ "query": "debug" }))
+                .await
+                .expect("context should succeed");
+            assert!(!response.sections.is_empty());
+        }
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(db.schema_version().expect("schema"), baseline_schema);
+        assert_eq!(db.drawer_count().expect("drawers"), baseline_drawers);
+        assert_eq!(db.triple_count().expect("triples"), baseline_triples);
+        assert_eq!(db.taxonomy_count().expect("taxonomy"), baseline_taxonomy);
+        assert_eq!(db.scope_counts().expect("scopes"), baseline_scopes);
+
+        let search = run_search(&server, "debug", None, None, 1).await;
+        assert_eq!(search.results[0].drawer_id, "drawer_shu");
+        assert!(!search.results[0].content.is_empty());
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_includes_mempal_context() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let context_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_context")
+            .expect("mempal_context tool exists");
+        assert!(
+            context_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("dao_tian -> dao_ren -> shu -> qi")
         );
     }
 

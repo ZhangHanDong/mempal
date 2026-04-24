@@ -40,6 +40,15 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    call mempal_tunnels with action="list" to discover related rooms across
    wings when context may live in another project.
 
+3b. USE MIND-MODEL CONTEXT FOR GUIDANCE
+   When you need ordered operating guidance rather than raw evidence search,
+   call mempal_context. It assembles typed knowledge in the intended runtime
+   order: dao_tian -> dao_ren -> shu -> qi, with evidence opt-in. Use this
+   before choosing a workflow or skill when the user asks "how should we
+   approach this?" or when a task benefits from high-level principles plus
+   concrete tool bindings. Treat trigger_hints as metadata only — they bias
+   skill choice but do not execute skills for you.
+
 3a. TRANSLATE QUERIES TO ENGLISH
    The default embedding model is a multilingual distillation (model2vec) but
    still performs best with English queries. Non-English queries may miss
@@ -136,6 +145,7 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
+  mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi)
   mempal_ingest        — save a new drawer (wing required, room optional, importance 0-5)
   mempal_delete        — soft-delete a drawer by ID
   mempal_taxonomy      — list or edit routing keywords
@@ -192,6 +202,14 @@ mod tests {
         assert!(
             MEMORY_PROTOCOL.contains("mempal_cowork_push"),
             "MEMORY_PROTOCOL must mention mempal_cowork_push in TOOLS list"
+        );
+    }
+
+    #[test]
+    fn contains_context_tool_name() {
+        assert!(
+            MEMORY_PROTOCOL.contains("mempal_context"),
+            "MEMORY_PROTOCOL must mention mempal_context in TOOLS list"
         );
     }
 }

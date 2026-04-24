@@ -95,6 +95,7 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal init <DIR> [--dry-run]` | infer a `wing` and seed initial taxonomy rooms from a project tree |
 | `mempal ingest --wing <WING> <DIR> [--dry-run]` | chunk, embed, and store a project tree |
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
+| `mempal context <QUERY> [--format json] [--include-evidence]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`) |
 | `mempal wake-up [--format aaak]` | context refresh sorted by importance (not just recency) |
 | `mempal compress <TEXT>` | format arbitrary text as AAAK |
 | `mempal kg add <S> <P> <O> [--source-drawer ID]` | add a knowledge graph triple |
@@ -434,10 +435,11 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes nine tools:
+The MCP server exposes eleven tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
+- `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in)
 - `mempal_ingest` — store memories with optional importance (0-5) and dry_run
 - `mempal_delete` — soft-delete with audit
 - `mempal_taxonomy` — list or edit routing keywords
@@ -445,8 +447,9 @@ The MCP server exposes nine tools:
 - `mempal_tunnels` — cross-wing room discovery
 - `mempal_peek_partner` — read the partner coding agent's live session (Claude ↔ Codex); pure read, never writes to mempal
 - `mempal_cowork_push` — send a short handoff message (≤ 8 KB) to the partner agent's inbox; delivered at the partner's next UserPromptSubmit via a drain hook
+- `mempal_fact_check` — offline contradiction detection against KG triples and known entities
 
-The server also embeds MEMORY_PROTOCOL (10 behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration.
+The server also embeds MEMORY_PROTOCOL (behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration.
 
 Example request shapes:
 

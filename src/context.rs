@@ -106,7 +106,6 @@ pub async fn assemble_context<E: Embedder + ?Sized>(
     embedder: &E,
     request: ContextRequest,
 ) -> Result<ContextPack> {
-    let anchors = context_anchors(&request)?;
     let query_vector = embedder
         .embed(&[request.query.as_str()])
         .await
@@ -115,6 +114,15 @@ pub async fn assemble_context<E: Embedder + ?Sized>(
         .next()
         .ok_or(ContextError::MissingQueryVector)?;
 
+    assemble_context_with_vector(db, request, &query_vector)
+}
+
+pub fn assemble_context_with_vector(
+    db: &Database,
+    request: ContextRequest,
+    query_vector: &[f32],
+) -> Result<ContextPack> {
+    let anchors = context_anchors(&request)?;
     let route = RouteDecision {
         wing: None,
         room: None,
@@ -143,7 +151,7 @@ pub async fn assemble_context<E: Embedder + ?Sized>(
                     db,
                     CandidateQuery {
                         request: &request,
-                        query_vector: &query_vector,
+                        query_vector,
                         route: &route,
                         anchor,
                         memory_kind: MemoryKind::Knowledge,
@@ -183,7 +191,7 @@ pub async fn assemble_context<E: Embedder + ?Sized>(
                 db,
                 CandidateQuery {
                     request: &request,
-                    query_vector: &query_vector,
+                    query_vector,
                     route: &route,
                     anchor,
                     memory_kind: MemoryKind::Evidence,

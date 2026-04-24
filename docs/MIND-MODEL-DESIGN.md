@@ -811,6 +811,7 @@ Limits:
 Implemented Phase-1 runtime surface:
 
 - `mempal context <query>` assembles a runtime context pack from typed drawers
+- `mempal_context` exposes the same pack to MCP-connected agents
 - knowledge sections are ordered as `dao_tian -> dao_ren -> shu -> qi`
 - evidence remains opt-in via `--include-evidence`
 - same-tier items prefer `worktree`, then current `repo`, then `repo://legacy`, then `global`

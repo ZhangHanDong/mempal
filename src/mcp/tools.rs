@@ -1,3 +1,4 @@
+use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
     NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry, TunnelEndpoint,
@@ -52,6 +53,54 @@ pub struct SearchRequest {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct SearchResponse {
     pub results: Vec<SearchResultDto>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ContextRequest {
+    pub query: String,
+    pub field: Option<String>,
+    pub domain: Option<String>,
+    pub cwd: Option<String>,
+    pub include_evidence: Option<bool>,
+    pub max_items: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ContextResponse {
+    pub query: String,
+    pub domain: String,
+    pub field: String,
+    pub anchors: Vec<ContextAnchorDto>,
+    pub sections: Vec<ContextSectionDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ContextAnchorDto {
+    pub anchor_kind: String,
+    pub anchor_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ContextSectionDto {
+    pub name: String,
+    pub items: Vec<ContextItemDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ContextItemDto {
+    pub drawer_id: String,
+    pub source_file: String,
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    pub anchor_kind: String,
+    pub anchor_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_anchor_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger_hints: Option<TriggerHintsDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -154,7 +203,7 @@ pub struct IngestRequest {
     pub cwd: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct TriggerHintsDto {
     pub intent_tags: Vec<String>,
     pub workflow_bias: Vec<String>,
@@ -484,6 +533,72 @@ impl SearchResultDto {
             anchor_kind: anchor_kind_slug(&value.anchor_kind).to_string(),
             anchor_id: value.anchor_id,
             parent_anchor_id: value.parent_anchor_id,
+        }
+    }
+}
+
+impl From<ContextPack> for ContextResponse {
+    fn from(value: ContextPack) -> Self {
+        Self {
+            query: value.query,
+            domain: domain_slug(&value.domain).to_string(),
+            field: value.field,
+            anchors: value
+                .anchors
+                .into_iter()
+                .map(|anchor| ContextAnchorDto {
+                    anchor_kind: anchor_kind_slug(&anchor.anchor_kind).to_string(),
+                    anchor_id: anchor.anchor_id,
+                })
+                .collect(),
+            sections: value
+                .sections
+                .into_iter()
+                .map(ContextSectionDto::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<ContextSection> for ContextSectionDto {
+    fn from(value: ContextSection) -> Self {
+        Self {
+            name: value.name,
+            items: value.items.into_iter().map(ContextItemDto::from).collect(),
+        }
+    }
+}
+
+impl From<ContextItem> for ContextItemDto {
+    fn from(value: ContextItem) -> Self {
+        Self {
+            drawer_id: value.drawer_id,
+            source_file: value.source_file,
+            text: value.text,
+            tier: value
+                .tier
+                .as_ref()
+                .map(knowledge_tier_slug)
+                .map(str::to_string),
+            status: value
+                .status
+                .as_ref()
+                .map(knowledge_status_slug)
+                .map(str::to_string),
+            anchor_kind: anchor_kind_slug(&value.anchor_kind).to_string(),
+            anchor_id: value.anchor_id,
+            parent_anchor_id: value.parent_anchor_id,
+            trigger_hints: value.trigger_hints.map(TriggerHintsDto::from),
+        }
+    }
+}
+
+impl From<crate::core::types::TriggerHints> for TriggerHintsDto {
+    fn from(value: crate::core::types::TriggerHints) -> Self {
+        Self {
+            intent_tags: value.intent_tags,
+            workflow_bias: value.workflow_bias,
+            tool_needs: value.tool_needs,
         }
     }
 }
