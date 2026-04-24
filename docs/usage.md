@@ -439,7 +439,7 @@ The MCP server exposes eleven tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
-- `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in)
+- `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in); guides workflow / skill / tool choice but never executes skills
 - `mempal_ingest` — store memories with optional importance (0-5) and dry_run
 - `mempal_delete` — soft-delete with audit
 - `mempal_taxonomy` — list or edit routing keywords
@@ -449,7 +449,7 @@ The MCP server exposes eleven tools:
 - `mempal_cowork_push` — send a short handoff message (≤ 8 KB) to the partner agent's inbox; delivered at the partner's next UserPromptSubmit via a drain hook
 - `mempal_fact_check` — offline contradiction detection against KG triples and known entities
 
-The server also embeds MEMORY_PROTOCOL (behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration.
+The server also embeds MEMORY_PROTOCOL (behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration. The protocol treats `mempal_context` as guidance for choosing an approach, workflow, skill, or tool; `trigger_hints` are bias metadata only and never override system, user, repo, or client-native skill rules.
 
 Example request shapes:
 

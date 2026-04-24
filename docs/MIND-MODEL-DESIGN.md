@@ -817,6 +817,8 @@ Implemented Phase-1 runtime surface:
 - same-tier items prefer `worktree`, then current `repo`, then `repo://legacy`, then `global`
 - `global` anchor candidates use `domain=global`, preserving the invariant that global anchors do not hold project-local domain memory
 - `trigger_hints` are exposed as metadata only; they do not directly execute skills
+- MCP protocol guidance consumes context in order: read `dao_tian` and `dao_ren` for judgment, use `shu` to bias workflow / skill choice, and use `qi` to bias concrete tool choice
+- memory hints never override system, user, repo, or client-native skill rules
 
 ### Phase 2: Knowledge Card Extraction
 
