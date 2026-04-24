@@ -96,6 +96,7 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal ingest --wing <WING> <DIR> [--dry-run]` | chunk, embed, and store a project tree |
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
 | `mempal context <QUERY> [--format json] [--include-evidence]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`) |
+| `mempal knowledge distill --statement ... --content ... --tier dao_ren --supporting-ref <ID>` | create candidate knowledge from evidence refs |
 | `mempal knowledge promote <ID> --status promoted --verification-ref <ID> --reason ...` | promote bootstrap knowledge into active runtime use |
 | `mempal knowledge demote <ID> --status demoted --evidence-ref <ID> --reason ... --reason-type contradicted` | demote or retire contradicted / obsolete bootstrap knowledge |
 | `mempal wake-up [--format aaak]` | context refresh sorted by importance (not just recency) |
@@ -177,6 +178,22 @@ Every ingest appends a JSONL audit record to:
 
 ### Bootstrap Knowledge Lifecycle
 
+P18 adds the explicit Stage-1 distillation entry point: create candidate knowledge
+from existing evidence drawers.
+
+```bash
+mempal knowledge distill \
+  --statement "Prefer evidence before asserting project facts" \
+  --content "When answering project-specific questions, cite source-backed memory before making claims." \
+  --tier dao_ren \
+  --supporting-ref drawer_evidence
+```
+
+Distill always creates `status=candidate` and currently only allows `tier=dao_ren`
+or `tier=qi`. `dao_tian` and `shu` are intentionally excluded from candidate
+distill because the current P12 status policy does not allow candidate states
+for those tiers. Use `promote` only after review.
+
 P17 adds manual lifecycle commands for Stage-1 knowledge drawers:
 
 ```bash
@@ -195,7 +212,7 @@ mempal knowledge demote drawer_knowledge \
   --reason-type contradicted
 ```
 
-These commands only update existing `memory_kind=knowledge` drawers. They do not create knowledge, change content, re-embed vectors, bump schema, or add Phase-2 `knowledge_cards`. Successful lifecycle changes append a JSONL audit entry with old/new status, refs, reason, and reviewer or reason type.
+Lifecycle commands only update existing `memory_kind=knowledge` drawers. They do not change content, re-embed vectors, bump schema, or add Phase-2 `knowledge_cards`. Successful distill and lifecycle changes append JSONL audit entries.
 
 ### 4. Search
 

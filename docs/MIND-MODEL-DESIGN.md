@@ -819,6 +819,7 @@ Implemented Phase-1 runtime surface:
 - `trigger_hints` are exposed as metadata only; they do not directly execute skills
 - MCP protocol guidance consumes context in order: read `dao_tian` and `dao_ren` for judgment, use `shu` to bias workflow / skill choice, and use `qi` to bias concrete tool choice
 - memory hints never override system, user, repo, or client-native skill rules
+- bootstrap distill CLI creates candidate `dao_ren` / `qi` knowledge drawers from existing evidence refs without auto-promotion or LLM summarization
 - bootstrap lifecycle CLI supports manual `promote` / `demote` on existing knowledge drawers by updating status plus verification / counterexample refs and writing audit entries
 - lifecycle updates are metadata-only in Stage 1; they do not rewrite content, re-embed vectors, or create Phase-2 knowledge cards
 

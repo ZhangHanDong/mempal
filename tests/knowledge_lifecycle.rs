@@ -1,6 +1,9 @@
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::thread;
 
 use async_trait::async_trait;
 use mempal::context::{ContextRequest, assemble_context};
@@ -37,7 +40,7 @@ fn mempal_bin() -> String {
 }
 
 fn vector() -> Vec<f32> {
-    vec![0.1, 0.2, 0.3]
+    vec![0.1; 384]
 }
 
 fn setup_home() -> (TempDir, Database) {
@@ -48,12 +51,62 @@ fn setup_home() -> (TempDir, Database) {
     (tmp, db)
 }
 
+fn start_openai_embedding_stub(expected_input: &str) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind embedding stub");
+    listener
+        .set_nonblocking(false)
+        .expect("set embedding stub blocking");
+    let address = listener.local_addr().expect("local addr");
+    let expected_input = expected_input.to_string();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept embedding request");
+        let mut request = [0_u8; 8192];
+        let bytes_read = stream.read(&mut request).expect("read embedding request");
+        let request_text = String::from_utf8_lossy(&request[..bytes_read]);
+        let body = request_text.split("\r\n\r\n").nth(1).expect("request body");
+        let payload: Value = serde_json::from_str(body).expect("parse embedding request body");
+        let input = payload["input"].as_array().expect("input array");
+        assert_eq!(input[0].as_str(), Some(expected_input.as_str()));
+        let response = serde_json::json!({
+            "data": [{ "embedding": vector() }]
+        });
+        let response_body = response.to_string();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            response_body.len(),
+            response_body
+        )
+        .expect("write embedding response");
+    });
+    (format!("http://{address}/v1/embeddings"), handle)
+}
+
+fn write_api_config(home: &Path, endpoint: &str) {
+    let config_path = home.join(".mempal").join("config.toml");
+    fs::write(
+        config_path,
+        format!(
+            "[embed]\nbackend = \"api\"\napi_endpoint = \"{endpoint}\"\napi_model = \"test-model\"\n"
+        ),
+    )
+    .expect("write config");
+}
+
 fn run_mempal(home: &Path, args: &[&str]) -> Output {
     Command::new(mempal_bin())
         .env("HOME", home)
         .args(args)
         .output()
         .expect("run mempal")
+}
+
+fn parse_drawer_id(stdout: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stdout);
+    text.split_whitespace()
+        .find_map(|part| part.strip_prefix("drawer_id="))
+        .expect("drawer_id in output")
+        .to_string()
 }
 
 fn insert_evidence(db: &Database, id: &str, content: &str) {
@@ -388,4 +441,212 @@ fn test_knowledge_lifecycle_does_not_bump_schema_or_rewrite_vectors() {
 
     assert_eq!(db.schema_version().expect("schema version"), schema_before);
     assert_eq!(vector_row_count(&db, "drawer_knowledge"), 1);
+}
+
+#[tokio::test]
+async fn test_cli_knowledge_distill_creates_candidate_knowledge() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_evidence", "evidence first observation");
+    let content = "Use cited evidence before asserting project facts.";
+    let (endpoint, handle) = start_openai_embedding_stub(content);
+    write_api_config(home.path(), &endpoint);
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "distill",
+            "--statement",
+            "Prefer evidence first",
+            "--content",
+            content,
+            "--tier",
+            "dao_ren",
+            "--supporting-ref",
+            "drawer_evidence",
+        ],
+    );
+    handle.join().expect("join embedding stub");
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let drawer_id = parse_drawer_id(&output.stdout);
+    let drawer = db
+        .get_drawer(&drawer_id)
+        .expect("load drawer")
+        .expect("drawer exists");
+    assert_eq!(drawer.memory_kind, MemoryKind::Knowledge);
+    assert_eq!(drawer.status, Some(KnowledgeStatus::Candidate));
+    assert_eq!(drawer.tier, Some(KnowledgeTier::DaoRen));
+    assert_eq!(drawer.supporting_refs, vec!["drawer_evidence"]);
+
+    let ids = default_context_ids(&db, home.path(), "evidence first").await;
+    assert!(!ids.contains(&drawer_id));
+}
+
+#[test]
+fn test_cli_knowledge_distill_dry_run_no_write() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_evidence", "dry run evidence");
+    let baseline = db.drawer_count().expect("drawer count");
+    let args = [
+        "knowledge",
+        "distill",
+        "--statement",
+        "Dry run candidate",
+        "--content",
+        "This should not be written.",
+        "--tier",
+        "qi",
+        "--supporting-ref",
+        "drawer_evidence",
+        "--dry-run",
+    ];
+
+    let first = run_mempal(home.path(), &args);
+    let second = run_mempal(home.path(), &args);
+    assert!(first.status.success());
+    assert!(second.status.success());
+    assert_eq!(
+        parse_drawer_id(&first.stdout),
+        parse_drawer_id(&second.stdout)
+    );
+    assert_eq!(db.drawer_count().expect("drawer count"), baseline);
+}
+
+#[test]
+fn test_cli_knowledge_distill_rejects_dao_tian_candidate() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_evidence", "dao tian evidence");
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "distill",
+            "--statement",
+            "Universal law",
+            "--content",
+            "This should not be candidate dao_tian.",
+            "--tier",
+            "dao_tian",
+            "--supporting-ref",
+            "drawer_evidence",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("distill only allows candidate dao_ren or qi")
+    );
+}
+
+#[test]
+fn test_cli_knowledge_distill_rejects_missing_supporting_refs() {
+    let (home, db) = setup_home();
+    let baseline = db.drawer_count().expect("drawer count");
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "distill",
+            "--statement",
+            "Missing refs",
+            "--content",
+            "This should fail before writing.",
+            "--tier",
+            "qi",
+        ],
+    );
+    assert!(!output.status.success());
+    assert_eq!(db.drawer_count().expect("drawer count"), baseline);
+}
+
+#[test]
+fn test_cli_knowledge_distill_stores_trigger_hints() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_evidence", "trigger hint evidence");
+    let content = "Reproduce failures before changing code.";
+    let (endpoint, handle) = start_openai_embedding_stub(content);
+    write_api_config(home.path(), &endpoint);
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "distill",
+            "--statement",
+            "Reproduce before patching",
+            "--content",
+            content,
+            "--tier",
+            "qi",
+            "--supporting-ref",
+            "drawer_evidence",
+            "--intent-tag",
+            "debugging",
+            "--workflow-bias",
+            "reproduce-first",
+            "--tool-need",
+            "cargo-test",
+        ],
+    );
+    handle.join().expect("join embedding stub");
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let drawer_id = parse_drawer_id(&output.stdout);
+    let drawer = db
+        .get_drawer(&drawer_id)
+        .expect("load drawer")
+        .expect("drawer exists");
+    let hints = drawer.trigger_hints.expect("trigger hints");
+    assert_eq!(hints.intent_tags, vec!["debugging"]);
+    assert_eq!(hints.workflow_bias, vec!["reproduce-first"]);
+    assert_eq!(hints.tool_needs, vec!["cargo-test"]);
+}
+
+#[test]
+fn test_cli_knowledge_distill_writes_audit_and_preserves_schema() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_evidence", "audit distill evidence");
+    let schema_before = db.schema_version().expect("schema version");
+    let content = "Audit every distilled candidate.";
+    let (endpoint, handle) = start_openai_embedding_stub(content);
+    write_api_config(home.path(), &endpoint);
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "distill",
+            "--statement",
+            "Audit distilled candidates",
+            "--content",
+            content,
+            "--tier",
+            "dao_ren",
+            "--supporting-ref",
+            "drawer_evidence",
+        ],
+    );
+    handle.join().expect("join embedding stub");
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(db.schema_version().expect("schema version"), schema_before);
+
+    let audit_path = home.path().join(".mempal").join("audit.jsonl");
+    let audit = fs::read_to_string(audit_path).expect("read audit");
+    let last_line = audit.lines().last().expect("audit line");
+    let value: Value = serde_json::from_str(last_line).expect("audit json");
+    assert_eq!(value["command"], "knowledge_distill");
+    assert_eq!(value["details"]["status"], "candidate");
+    assert_eq!(value["details"]["tier"], "dao_ren");
+    assert_eq!(value["details"]["supporting_refs"][0], "drawer_evidence");
 }
