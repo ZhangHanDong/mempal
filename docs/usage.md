@@ -96,6 +96,8 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal ingest --wing <WING> <DIR> [--dry-run]` | chunk, embed, and store a project tree |
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
 | `mempal context <QUERY> [--format json] [--include-evidence]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`) |
+| `mempal knowledge promote <ID> --status promoted --verification-ref <ID> --reason ...` | promote bootstrap knowledge into active runtime use |
+| `mempal knowledge demote <ID> --status demoted --evidence-ref <ID> --reason ... --reason-type contradicted` | demote or retire contradicted / obsolete bootstrap knowledge |
 | `mempal wake-up [--format aaak]` | context refresh sorted by importance (not just recency) |
 | `mempal compress <TEXT>` | format arbitrary text as AAAK |
 | `mempal kg add <S> <P> <O> [--source-drawer ID]` | add a knowledge graph triple |
@@ -172,6 +174,28 @@ Every ingest appends a JSONL audit record to:
 ```text
 ~/.mempal/audit.jsonl
 ```
+
+### Bootstrap Knowledge Lifecycle
+
+P17 adds manual lifecycle commands for Stage-1 knowledge drawers:
+
+```bash
+mempal knowledge promote drawer_knowledge \
+  --status promoted \
+  --verification-ref drawer_evidence \
+  --reason "validated across repeated runs" \
+  --reviewer "human"
+```
+
+```bash
+mempal knowledge demote drawer_knowledge \
+  --status demoted \
+  --evidence-ref drawer_counterexample \
+  --reason "new evidence contradicts this heuristic" \
+  --reason-type contradicted
+```
+
+These commands only update existing `memory_kind=knowledge` drawers. They do not create knowledge, change content, re-embed vectors, bump schema, or add Phase-2 `knowledge_cards`. Successful lifecycle changes append a JSONL audit entry with old/new status, refs, reason, and reviewer or reason type.
 
 ### 4. Search
 

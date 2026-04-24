@@ -135,6 +135,10 @@ enum Commands {
         #[command(subcommand)]
         command: KgCommands,
     },
+    Knowledge {
+        #[command(subcommand)]
+        command: KnowledgeCommands,
+    },
     Tunnels {
         #[command(subcommand)]
         command: Option<TunnelCommands>,
@@ -238,6 +242,32 @@ enum KgCommands {
     },
     Stats,
     List,
+}
+
+#[derive(Subcommand)]
+enum KnowledgeCommands {
+    Promote {
+        drawer_id: String,
+        #[arg(long)]
+        status: String,
+        #[arg(long = "verification-ref", required = true)]
+        verification_refs: Vec<String>,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        reviewer: Option<String>,
+    },
+    Demote {
+        drawer_id: String,
+        #[arg(long)]
+        status: String,
+        #[arg(long = "evidence-ref", required = true)]
+        evidence_refs: Vec<String>,
+        #[arg(long)]
+        reason: String,
+        #[arg(long = "reason-type")]
+        reason_type: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -423,6 +453,7 @@ async fn run() -> Result<()> {
             dry_run,
         } => reindex_command(&db, &config, stale, force, dry_run).await,
         Commands::Kg { command } => kg_command(&db, command),
+        Commands::Knowledge { command } => knowledge_command(&db, command),
         Commands::Tunnels { command } => tunnels_command(&db, command),
         Commands::Taxonomy { command } => taxonomy_command(&db, command),
         Commands::Serve { mcp } => serve_command(&config, mcp).await,
@@ -1109,6 +1140,210 @@ fn print_reindex_report(report: ReindexReport, dry_run: bool) {
         report.skipped_existing_chunks,
         report.skipped_missing_drawers
     );
+}
+
+fn knowledge_command(db: &Database, command: KnowledgeCommands) -> Result<()> {
+    match command {
+        KnowledgeCommands::Promote {
+            drawer_id,
+            status,
+            verification_refs,
+            reason,
+            reviewer,
+        } => {
+            let target_status = parse_lifecycle_status(&status)?;
+            if !matches!(
+                target_status,
+                KnowledgeStatus::Promoted | KnowledgeStatus::Canonical
+            ) {
+                bail!("promote status must be promoted or canonical");
+            }
+            let drawer = load_lifecycle_knowledge_drawer(db, &drawer_id)?;
+            validate_tier_status(
+                drawer.tier.as_ref().expect("knowledge drawer has tier"),
+                &target_status,
+            )?;
+            validate_lifecycle_refs(db, &verification_refs)?;
+
+            let old_status = drawer.status.clone().expect("knowledge drawer has status");
+            let mut updated_verification_refs = drawer.verification_refs.clone();
+            append_unique_refs(&mut updated_verification_refs, &verification_refs);
+            db.update_knowledge_lifecycle(
+                &drawer_id,
+                &target_status,
+                &updated_verification_refs,
+                &drawer.counterexample_refs,
+            )
+            .context("failed to update knowledge lifecycle")?;
+            append_audit_entry(
+                db,
+                "knowledge_promote",
+                &serde_json::json!({
+                    "drawer_id": drawer_id,
+                    "old_status": knowledge_status_slug(&old_status),
+                    "new_status": knowledge_status_slug(&target_status),
+                    "verification_refs": verification_refs,
+                    "reason": reason,
+                    "reviewer": reviewer,
+                }),
+            )
+            .context("failed to append audit log")?;
+            println!(
+                "promoted {}: {} -> {}",
+                drawer_id,
+                knowledge_status_slug(&old_status),
+                knowledge_status_slug(&target_status)
+            );
+        }
+        KnowledgeCommands::Demote {
+            drawer_id,
+            status,
+            evidence_refs,
+            reason,
+            reason_type,
+        } => {
+            let target_status = parse_lifecycle_status(&status)?;
+            if !matches!(
+                target_status,
+                KnowledgeStatus::Demoted | KnowledgeStatus::Retired
+            ) {
+                bail!("demote status must be demoted or retired");
+            }
+            validate_demote_reason_type(&reason_type)?;
+            let drawer = load_lifecycle_knowledge_drawer(db, &drawer_id)?;
+            validate_tier_status(
+                drawer.tier.as_ref().expect("knowledge drawer has tier"),
+                &target_status,
+            )?;
+            validate_lifecycle_refs(db, &evidence_refs)?;
+
+            let old_status = drawer.status.clone().expect("knowledge drawer has status");
+            let mut updated_counterexample_refs = drawer.counterexample_refs.clone();
+            append_unique_refs(&mut updated_counterexample_refs, &evidence_refs);
+            db.update_knowledge_lifecycle(
+                &drawer_id,
+                &target_status,
+                &drawer.verification_refs,
+                &updated_counterexample_refs,
+            )
+            .context("failed to update knowledge lifecycle")?;
+            append_audit_entry(
+                db,
+                "knowledge_demote",
+                &serde_json::json!({
+                    "drawer_id": drawer_id,
+                    "old_status": knowledge_status_slug(&old_status),
+                    "new_status": knowledge_status_slug(&target_status),
+                    "evidence_refs": evidence_refs,
+                    "reason": reason,
+                    "reason_type": reason_type,
+                }),
+            )
+            .context("failed to append audit log")?;
+            println!(
+                "demoted {}: {} -> {}",
+                drawer_id,
+                knowledge_status_slug(&old_status),
+                knowledge_status_slug(&target_status)
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn load_lifecycle_knowledge_drawer(
+    db: &Database,
+    drawer_id: &str,
+) -> Result<mempal::core::types::Drawer> {
+    let drawer = db
+        .get_drawer(drawer_id)
+        .context("failed to look up drawer")?
+        .with_context(|| format!("drawer not found: {drawer_id}"))?;
+    if drawer.memory_kind != MemoryKind::Knowledge {
+        bail!("knowledge lifecycle requires a knowledge drawer");
+    }
+    if drawer.tier.is_none() || drawer.status.is_none() {
+        bail!("knowledge lifecycle requires tier and status metadata");
+    }
+    Ok(drawer)
+}
+
+fn parse_lifecycle_status(value: &str) -> Result<KnowledgeStatus> {
+    match value {
+        "candidate" => Ok(KnowledgeStatus::Candidate),
+        "promoted" => Ok(KnowledgeStatus::Promoted),
+        "canonical" => Ok(KnowledgeStatus::Canonical),
+        "demoted" => Ok(KnowledgeStatus::Demoted),
+        "retired" => Ok(KnowledgeStatus::Retired),
+        other => bail!("unsupported knowledge status: {other}"),
+    }
+}
+
+fn validate_tier_status(tier: &KnowledgeTier, status: &KnowledgeStatus) -> Result<()> {
+    let allowed = match tier {
+        KnowledgeTier::DaoTian => &[KnowledgeStatus::Canonical, KnowledgeStatus::Demoted][..],
+        KnowledgeTier::DaoRen => &[
+            KnowledgeStatus::Candidate,
+            KnowledgeStatus::Promoted,
+            KnowledgeStatus::Demoted,
+            KnowledgeStatus::Retired,
+        ][..],
+        KnowledgeTier::Shu => &[
+            KnowledgeStatus::Promoted,
+            KnowledgeStatus::Demoted,
+            KnowledgeStatus::Retired,
+        ][..],
+        KnowledgeTier::Qi => &[
+            KnowledgeStatus::Candidate,
+            KnowledgeStatus::Promoted,
+            KnowledgeStatus::Demoted,
+            KnowledgeStatus::Retired,
+        ][..],
+    };
+
+    if allowed.contains(status) {
+        return Ok(());
+    }
+
+    match tier {
+        KnowledgeTier::DaoTian => bail!("dao_tian only allows canonical or demoted"),
+        KnowledgeTier::DaoRen => {
+            bail!("dao_ren only allows candidate, promoted, demoted, or retired")
+        }
+        KnowledgeTier::Shu => bail!("shu only allows promoted, demoted, or retired"),
+        KnowledgeTier::Qi => bail!("qi only allows candidate, promoted, demoted, or retired"),
+    }
+}
+
+fn validate_demote_reason_type(value: &str) -> Result<()> {
+    match value {
+        "contradicted" | "obsolete" | "superseded" | "out_of_scope" | "unsafe" => Ok(()),
+        other => bail!("unsupported demote reason_type: {other}"),
+    }
+}
+
+fn validate_lifecycle_refs(db: &Database, refs: &[String]) -> Result<()> {
+    if refs.is_empty() {
+        bail!("at least one lifecycle evidence ref is required");
+    }
+    for drawer_id in refs {
+        if !db
+            .drawer_exists(drawer_id)
+            .with_context(|| format!("failed to check ref drawer {drawer_id}"))?
+        {
+            bail!("ref drawer not found: {drawer_id}");
+        }
+    }
+    Ok(())
+}
+
+fn append_unique_refs(target: &mut Vec<String>, refs: &[String]) {
+    for item in refs {
+        if !target.iter().any(|existing| existing == item) {
+            target.push(item.clone());
+        }
+    }
 }
 
 fn delete_command(db: &Database, drawer_id: &str) -> Result<()> {

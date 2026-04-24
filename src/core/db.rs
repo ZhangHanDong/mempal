@@ -673,6 +673,33 @@ impl Database {
         }
     }
 
+    pub fn update_knowledge_lifecycle(
+        &self,
+        drawer_id: &str,
+        status: &KnowledgeStatus,
+        verification_refs: &[String],
+        counterexample_refs: &[String],
+    ) -> Result<bool, DbError> {
+        let affected = self.conn.execute(
+            r#"
+            UPDATE drawers
+            SET status = ?2,
+                verification_refs = ?3,
+                counterexample_refs = ?4
+            WHERE id = ?1
+              AND deleted_at IS NULL
+              AND memory_kind = 'knowledge'
+            "#,
+            params![
+                drawer_id,
+                knowledge_status_as_str(status),
+                encode_json(verification_refs)?,
+                encode_json(counterexample_refs)?,
+            ],
+        )?;
+        Ok(affected > 0)
+    }
+
     pub fn neighbor_chunks(
         &self,
         source_file: &str,
@@ -1611,7 +1638,7 @@ fn knowledge_status_from_str(status: &str) -> Result<KnowledgeStatus, DbError> {
     }
 }
 
-fn encode_json<T: serde::Serialize>(value: &T) -> Result<String, DbError> {
+fn encode_json<T: serde::Serialize + ?Sized>(value: &T) -> Result<String, DbError> {
     Ok(serde_json::to_string(value)?)
 }
 

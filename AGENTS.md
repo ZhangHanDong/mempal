@@ -30,7 +30,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P16）
+### 已完成的 Spec（P0-P17）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -63,6 +63,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p14-context-assembler.spec.md` | 完成 | mind-model runtime assembler：`mempal context` 按 `dao_tian -> dao_ren -> shu -> qi -> evidence` 和 `worktree -> repo -> global` 组装 context pack |
 | `specs/p15-mcp-context.spec.md` | 完成 | `mempal_context` MCP 工具：向 agent runtime 暴露 P14 mind-model context pack |
 | `specs/p16-context-skill-guidance.spec.md` | 完成 | context-guided skill selection protocol：`mempal_context` 辅助 workflow/skill/tool 选择，但 `trigger_hints` 只做 bias、不自动执行 |
+| `specs/p17-knowledge-lifecycle.spec.md` | 完成 | bootstrap knowledge lifecycle CLI：`mempal knowledge promote/demote` 受约束更新 knowledge drawer status 与 refs，并写 audit |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -88,6 +89,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-24-p14-context-assembler-implementation.md` — P14 mind-model runtime context assembler（已完成）
 - `docs/plans/2026-04-24-p15-mcp-context-implementation.md` — P15 mempal_context MCP tool（已完成）
 - `docs/plans/2026-04-24-p16-context-skill-guidance-implementation.md` — P16 context-guided skill selection protocol（已完成）
+- `docs/plans/2026-04-24-p17-knowledge-lifecycle-implementation.md` — P17 bootstrap knowledge lifecycle CLI（已完成）
 
 ### Spec 使用方式
 
