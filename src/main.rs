@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand};
 use mempal::aaak::{AaakCodec, AaakMeta};
 #[cfg(feature = "rest")]
 use mempal::api::{ApiState, DEFAULT_REST_ADDR, serve as serve_rest_api};
+use mempal::context::{ContextPack, ContextRequest, assemble_context};
 use mempal::core::{
     config::Config,
     db::Database,
@@ -87,6 +88,21 @@ enum Commands {
         json: bool,
         #[arg(long)]
         with_neighbors: bool,
+    },
+    Context {
+        query: String,
+        #[arg(long, default_value = "general")]
+        field: String,
+        #[arg(long, default_value = "project")]
+        domain: String,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+        #[arg(long)]
+        include_evidence: bool,
+        #[arg(long, default_value_t = 12)]
+        max_items: usize,
     },
     WakeUp {
         #[arg(long)]
@@ -372,6 +388,30 @@ async fn run() -> Result<()> {
             )
             .await
         }
+        Commands::Context {
+            query,
+            field,
+            domain,
+            cwd,
+            format,
+            include_evidence,
+            max_items,
+        } => {
+            context_command(
+                &db,
+                &config,
+                ContextCommandArgs {
+                    query,
+                    field,
+                    domain,
+                    cwd,
+                    format,
+                    include_evidence,
+                    max_items,
+                },
+            )
+            .await
+        }
         Commands::Delete { drawer_id } => delete_command(&db, &drawer_id),
         Commands::Purge { before } => purge_command(&db, before.as_deref()),
         Commands::WakeUp { format } => wake_up_command(&db, format.as_deref()),
@@ -408,6 +448,16 @@ struct SearchCommandArgs<'a> {
     top_k: usize,
     json: bool,
     with_neighbors: bool,
+}
+
+struct ContextCommandArgs {
+    query: String,
+    field: String,
+    domain: String,
+    cwd: Option<PathBuf>,
+    format: String,
+    include_evidence: bool,
+    max_items: usize,
 }
 
 async fn bench_command(config: &Config, command: BenchCommands) -> Result<()> {
@@ -602,6 +652,92 @@ fn append_ingest_audit_log(
     writeln!(file, "{entry}")
         .with_context(|| format!("failed to write audit log {}", audit_path.display()))?;
     Ok(())
+}
+
+async fn context_command(db: &Database, config: &Config, args: ContextCommandArgs) -> Result<()> {
+    if args.max_items == 0 {
+        bail!("--max-items must be greater than 0");
+    }
+    let domain = parse_domain(&args.domain)?;
+    let cwd = match args.cwd {
+        Some(cwd) => cwd,
+        None => env::current_dir().context("failed to read current directory")?,
+    };
+
+    let embedder = build_embedder(config).await?;
+    let pack = assemble_context(
+        db,
+        &*embedder,
+        ContextRequest {
+            query: args.query,
+            domain,
+            field: args.field,
+            cwd,
+            include_evidence: args.include_evidence,
+            max_items: args.max_items,
+        },
+    )
+    .await?;
+
+    match args.format.as_str() {
+        "plain" => print_context_plain(&pack),
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&pack).context("failed to serialize context pack")?
+            );
+        }
+        other => bail!("unsupported context format: {other}"),
+    }
+
+    Ok(())
+}
+
+fn parse_domain(value: &str) -> Result<MemoryDomain> {
+    match value {
+        "project" => Ok(MemoryDomain::Project),
+        "agent" => Ok(MemoryDomain::Agent),
+        "skill" => Ok(MemoryDomain::Skill),
+        "global" => Ok(MemoryDomain::Global),
+        other => bail!("unsupported domain: {other}"),
+    }
+}
+
+fn print_context_plain(pack: &ContextPack) {
+    if pack.sections.is_empty() {
+        println!("no context");
+        return;
+    }
+
+    for section in &pack.sections {
+        println!("## {}", section.name);
+        for item in &section.items {
+            println!("- {}", item.text);
+            println!("  source: {}", item.source_file);
+            println!("  drawer: {}", item.drawer_id);
+            println!(
+                "  anchor: {} {}",
+                anchor_kind_slug(&item.anchor_kind),
+                item.anchor_id
+            );
+            if let (Some(tier), Some(status)) = (&item.tier, &item.status) {
+                println!(
+                    "  knowledge: tier={} status={}",
+                    knowledge_tier_slug(tier),
+                    knowledge_status_slug(status)
+                );
+            }
+            if let Some(trigger_hints) = item.trigger_hints.as_ref() {
+                println!(
+                    "  trigger_hints: intent_tags={} workflow_bias={} tool_needs={}",
+                    trigger_hints.intent_tags.join(","),
+                    trigger_hints.workflow_bias.join(","),
+                    trigger_hints.tool_needs.join(",")
+                );
+            }
+        }
+        println!();
+    }
 }
 
 async fn search_command(db: &Database, config: &Config, args: SearchCommandArgs<'_>) -> Result<()> {

@@ -30,7 +30,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P13B）
+### 已完成的 Spec（P0-P14）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -60,6 +60,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p12-mind-model-bootstrap.spec.md` | 完成 | Stage-1 mind-model bootstrap：typed drawers + `dao/shu/qi` 最小治理字段 + `global/repo/worktree` anchor metadata |
 | `specs/p13-wake-up-statement.spec.md` | 完成 | wake-up 最小闭环：knowledge drawer 优先按 `statement` 唤醒，evidence 继续按 `content` 唤醒 |
 | `specs/p13-ingest-identity.spec.md` | 完成 | typed/bootstrap ingest `drawer_id` identity parity：MCP / REST / 文件入口统一使用 bootstrap identity components |
+| `specs/p14-context-assembler.spec.md` | 完成 | mind-model runtime assembler：`mempal context` 按 `dao_tian -> dao_ren -> shu -> qi -> evidence` 和 `worktree -> repo -> global` 组装 context pack |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -82,6 +83,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-21-p12-implementation.md` — P12 mind-model bootstrap（已完成）
 - `docs/plans/2026-04-23-p13a-implementation.md` — P13A wake-up statement（已完成）
 - `docs/plans/2026-04-23-p13b-implementation.md` — P13B bootstrap ingest identity parity（已完成）
+- `docs/plans/2026-04-24-p14-context-assembler-implementation.md` — P14 mind-model runtime context assembler（已完成）
 
 ### Spec 使用方式
 

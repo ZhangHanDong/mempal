@@ -808,6 +808,15 @@ Limits:
 - knowledge drawers will eventually become overloaded with lifecycle and governance metadata
 - this is a bootstrap architecture, not the final form
 
+Implemented Phase-1 runtime surface:
+
+- `mempal context <query>` assembles a runtime context pack from typed drawers
+- knowledge sections are ordered as `dao_tian -> dao_ren -> shu -> qi`
+- evidence remains opt-in via `--include-evidence`
+- same-tier items prefer `worktree`, then current `repo`, then `repo://legacy`, then `global`
+- `global` anchor candidates use `domain=global`, preserving the invariant that global anchors do not hold project-local domain memory
+- `trigger_hints` are exposed as metadata only; they do not directly execute skills
+
 ### Phase 2: Knowledge Card Extraction
 
 Once the model proves useful, separate knowledge memory from evidence memory structurally.
