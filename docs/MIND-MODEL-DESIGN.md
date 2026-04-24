@@ -821,6 +821,7 @@ Implemented Phase-1 runtime surface:
 - memory hints never override system, user, repo, or client-native skill rules
 - bootstrap distill CLI creates candidate `dao_ren` / `qi` knowledge drawers from existing evidence refs without auto-promotion or LLM summarization
 - bootstrap lifecycle CLI supports manual `promote` / `demote` on existing knowledge drawers by updating status plus verification / counterexample refs and writing audit entries
+- lifecycle verification / counterexample refs are hardened to require existing evidence drawers, preserving the rule that promotion and demotion are justified by evidence rather than arbitrary ids or other knowledge claims
 - lifecycle updates are metadata-only in Stage 1; they do not rewrite content, re-embed vectors, or create Phase-2 knowledge cards
 
 ### Phase 2: Knowledge Card Extraction

@@ -1596,11 +1596,15 @@ fn validate_lifecycle_refs(db: &Database, refs: &[String]) -> Result<()> {
         bail!("at least one lifecycle evidence ref is required");
     }
     for drawer_id in refs {
-        if !db
-            .drawer_exists(drawer_id)
-            .with_context(|| format!("failed to check ref drawer {drawer_id}"))?
-        {
-            bail!("ref drawer not found: {drawer_id}");
+        if !drawer_id.starts_with("drawer_") {
+            bail!("lifecycle refs must contain drawer ids");
+        }
+        let drawer = db
+            .get_drawer(drawer_id)
+            .with_context(|| format!("failed to load ref drawer {drawer_id}"))?
+            .with_context(|| format!("ref drawer not found: {drawer_id}"))?;
+        if drawer.memory_kind != MemoryKind::Evidence {
+            bail!("lifecycle refs must point to evidence drawers");
         }
     }
     Ok(())

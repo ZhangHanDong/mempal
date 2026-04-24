@@ -194,7 +194,9 @@ or `tier=qi`. `dao_tian` and `shu` are intentionally excluded from candidate
 distill because the current P12 status policy does not allow candidate states
 for those tiers. Use `promote` only after review.
 
-P17 adds manual lifecycle commands for Stage-1 knowledge drawers:
+P17 adds manual lifecycle commands for Stage-1 knowledge drawers. P19 hardens
+those commands so lifecycle refs must be existing evidence drawers, not arbitrary
+ids or other knowledge drawers:
 
 ```bash
 mempal knowledge promote drawer_knowledge \
@@ -212,7 +214,7 @@ mempal knowledge demote drawer_knowledge \
   --reason-type contradicted
 ```
 
-Lifecycle commands only update existing `memory_kind=knowledge` drawers. They do not change content, re-embed vectors, bump schema, or add Phase-2 `knowledge_cards`. Successful distill and lifecycle changes append JSONL audit entries.
+Lifecycle commands only update existing `memory_kind=knowledge` drawers. They validate that `--verification-ref` / `--evidence-ref` values start with `drawer_`, exist, and point to `memory_kind=evidence`. They do not change content, re-embed vectors, bump schema, or add Phase-2 `knowledge_cards`. Successful distill and lifecycle changes append JSONL audit entries.
 
 ### 4. Search
 

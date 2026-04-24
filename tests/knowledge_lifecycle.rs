@@ -199,6 +199,14 @@ fn vector_row_count(db: &Database, id: &str) -> i64 {
         .expect("count vector rows")
 }
 
+fn knowledge_status(db: &Database, id: &str) -> KnowledgeStatus {
+    db.get_drawer(id)
+        .expect("load drawer")
+        .expect("drawer exists")
+        .status
+        .expect("knowledge status")
+}
+
 #[tokio::test]
 async fn test_cli_knowledge_promote_updates_status_and_verification_refs() {
     let (home, db) = setup_home();
@@ -243,6 +251,163 @@ async fn test_cli_knowledge_promote_updates_status_and_verification_refs() {
 
     let ids = default_context_ids(&db, home.path(), "lifecycle promote").await;
     assert!(ids.contains(&"drawer_knowledge".to_string()));
+}
+
+#[test]
+fn test_cli_knowledge_promote_rejects_malformed_verification_ref() {
+    let (home, db) = setup_home();
+    insert_knowledge(
+        &db,
+        "drawer_knowledge",
+        KnowledgeTier::DaoRen,
+        KnowledgeStatus::Candidate,
+        "Lifecycle refs must be drawer ids.",
+        "malformed ref lifecycle",
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "promote",
+            "drawer_knowledge",
+            "--status",
+            "promoted",
+            "--verification-ref",
+            "not_a_drawer",
+            "--reason",
+            "bad",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("lifecycle refs must contain drawer ids")
+    );
+    assert_eq!(
+        knowledge_status(&db, "drawer_knowledge"),
+        KnowledgeStatus::Candidate
+    );
+}
+
+#[test]
+fn test_cli_knowledge_promote_rejects_knowledge_verification_ref() {
+    let (home, db) = setup_home();
+    insert_knowledge(
+        &db,
+        "drawer_knowledge",
+        KnowledgeTier::DaoRen,
+        KnowledgeStatus::Candidate,
+        "Promotion requires evidence refs.",
+        "wrong kind lifecycle",
+    );
+    insert_knowledge(
+        &db,
+        "drawer_other_knowledge",
+        KnowledgeTier::Qi,
+        KnowledgeStatus::Candidate,
+        "Knowledge is not evidence.",
+        "wrong kind ref",
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "promote",
+            "drawer_knowledge",
+            "--status",
+            "promoted",
+            "--verification-ref",
+            "drawer_other_knowledge",
+            "--reason",
+            "bad",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("lifecycle refs must point to evidence drawers")
+    );
+    assert_eq!(
+        knowledge_status(&db, "drawer_knowledge"),
+        KnowledgeStatus::Candidate
+    );
+}
+
+#[test]
+fn test_cli_knowledge_demote_rejects_missing_evidence_ref() {
+    let (home, db) = setup_home();
+    insert_knowledge(
+        &db,
+        "drawer_knowledge",
+        KnowledgeTier::Shu,
+        KnowledgeStatus::Promoted,
+        "Demotion requires existing evidence refs.",
+        "missing evidence lifecycle",
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "demote",
+            "drawer_knowledge",
+            "--status",
+            "demoted",
+            "--evidence-ref",
+            "drawer_missing",
+            "--reason",
+            "bad",
+            "--reason-type",
+            "contradicted",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("ref drawer not found"));
+    assert_eq!(
+        knowledge_status(&db, "drawer_knowledge"),
+        KnowledgeStatus::Promoted
+    );
+}
+
+#[test]
+fn test_cli_knowledge_lifecycle_accepts_evidence_refs() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_verify", "validation evidence");
+    insert_knowledge(
+        &db,
+        "drawer_knowledge",
+        KnowledgeTier::DaoRen,
+        KnowledgeStatus::Candidate,
+        "Lifecycle accepts real evidence.",
+        "accepted evidence lifecycle",
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "promote",
+            "drawer_knowledge",
+            "--status",
+            "promoted",
+            "--verification-ref",
+            "drawer_verify",
+            "--reason",
+            "validated",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let drawer = db
+        .get_drawer("drawer_knowledge")
+        .expect("load drawer")
+        .expect("drawer exists");
+    assert_eq!(drawer.status, Some(KnowledgeStatus::Promoted));
+    assert_eq!(drawer.verification_refs, vec!["drawer_verify"]);
 }
 
 #[tokio::test]
