@@ -198,6 +198,53 @@ fn insert_knowledge_with_refs(
         .expect("insert knowledge vector");
 }
 
+struct KnowledgeAnchorArgs<'a> {
+    domain: MemoryDomain,
+    anchor_kind: AnchorKind,
+    anchor_id: &'a str,
+    parent_anchor_id: Option<&'a str>,
+}
+
+fn insert_knowledge_with_anchor(
+    db: &Database,
+    id: &str,
+    status: KnowledgeStatus,
+    anchor: KnowledgeAnchorArgs<'_>,
+) {
+    let drawer = Drawer {
+        id: id.to_string(),
+        content: format!("{id} content"),
+        wing: "mempal".to_string(),
+        room: Some("lifecycle".to_string()),
+        source_file: Some(format!("knowledge://project/lifecycle/{id}")),
+        source_type: SourceType::Manual,
+        added_at: "1713000000".to_string(),
+        chunk_index: Some(0),
+        normalize_version: 1,
+        importance: 4,
+        memory_kind: MemoryKind::Knowledge,
+        domain: anchor.domain,
+        field: anchor::DEFAULT_FIELD.to_string(),
+        anchor_kind: anchor.anchor_kind,
+        anchor_id: anchor.anchor_id.to_string(),
+        parent_anchor_id: anchor.parent_anchor_id.map(str::to_string),
+        provenance: None,
+        statement: Some(format!("{id} statement")),
+        tier: Some(KnowledgeTier::Shu),
+        status: Some(status),
+        supporting_refs: vec!["drawer_supporting".to_string()],
+        counterexample_refs: Vec::new(),
+        teaching_refs: Vec::new(),
+        verification_refs: Vec::new(),
+        scope_constraints: None,
+        trigger_hints: None,
+    };
+    db.insert_drawer(&drawer)
+        .expect("insert anchored knowledge");
+    db.insert_vector(id, &vector())
+        .expect("insert anchored knowledge vector");
+}
+
 async fn default_context_ids(db: &Database, cwd: &Path, query: &str) -> Vec<String> {
     let pack = assemble_context(
         db,
@@ -245,8 +292,335 @@ fn audit_line_count(home: &Path) -> usize {
         .unwrap_or(0)
 }
 
+fn last_audit_entry(home: &Path) -> Value {
+    let audit_path = home.join(".mempal").join("audit.jsonl");
+    let content = fs::read_to_string(audit_path).expect("read audit log");
+    serde_json::from_str(content.lines().last().expect("last audit line")).expect("audit json")
+}
+
+fn table_count(db: &Database) -> i64 {
+    db.conn()
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("table count")
+}
+
 fn gate_json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("gate json")
+}
+
+#[test]
+fn test_cli_knowledge_publish_anchor_worktree_to_repo() {
+    let (home, db) = setup_home();
+    insert_knowledge_with_anchor(
+        &db,
+        "drawer_publish_worktree",
+        KnowledgeStatus::Promoted,
+        KnowledgeAnchorArgs {
+            domain: MemoryDomain::Project,
+            anchor_kind: AnchorKind::Worktree,
+            anchor_id: "worktree:///tmp/publish-worktree",
+            parent_anchor_id: Some("repo://parent"),
+        },
+    );
+    let before = db
+        .get_drawer("drawer_publish_worktree")
+        .expect("load drawer")
+        .expect("drawer exists");
+    let vector_count_before = vector_row_count(&db, "drawer_publish_worktree");
+    let audit_before = audit_line_count(home.path());
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_worktree",
+            "--to",
+            "repo",
+            "--reason",
+            "share stable rule",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(
+            "published drawer_publish_worktree: worktree:worktree:///tmp/publish-worktree -> repo:repo://parent"
+        ),
+        "stdout={stdout}"
+    );
+    let after = db
+        .get_drawer("drawer_publish_worktree")
+        .expect("load drawer")
+        .expect("drawer exists");
+    assert_eq!(after.anchor_kind, AnchorKind::Repo);
+    assert_eq!(after.anchor_id, "repo://parent");
+    assert_eq!(after.parent_anchor_id, None);
+    assert_eq!(after.content, before.content);
+    assert_eq!(after.statement, before.statement);
+    assert_eq!(after.status, before.status);
+    assert_eq!(after.supporting_refs, before.supporting_refs);
+    assert_eq!(
+        vector_row_count(&db, "drawer_publish_worktree"),
+        vector_count_before
+    );
+    assert_eq!(audit_line_count(home.path()), audit_before + 1);
+    assert_eq!(
+        last_audit_entry(home.path())["command"],
+        "knowledge_publish_anchor"
+    );
+}
+
+#[test]
+fn test_cli_knowledge_publish_anchor_repo_to_global() {
+    let (home, db) = setup_home();
+    insert_knowledge_with_anchor(
+        &db,
+        "drawer_publish_global",
+        KnowledgeStatus::Canonical,
+        KnowledgeAnchorArgs {
+            domain: MemoryDomain::Global,
+            anchor_kind: AnchorKind::Repo,
+            anchor_id: "repo://global-ready",
+            parent_anchor_id: None,
+        },
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_global",
+            "--to",
+            "global",
+            "--target-anchor-id",
+            "global://epistemics",
+            "--reason",
+            "global law",
+            "--reviewer",
+            "human",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let drawer = db
+        .get_drawer("drawer_publish_global")
+        .expect("load drawer")
+        .expect("drawer exists");
+    assert_eq!(drawer.anchor_kind, AnchorKind::Global);
+    assert_eq!(drawer.anchor_id, "global://epistemics");
+    let audit = last_audit_entry(home.path());
+    assert_eq!(audit["command"], "knowledge_publish_anchor");
+    assert_eq!(audit["details"]["reviewer"], "human");
+}
+
+#[test]
+fn test_cli_knowledge_publish_anchor_rejects_worktree_to_global() {
+    let (home, db) = setup_home();
+    insert_knowledge_with_anchor(
+        &db,
+        "drawer_publish_skip",
+        KnowledgeStatus::Promoted,
+        KnowledgeAnchorArgs {
+            domain: MemoryDomain::Global,
+            anchor_kind: AnchorKind::Worktree,
+            anchor_id: "worktree:///tmp/publish-skip",
+            parent_anchor_id: Some("repo://parent"),
+        },
+    );
+    let before = db
+        .get_drawer("drawer_publish_skip")
+        .expect("load drawer")
+        .expect("drawer exists");
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_skip",
+            "--to",
+            "global",
+            "--target-anchor-id",
+            "global://x",
+            "--reason",
+            "skip",
+        ],
+    );
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("worktree -> global publication is not allowed")
+    );
+    let after = db
+        .get_drawer("drawer_publish_skip")
+        .expect("load drawer")
+        .expect("drawer exists");
+    assert_eq!(after.anchor_kind, before.anchor_kind);
+    assert_eq!(after.anchor_id, before.anchor_id);
+    assert_eq!(after.parent_anchor_id, before.parent_anchor_id);
+}
+
+#[test]
+fn test_cli_knowledge_publish_anchor_rejects_inactive_or_evidence() {
+    let (home, db) = setup_home();
+    insert_evidence(
+        &db,
+        "drawer_publish_evidence",
+        "evidence cannot be published",
+    );
+    insert_knowledge_with_anchor(
+        &db,
+        "drawer_publish_candidate",
+        KnowledgeStatus::Candidate,
+        KnowledgeAnchorArgs {
+            domain: MemoryDomain::Project,
+            anchor_kind: AnchorKind::Worktree,
+            anchor_id: "worktree:///tmp/publish-candidate",
+            parent_anchor_id: Some("repo://parent"),
+        },
+    );
+
+    let evidence_output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_evidence",
+            "--to",
+            "repo",
+            "--reason",
+            "bad",
+        ],
+    );
+    assert!(!evidence_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&evidence_output.stderr)
+            .contains("knowledge anchor publication requires a knowledge drawer")
+    );
+
+    let candidate_output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_candidate",
+            "--to",
+            "repo",
+            "--reason",
+            "bad",
+        ],
+    );
+    assert!(!candidate_output.status.success());
+    assert!(
+        String::from_utf8_lossy(&candidate_output.stderr)
+            .contains("publish-anchor requires promoted or canonical knowledge")
+    );
+}
+
+#[test]
+fn test_cli_knowledge_publish_anchor_rejects_invalid_target_anchor() {
+    let (home, db) = setup_home();
+    insert_knowledge_with_anchor(
+        &db,
+        "drawer_publish_invalid_target",
+        KnowledgeStatus::Promoted,
+        KnowledgeAnchorArgs {
+            domain: MemoryDomain::Global,
+            anchor_kind: AnchorKind::Repo,
+            anchor_id: "repo://invalid-target",
+            parent_anchor_id: None,
+        },
+    );
+
+    let missing_global = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_invalid_target",
+            "--to",
+            "global",
+            "--reason",
+            "missing target",
+        ],
+    );
+    assert!(!missing_global.status.success());
+    assert!(
+        String::from_utf8_lossy(&missing_global.stderr)
+            .contains("--target-anchor-id is required for global publication")
+    );
+
+    let wrong_prefix = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_invalid_target",
+            "--to",
+            "repo",
+            "--target-anchor-id",
+            "global://wrong",
+            "--reason",
+            "bad",
+        ],
+    );
+    assert!(!wrong_prefix.status.success());
+    assert!(String::from_utf8_lossy(&wrong_prefix.stderr).contains("expected prefix repo://"));
+}
+
+#[test]
+fn test_cli_knowledge_publish_anchor_does_not_bump_schema() {
+    let (home, db) = setup_home();
+    insert_knowledge_with_anchor(
+        &db,
+        "drawer_publish_schema",
+        KnowledgeStatus::Promoted,
+        KnowledgeAnchorArgs {
+            domain: MemoryDomain::Project,
+            anchor_kind: AnchorKind::Worktree,
+            anchor_id: "worktree:///tmp/publish-schema",
+            parent_anchor_id: Some("repo://parent"),
+        },
+    );
+    let schema_before = db.schema_version().expect("schema");
+    let table_count_before = table_count(&db);
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "publish-anchor",
+            "drawer_publish_schema",
+            "--to",
+            "repo",
+            "--reason",
+            "stable",
+        ],
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(db.schema_version().expect("schema"), schema_before);
+    assert_eq!(table_count(&db), table_count_before);
 }
 
 #[tokio::test]

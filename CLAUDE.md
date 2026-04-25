@@ -28,7 +28,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P23）
+### 已完成的 Spec（P0-P24）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -68,6 +68,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p21-mcp-knowledge-gate.spec.md` | 完成 | `mempal_knowledge_gate` MCP 工具：向 agent runtime 暴露 P20 read-only promotion gate |
 | `specs/p22-mcp-knowledge-distill.spec.md` | 完成 | `mempal_knowledge_distill` MCP 工具：从 evidence refs 创建 candidate knowledge drawer |
 | `specs/p23-mcp-knowledge-lifecycle.spec.md` | 完成 | `mempal_knowledge_promote` / `mempal_knowledge_demote` MCP 工具：gate-enforced promotion + evidence-backed demotion |
+| `specs/p24-anchor-publication.spec.md` | 完成 | `mempal knowledge publish-anchor` CLI：显式 outward anchor publication（worktree -> repo -> global） |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -100,6 +101,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-25-p21-mcp-knowledge-gate-implementation.md` — P21 MCP knowledge gate（已完成）
 - `docs/plans/2026-04-25-p22-mcp-knowledge-distill-implementation.md` — P22 MCP knowledge distill（已完成）
 - `docs/plans/2026-04-26-p23-mcp-knowledge-lifecycle-implementation.md` — P23 MCP knowledge lifecycle（已完成）
+- `docs/plans/2026-04-26-p24-anchor-publication-implementation.md` — P24 anchor publication CLI（已完成）
 
 ### Spec 使用方式
 

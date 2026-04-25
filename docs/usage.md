@@ -226,6 +226,20 @@ the audit log. P21 exposes the same policy to MCP agents as
 mempal knowledge gate drawer_knowledge --format json
 ```
 
+P24 adds explicit anchor publication. This is separate from tier/status
+promotion: it only moves an already active knowledge drawer outward across
+anchor scope, without rewriting content or vectors.
+
+```bash
+mempal knowledge publish-anchor drawer_knowledge \
+  --to repo \
+  --reason "stable across this repository"
+```
+
+Supported publication chain is `worktree -> repo -> global`. Publishing to
+`global` requires `domain=global` and an explicit `--target-anchor-id
+global://...`.
+
 For `dao_tian -> canonical`, provide a reviewer for the advisory gate:
 
 ```bash

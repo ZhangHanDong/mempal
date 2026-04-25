@@ -27,6 +27,7 @@ use mempal::ingest::{
     IngestOptions, IngestStats, ingest_dir_with_options, ingest_file_with_options,
     reindex::{ReindexMode, ReindexOptions, ReindexReport, reindex_sources},
 };
+use mempal::knowledge_anchor::{PublishAnchorRequest, publish_anchor};
 use mempal::knowledge_distill::{DistillPlan, DistillRequest, commit_distill, prepare_distill};
 use mempal::knowledge_gate::{GateReport, evaluate_gate_by_id};
 use mempal::knowledge_lifecycle::{
@@ -320,6 +321,19 @@ enum KnowledgeCommands {
         allow_counterexamples: bool,
         #[arg(long, default_value = "plain")]
         format: String,
+    },
+    PublishAnchor {
+        drawer_id: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long = "target-anchor-id")]
+        target_anchor_id: Option<String>,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        reviewer: Option<String>,
     },
 }
 
@@ -1332,6 +1346,34 @@ async fn knowledge_command(
                 ),
                 other => bail!("unsupported gate format: {other}"),
             }
+        }
+        KnowledgeCommands::PublishAnchor {
+            drawer_id,
+            to,
+            target_anchor_id,
+            cwd,
+            reason,
+            reviewer,
+        } => {
+            let outcome = publish_anchor(
+                db,
+                PublishAnchorRequest {
+                    drawer_id: drawer_id.clone(),
+                    to,
+                    target_anchor_id,
+                    cwd,
+                    reason,
+                    reviewer,
+                },
+            )?;
+            println!(
+                "published {}: {}:{} -> {}:{}",
+                drawer_id,
+                outcome.old_anchor_kind,
+                outcome.old_anchor_id,
+                outcome.new_anchor_kind,
+                outcome.new_anchor_id
+            );
         }
     }
 

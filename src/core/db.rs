@@ -700,6 +700,33 @@ impl Database {
         Ok(affected > 0)
     }
 
+    pub fn update_knowledge_anchor(
+        &self,
+        drawer_id: &str,
+        anchor_kind: &AnchorKind,
+        anchor_id: &str,
+        parent_anchor_id: Option<&str>,
+    ) -> Result<bool, DbError> {
+        let affected = self.conn.execute(
+            r#"
+            UPDATE drawers
+            SET anchor_kind = ?2,
+                anchor_id = ?3,
+                parent_anchor_id = ?4
+            WHERE id = ?1
+              AND deleted_at IS NULL
+              AND memory_kind = 'knowledge'
+            "#,
+            params![
+                drawer_id,
+                anchor_kind_as_str(anchor_kind),
+                anchor_id,
+                parent_anchor_id,
+            ],
+        )?;
+        Ok(affected > 0)
+    }
+
     pub fn neighbor_chunks(
         &self,
         source_file: &str,
