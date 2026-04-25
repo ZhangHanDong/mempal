@@ -3,6 +3,7 @@ use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
     NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry, TunnelEndpoint,
 };
+use crate::knowledge_anchor::PublishAnchorOutcome;
 use crate::knowledge_distill::DistillOutcome;
 use crate::knowledge_gate::GateReport;
 use crate::knowledge_lifecycle::{DemoteOutcome, PromoteOutcome};
@@ -176,6 +177,41 @@ impl From<DemoteOutcome> for KnowledgeDemoteResponse {
             old_status: outcome.old_status,
             new_status: outcome.new_status,
             counterexample_refs: outcome.counterexample_refs,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct KnowledgePublishAnchorRequest {
+    pub drawer_id: String,
+    pub to: String,
+    pub target_anchor_id: Option<String>,
+    pub cwd: Option<String>,
+    pub reason: String,
+    pub reviewer: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgePublishAnchorResponse {
+    pub drawer_id: String,
+    pub old_anchor_kind: String,
+    pub old_anchor_id: String,
+    pub old_parent_anchor_id: Option<String>,
+    pub new_anchor_kind: String,
+    pub new_anchor_id: String,
+    pub new_parent_anchor_id: Option<String>,
+}
+
+impl From<PublishAnchorOutcome> for KnowledgePublishAnchorResponse {
+    fn from(outcome: PublishAnchorOutcome) -> Self {
+        Self {
+            drawer_id: outcome.drawer_id,
+            old_anchor_kind: outcome.old_anchor_kind,
+            old_anchor_id: outcome.old_anchor_id,
+            old_parent_anchor_id: outcome.old_parent_anchor_id,
+            new_anchor_kind: outcome.new_anchor_kind,
+            new_anchor_id: outcome.new_anchor_id,
+            new_parent_anchor_id: outcome.new_parent_anchor_id,
         }
     }
 }

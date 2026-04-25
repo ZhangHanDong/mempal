@@ -179,6 +179,13 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    when counterexample evidence shows promoted knowledge is contradicted,
    obsolete, superseded, out of scope, or unsafe.
 
+15. PUBLISH KNOWLEDGE OUTWARD ACROSS ANCHORS
+   Anchor publication is separate from tier/status promotion. Use
+   mempal_knowledge_publish_anchor only for active knowledge that should move
+   outward in persistence scope: worktree -> repo or repo -> global. The tool
+   updates only anchor metadata and audit history; it does not rewrite content,
+   re-embed vectors, or change knowledge tier/status.
+
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
@@ -187,6 +194,7 @@ TOOLS:
   mempal_knowledge_gate — read-only knowledge promotion readiness check
   mempal_knowledge_promote — gate-enforced knowledge lifecycle promotion
   mempal_knowledge_demote — evidence-backed knowledge demotion or retirement
+  mempal_knowledge_publish_anchor — metadata-only outward anchor publication
   mempal_ingest        — save a new drawer (wing required, room optional, importance 0-5)
   mempal_delete        — soft-delete a drawer by ID
   mempal_taxonomy      — list or edit routing keywords
@@ -384,6 +392,22 @@ mod tests {
         assert!(
             MEMORY_PROTOCOL.contains("MCP promotion is gate-enforced"),
             "MEMORY_PROTOCOL must state MCP promotion is gate-enforced"
+        );
+    }
+
+    #[test]
+    fn contains_knowledge_anchor_publication_guidance() {
+        assert!(
+            MEMORY_PROTOCOL.contains("15. PUBLISH KNOWLEDGE OUTWARD ACROSS ANCHORS"),
+            "MEMORY_PROTOCOL must include Rule 15 anchor publication guidance"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("mempal_knowledge_publish_anchor"),
+            "MEMORY_PROTOCOL must mention MCP anchor publication tool"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("Anchor publication is separate from tier/status promotion"),
+            "MEMORY_PROTOCOL must keep anchor publication separate from tier/status promotion"
         );
     }
 

@@ -30,7 +30,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P24）
+### 已完成的 Spec（P0-P25）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -71,6 +71,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p22-mcp-knowledge-distill.spec.md` | 完成 | `mempal_knowledge_distill` MCP 工具：从 evidence refs 创建 candidate knowledge drawer |
 | `specs/p23-mcp-knowledge-lifecycle.spec.md` | 完成 | `mempal_knowledge_promote` / `mempal_knowledge_demote` MCP 工具：gate-enforced promotion + evidence-backed demotion |
 | `specs/p24-anchor-publication.spec.md` | 完成 | `mempal knowledge publish-anchor` CLI：显式 outward anchor publication（worktree -> repo -> global） |
+| `specs/p25-mcp-anchor-publication.spec.md` | 完成 | `mempal_knowledge_publish_anchor` MCP 工具：显式 outward anchor publication |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -104,6 +105,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-25-p22-mcp-knowledge-distill-implementation.md` — P22 MCP knowledge distill（已完成）
 - `docs/plans/2026-04-26-p23-mcp-knowledge-lifecycle-implementation.md` — P23 MCP knowledge lifecycle（已完成）
 - `docs/plans/2026-04-26-p24-anchor-publication-implementation.md` — P24 anchor publication CLI（已完成）
+- `docs/plans/2026-04-26-p25-mcp-anchor-publication-implementation.md` — P25 MCP anchor publication（已完成）
 
 ### Spec 使用方式
 
@@ -124,7 +126,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
 - **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，14 条规则
 
-## MCP 工具（15 个）
+## MCP 工具（16 个）
 
 | 工具 | 作用 |
 |------|------|
@@ -135,6 +137,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_gate` | read-only promotion readiness check：评估 knowledge drawer 是否满足提升门槛（P21） |
 | `mempal_knowledge_promote` | gate-enforced knowledge lifecycle promotion（P23） |
 | `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
+| `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |

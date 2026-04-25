@@ -24,6 +24,7 @@ use crate::ingest::{
     },
     normalize::CURRENT_NORMALIZE_VERSION,
 };
+use crate::knowledge_anchor::{PublishAnchorRequest as CorePublishAnchorRequest, publish_anchor};
 use crate::knowledge_distill::{
     DistillPlan, DistillRequest as CoreDistillRequest, commit_distill, prepare_distill,
 };
@@ -48,10 +49,10 @@ use super::tools::{
     IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeDemoteRequest,
     KnowledgeDemoteResponse, KnowledgeDistillRequest, KnowledgeDistillResponse,
     KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePromoteRequest, KnowledgePromoteResponse,
-    PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest,
-    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
-    TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest,
-    TunnelsResponse,
+    KnowledgePublishAnchorRequest, KnowledgePublishAnchorResponse, PeekMessageDto,
+    PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest, SearchResponse,
+    SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse,
+    TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -168,6 +169,17 @@ impl MempalMcpServer {
         let request = serde_json::from_value(value)
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         self.mempal_knowledge_demote(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn knowledge_publish_anchor_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<KnowledgePublishAnchorResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_knowledge_publish_anchor(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -838,6 +850,31 @@ impl MempalMcpServer {
         .map_err(knowledge_lifecycle_error)?;
 
         Ok(Json(KnowledgeDemoteResponse::from(outcome)))
+    }
+
+    #[tool(
+        name = "mempal_knowledge_publish_anchor",
+        description = "Publish active knowledge outward across anchor scope. Metadata-only operation for worktree -> repo or repo -> global publication; updates anchor fields and audit log without touching content, vectors, schema, or tier/status lifecycle."
+    )]
+    async fn mempal_knowledge_publish_anchor(
+        &self,
+        Parameters(request): Parameters<KnowledgePublishAnchorRequest>,
+    ) -> std::result::Result<Json<KnowledgePublishAnchorResponse>, ErrorData> {
+        let db = self.open_db()?;
+        let outcome = publish_anchor(
+            &db,
+            CorePublishAnchorRequest {
+                drawer_id: request.drawer_id,
+                to: request.to,
+                target_anchor_id: request.target_anchor_id,
+                cwd: request.cwd.map(PathBuf::from),
+                reason: request.reason,
+                reviewer: request.reviewer,
+            },
+        )
+        .map_err(knowledge_anchor_error)?;
+
+        Ok(Json(KnowledgePublishAnchorResponse::from(outcome)))
     }
 
     #[tool(
@@ -1566,6 +1603,18 @@ fn knowledge_lifecycle_error(error: anyhow::Error) -> ErrorData {
     ErrorData::invalid_params(message, None)
 }
 
+fn knowledge_anchor_error(error: anyhow::Error) -> ErrorData {
+    let message = error.to_string();
+    if message.contains("failed to update")
+        || message.contains("failed to append audit")
+        || message.contains("failed to open audit")
+        || message.contains("failed to write audit")
+    {
+        return ErrorData::internal_error(message, None);
+    }
+    ErrorData::invalid_params(message, None)
+}
+
 fn context_error(error: crate::context::ContextError) -> ErrorData {
     match error {
         crate::context::ContextError::DeriveAnchor(_) => {
@@ -1709,6 +1758,13 @@ mod tests {
         verification: Vec<String>,
     }
 
+    struct KnowledgeAnchorArgs<'a> {
+        domain: MemoryDomain,
+        anchor_kind: AnchorKind,
+        anchor_id: &'a str,
+        parent_anchor_id: Option<&'a str>,
+    }
+
     #[async_trait]
     impl crate::embed::EmbedderFactory for StubEmbedderFactory {
         async fn build(&self) -> crate::embed::Result<Box<dyn Embedder>> {
@@ -1836,6 +1892,47 @@ mod tests {
             .expect("insert vector");
     }
 
+    fn insert_knowledge_drawer_with_anchor(
+        db_path: &Path,
+        id: &str,
+        status: KnowledgeStatus,
+        anchor_args: KnowledgeAnchorArgs<'_>,
+    ) {
+        let db = Database::open(db_path).expect("open db");
+        let drawer = Drawer {
+            id: id.to_string(),
+            content: format!("{id} content"),
+            wing: "mempal".to_string(),
+            room: Some("context".to_string()),
+            source_file: Some(format!("knowledge://project/context/{id}")),
+            source_type: SourceType::Manual,
+            added_at: "1713000000".to_string(),
+            chunk_index: Some(0),
+            normalize_version: 1,
+            importance: 3,
+            memory_kind: MemoryKind::Knowledge,
+            domain: anchor_args.domain,
+            field: anchor::DEFAULT_FIELD.to_string(),
+            anchor_kind: anchor_args.anchor_kind,
+            anchor_id: anchor_args.anchor_id.to_string(),
+            parent_anchor_id: anchor_args.parent_anchor_id.map(str::to_string),
+            provenance: None,
+            statement: Some(format!("{id} statement")),
+            tier: Some(KnowledgeTier::Shu),
+            status: Some(status),
+            supporting_refs: vec!["drawer_supporting_ev".to_string()],
+            counterexample_refs: Vec::new(),
+            teaching_refs: Vec::new(),
+            verification_refs: Vec::new(),
+            scope_constraints: None,
+            trigger_hints: None,
+        };
+        db.insert_drawer(&drawer)
+            .expect("insert anchored knowledge drawer");
+        db.insert_vector(id, &[0.1, 0.2, 0.3])
+            .expect("insert anchored knowledge vector");
+    }
+
     fn audit_line_count(db_path: &Path) -> usize {
         let audit_path = db_path
             .parent()
@@ -1844,6 +1941,15 @@ mod tests {
         fs::read_to_string(audit_path)
             .map(|content| content.lines().count())
             .unwrap_or(0)
+    }
+
+    fn last_audit_entry(db_path: &Path) -> serde_json::Value {
+        let audit_path = db_path
+            .parent()
+            .expect("db path has parent")
+            .join("audit.jsonl");
+        let content = fs::read_to_string(audit_path).expect("read audit log");
+        serde_json::from_str(content.lines().last().expect("last audit line")).expect("audit json")
     }
 
     fn vector_row_count(db: &Database, id: &str) -> i64 {
@@ -3154,6 +3260,236 @@ mod tests {
         );
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_promote"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("MCP promotion is gate-enforced"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_publish_anchor_worktree_to_repo() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer_with_anchor(
+            &db_path,
+            "drawer_publish_worktree",
+            KnowledgeStatus::Promoted,
+            KnowledgeAnchorArgs {
+                domain: MemoryDomain::Project,
+                anchor_kind: AnchorKind::Worktree,
+                anchor_id: "worktree:///tmp/mcp-publish-worktree",
+                parent_anchor_id: Some("repo://parent"),
+            },
+        );
+        let db = Database::open(&db_path).expect("open db");
+        let before = db
+            .get_drawer("drawer_publish_worktree")
+            .expect("load drawer")
+            .expect("drawer exists");
+        let schema_before = db.schema_version().expect("schema");
+        let vector_count_before = vector_row_count(&db, "drawer_publish_worktree");
+        let audit_before = audit_line_count(&db_path);
+
+        let response = server
+            .knowledge_publish_anchor_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_publish_worktree",
+                "to": "repo",
+                "reason": "share stable MCP rule"
+            }))
+            .await
+            .expect("publish should pass");
+
+        assert_eq!(response.old_anchor_kind, "worktree");
+        assert_eq!(
+            response.old_anchor_id,
+            "worktree:///tmp/mcp-publish-worktree"
+        );
+        assert_eq!(response.new_anchor_kind, "repo");
+        assert_eq!(response.new_anchor_id, "repo://parent");
+        assert_eq!(response.new_parent_anchor_id, None);
+        let after = db
+            .get_drawer("drawer_publish_worktree")
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(after.anchor_kind, AnchorKind::Repo);
+        assert_eq!(after.anchor_id, "repo://parent");
+        assert_eq!(after.parent_anchor_id, None);
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.statement, before.statement);
+        assert_eq!(after.status, before.status);
+        assert_eq!(after.supporting_refs, before.supporting_refs);
+        assert_eq!(db.schema_version().expect("schema"), schema_before);
+        assert_eq!(
+            vector_row_count(&db, "drawer_publish_worktree"),
+            vector_count_before
+        );
+        assert_eq!(audit_line_count(&db_path), audit_before + 1);
+        assert_eq!(
+            last_audit_entry(&db_path)["command"],
+            "knowledge_publish_anchor"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_publish_anchor_repo_to_global() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer_with_anchor(
+            &db_path,
+            "drawer_publish_global",
+            KnowledgeStatus::Canonical,
+            KnowledgeAnchorArgs {
+                domain: MemoryDomain::Global,
+                anchor_kind: AnchorKind::Repo,
+                anchor_id: "repo://global-ready",
+                parent_anchor_id: None,
+            },
+        );
+
+        let response = server
+            .knowledge_publish_anchor_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_publish_global",
+                "to": "global",
+                "target_anchor_id": "global://epistemics",
+                "reason": "global law",
+                "reviewer": "human"
+            }))
+            .await
+            .expect("publish should pass");
+
+        assert_eq!(response.new_anchor_kind, "global");
+        assert_eq!(response.new_anchor_id, "global://epistemics");
+        let db = Database::open(&db_path).expect("open db");
+        let drawer = db
+            .get_drawer("drawer_publish_global")
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(drawer.anchor_kind, AnchorKind::Global);
+        assert_eq!(drawer.anchor_id, "global://epistemics");
+        assert_eq!(last_audit_entry(&db_path)["details"]["reviewer"], "human");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_publish_anchor_rejects_invalid_chain_without_mutation() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer_with_anchor(
+            &db_path,
+            "drawer_publish_invalid_chain",
+            KnowledgeStatus::Promoted,
+            KnowledgeAnchorArgs {
+                domain: MemoryDomain::Global,
+                anchor_kind: AnchorKind::Worktree,
+                anchor_id: "worktree:///tmp/mcp-publish-invalid",
+                parent_anchor_id: Some("repo://parent"),
+            },
+        );
+        let db = Database::open(&db_path).expect("open db");
+        let before = db
+            .get_drawer("drawer_publish_invalid_chain")
+            .expect("load drawer")
+            .expect("drawer exists");
+        let schema_before = db.schema_version().expect("schema");
+        let vector_count_before = vector_row_count(&db, "drawer_publish_invalid_chain");
+        let audit_before = audit_line_count(&db_path);
+
+        let error = server
+            .knowledge_publish_anchor_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_publish_invalid_chain",
+                "to": "global",
+                "target_anchor_id": "global://x",
+                "reason": "skip chain"
+            }))
+            .await
+            .expect_err("invalid chain should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("worktree -> global publication is not allowed"),
+            "error={error}"
+        );
+        let after = db
+            .get_drawer("drawer_publish_invalid_chain")
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(after.anchor_kind, before.anchor_kind);
+        assert_eq!(after.anchor_id, before.anchor_id);
+        assert_eq!(after.parent_anchor_id, before.parent_anchor_id);
+        assert_eq!(db.schema_version().expect("schema"), schema_before);
+        assert_eq!(
+            vector_row_count(&db, "drawer_publish_invalid_chain"),
+            vector_count_before
+        );
+        assert_eq!(audit_line_count(&db_path), audit_before);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_publish_anchor_rejects_inactive_or_evidence() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_publish_evidence",
+            "evidence",
+            "mempal",
+            Some("publish"),
+            "/tmp/publish-evidence.md",
+            2,
+        );
+        insert_knowledge_drawer_with_anchor(
+            &db_path,
+            "drawer_publish_candidate",
+            KnowledgeStatus::Candidate,
+            KnowledgeAnchorArgs {
+                domain: MemoryDomain::Project,
+                anchor_kind: AnchorKind::Worktree,
+                anchor_id: "worktree:///tmp/mcp-publish-candidate",
+                parent_anchor_id: Some("repo://parent"),
+            },
+        );
+
+        let evidence_error = server
+            .knowledge_publish_anchor_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_publish_evidence",
+                "to": "repo",
+                "reason": "bad"
+            }))
+            .await
+            .expect_err("evidence should be rejected");
+        assert!(
+            evidence_error.to_string().contains("knowledge drawer"),
+            "error={evidence_error}"
+        );
+
+        let candidate_error = server
+            .knowledge_publish_anchor_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_publish_candidate",
+                "to": "repo",
+                "reason": "bad"
+            }))
+            .await
+            .expect_err("candidate should be rejected");
+        assert!(
+            candidate_error
+                .to_string()
+                .contains("promoted or canonical"),
+            "error={candidate_error}"
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_knowledge_publish_anchor() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let publish_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_knowledge_publish_anchor")
+            .expect("mempal_knowledge_publish_anchor tool exists");
+        assert!(
+            publish_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("outward across anchor scope")
+        );
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_publish_anchor"));
+        assert!(
+            crate::core::protocol::MEMORY_PROTOCOL
+                .contains("Anchor publication is separate from tier/status promotion")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

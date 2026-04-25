@@ -238,7 +238,8 @@ mempal knowledge publish-anchor drawer_knowledge \
 
 Supported publication chain is `worktree -> repo -> global`. Publishing to
 `global` requires `domain=global` and an explicit `--target-anchor-id
-global://...`.
+global://...`. P25 exposes the same metadata-only operation to MCP agents as
+`mempal_knowledge_publish_anchor`.
 
 For `dao_tian -> canonical`, provide a reviewer for the advisory gate:
 
@@ -539,7 +540,7 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes fifteen tools:
+The MCP server exposes sixteen tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
@@ -548,6 +549,7 @@ The MCP server exposes fifteen tools:
 - `mempal_knowledge_gate` — read-only promotion readiness check for knowledge drawers; returns the same deterministic gate report as `mempal knowledge gate --format json`
 - `mempal_knowledge_promote` — gate-enforced lifecycle promotion with supplied verification refs
 - `mempal_knowledge_demote` — demote or retire knowledge with counterexample evidence refs
+- `mempal_knowledge_publish_anchor` — metadata-only outward anchor publication for active knowledge
 - `mempal_ingest` — store memories with optional importance (0-5) and dry_run
 - `mempal_delete` — soft-delete with audit
 - `mempal_taxonomy` — list or edit routing keywords
