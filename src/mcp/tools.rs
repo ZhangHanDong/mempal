@@ -5,6 +5,7 @@ use crate::core::types::{
 };
 use crate::knowledge_distill::DistillOutcome;
 use crate::knowledge_gate::GateReport;
+use crate::knowledge_lifecycle::{DemoteOutcome, PromoteOutcome};
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
@@ -116,6 +117,65 @@ impl From<DistillOutcome> for KnowledgeDistillResponse {
             drawer_id: outcome.drawer_id,
             created: outcome.created,
             dry_run: outcome.dry_run,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct KnowledgePromoteRequest {
+    pub drawer_id: String,
+    pub status: String,
+    pub verification_refs: Vec<String>,
+    pub reason: String,
+    pub reviewer: Option<String>,
+    pub allow_counterexamples: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgePromoteResponse {
+    pub drawer_id: String,
+    pub old_status: String,
+    pub new_status: String,
+    pub verification_refs: Vec<String>,
+    pub gate: Option<KnowledgeGateResponse>,
+}
+
+impl From<PromoteOutcome> for KnowledgePromoteResponse {
+    fn from(outcome: PromoteOutcome) -> Self {
+        Self {
+            drawer_id: outcome.drawer_id,
+            old_status: outcome.old_status,
+            new_status: outcome.new_status,
+            verification_refs: outcome.verification_refs,
+            gate: outcome.gate.map(KnowledgeGateResponse::from),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct KnowledgeDemoteRequest {
+    pub drawer_id: String,
+    pub status: String,
+    pub evidence_refs: Vec<String>,
+    pub reason: String,
+    pub reason_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeDemoteResponse {
+    pub drawer_id: String,
+    pub old_status: String,
+    pub new_status: String,
+    pub counterexample_refs: Vec<String>,
+}
+
+impl From<DemoteOutcome> for KnowledgeDemoteResponse {
+    fn from(outcome: DemoteOutcome) -> Self {
+        Self {
+            drawer_id: outcome.drawer_id,
+            old_status: outcome.old_status,
+            new_status: outcome.new_status,
+            counterexample_refs: outcome.counterexample_refs,
         }
     }
 }

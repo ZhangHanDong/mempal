@@ -28,6 +28,10 @@ use crate::knowledge_distill::{
     DistillPlan, DistillRequest as CoreDistillRequest, commit_distill, prepare_distill,
 };
 use crate::knowledge_gate::evaluate_gate_by_id;
+use crate::knowledge_lifecycle::{
+    DemoteRequest as CoreDemoteRequest, PromoteRequest as CorePromoteRequest, demote_knowledge,
+    promote_knowledge,
+};
 use crate::search::{SearchFilters, SearchOptions, resolve_route, search_with_vector_options};
 use anyhow::Context;
 use rmcp::{
@@ -41,11 +45,13 @@ use serde_json::Value;
 use super::tools::{
     ContextRequest, ContextResponse, CoworkPushRequest, CoworkPushResponse, DeleteRequest,
     DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, IngestRequest,
-    IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeDistillRequest,
-    KnowledgeDistillResponse, KnowledgeGateRequest, KnowledgeGateResponse, PeekMessageDto,
-    PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest, SearchResponse,
-    SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse,
-    TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
+    IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeDemoteRequest,
+    KnowledgeDemoteResponse, KnowledgeDistillRequest, KnowledgeDistillResponse,
+    KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePromoteRequest, KnowledgePromoteResponse,
+    PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest,
+    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
+    TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest,
+    TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -140,6 +146,28 @@ impl MempalMcpServer {
         let request = serde_json::from_value(value)
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         self.mempal_knowledge_distill(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn knowledge_promote_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<KnowledgePromoteResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_knowledge_promote(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn knowledge_demote_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<KnowledgeDemoteResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_knowledge_demote(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -760,6 +788,56 @@ impl MempalMcpServer {
         .map_err(knowledge_gate_error)?;
 
         Ok(Json(KnowledgeGateResponse::from(report)))
+    }
+
+    #[tool(
+        name = "mempal_knowledge_promote",
+        description = "Promote a knowledge drawer after a deterministic gate pass. Appends verification evidence refs, evaluates promotion readiness, then updates lifecycle status and audit log only if the gate allows it."
+    )]
+    async fn mempal_knowledge_promote(
+        &self,
+        Parameters(request): Parameters<KnowledgePromoteRequest>,
+    ) -> std::result::Result<Json<KnowledgePromoteResponse>, ErrorData> {
+        let db = self.open_db()?;
+        let outcome = promote_knowledge(
+            &db,
+            CorePromoteRequest {
+                drawer_id: request.drawer_id,
+                status: request.status,
+                verification_refs: request.verification_refs,
+                reason: request.reason,
+                reviewer: request.reviewer,
+                allow_counterexamples: request.allow_counterexamples.unwrap_or(false),
+                enforce_gate: true,
+            },
+        )
+        .map_err(knowledge_lifecycle_error)?;
+
+        Ok(Json(KnowledgePromoteResponse::from(outcome)))
+    }
+
+    #[tool(
+        name = "mempal_knowledge_demote",
+        description = "Demote or retire a knowledge drawer with counterexample evidence. Appends evidence refs to counterexample_refs, updates lifecycle status, and writes an audit entry without touching vectors or schema."
+    )]
+    async fn mempal_knowledge_demote(
+        &self,
+        Parameters(request): Parameters<KnowledgeDemoteRequest>,
+    ) -> std::result::Result<Json<KnowledgeDemoteResponse>, ErrorData> {
+        let db = self.open_db()?;
+        let outcome = demote_knowledge(
+            &db,
+            CoreDemoteRequest {
+                drawer_id: request.drawer_id,
+                status: request.status,
+                evidence_refs: request.evidence_refs,
+                reason: request.reason,
+                reason_type: request.reason_type,
+            },
+        )
+        .map_err(knowledge_lifecycle_error)?;
+
+        Ok(Json(KnowledgeDemoteResponse::from(outcome)))
     }
 
     #[tool(
@@ -1470,6 +1548,18 @@ fn knowledge_distill_error(error: anyhow::Error) -> ErrorData {
         || message.contains("failed to insert")
         || message.contains("failed to append audit")
         || message.contains("embedder required")
+    {
+        return ErrorData::internal_error(message, None);
+    }
+    ErrorData::invalid_params(message, None)
+}
+
+fn knowledge_lifecycle_error(error: anyhow::Error) -> ErrorData {
+    let message = error.to_string();
+    if message.contains("failed to update")
+        || message.contains("failed to append audit")
+        || message.contains("failed to open audit")
+        || message.contains("failed to write audit")
     {
         return ErrorData::internal_error(message, None);
     }
@@ -2759,6 +2849,311 @@ mod tests {
                 .contains("Read-only promotion readiness")
         );
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_gate"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_promote_updates_status_after_gate_pass() {
+        let (_tempdir, db_path, server) = setup_server();
+        for id in ["drawer_support_1", "drawer_support_2", "drawer_verify_1"] {
+            insert_drawer(
+                &db_path,
+                id,
+                id,
+                "mempal",
+                Some("lifecycle"),
+                &format!("/tmp/{id}.md"),
+                2,
+            );
+        }
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_lifecycle_promote",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Candidate,
+            "Gate-passed knowledge can be promoted.",
+            "Knowledge content",
+            KnowledgeRefs {
+                supporting: vec![
+                    "drawer_support_1".to_string(),
+                    "drawer_support_2".to_string(),
+                ],
+                ..KnowledgeRefs::default()
+            },
+        );
+        let audit_before = audit_line_count(&db_path);
+
+        let response = server
+            .knowledge_promote_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_lifecycle_promote",
+                "status": "promoted",
+                "verification_refs": ["drawer_verify_1"],
+                "reason": "validated by MCP lifecycle test",
+                "reviewer": "test"
+            }))
+            .await
+            .expect("promote should pass");
+
+        assert_eq!(response.old_status, "candidate");
+        assert_eq!(response.new_status, "promoted");
+        let gate = response.gate.expect("MCP promote returns gate report");
+        assert!(gate.allowed, "reasons={:?}", gate.reasons);
+        assert_eq!(response.verification_refs, vec!["drawer_verify_1"]);
+        let db = Database::open(&db_path).expect("open db");
+        let drawer = db
+            .get_drawer("drawer_lifecycle_promote")
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(drawer.status, Some(KnowledgeStatus::Promoted));
+        assert_eq!(drawer.verification_refs, vec!["drawer_verify_1"]);
+        assert_eq!(audit_line_count(&db_path), audit_before + 1);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_promote_rejects_gate_failure_without_mutation() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_support_1",
+            "support 1",
+            "mempal",
+            Some("lifecycle"),
+            "/tmp/support-1.md",
+            2,
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_verify_1",
+            "verify 1",
+            "mempal",
+            Some("lifecycle"),
+            "/tmp/verify-1.md",
+            2,
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_lifecycle_gate_fail",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Candidate,
+            "Insufficiently supported knowledge cannot be promoted.",
+            "Knowledge content",
+            KnowledgeRefs {
+                supporting: vec!["drawer_support_1".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+        let db = Database::open(&db_path).expect("open db");
+        let schema_before = db.schema_version().expect("schema");
+        let vector_count_before = vector_row_count(&db, "drawer_lifecycle_gate_fail");
+        let audit_before = audit_line_count(&db_path);
+
+        let error = server
+            .knowledge_promote_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_lifecycle_gate_fail",
+                "status": "promoted",
+                "verification_refs": ["drawer_verify_1"],
+                "reason": "should fail gate"
+            }))
+            .await
+            .expect_err("promote should fail gate");
+
+        assert!(
+            error.to_string().contains("promotion gate failed"),
+            "error={error}"
+        );
+        let drawer = db
+            .get_drawer("drawer_lifecycle_gate_fail")
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(drawer.status, Some(KnowledgeStatus::Candidate));
+        assert!(drawer.verification_refs.is_empty());
+        assert_eq!(db.schema_version().expect("schema"), schema_before);
+        assert_eq!(
+            vector_row_count(&db, "drawer_lifecycle_gate_fail"),
+            vector_count_before
+        );
+        assert_eq!(audit_line_count(&db_path), audit_before);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_demote_updates_status_and_counterexample_refs() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_counterexample_1",
+            "counterexample 1",
+            "mempal",
+            Some("lifecycle"),
+            "/tmp/counterexample-1.md",
+            2,
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_lifecycle_demote",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "A workflow can be demoted.",
+            "Knowledge content",
+            KnowledgeRefs::default(),
+        );
+        let audit_before = audit_line_count(&db_path);
+
+        let response = server
+            .knowledge_demote_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_lifecycle_demote",
+                "status": "demoted",
+                "evidence_refs": ["drawer_counterexample_1"],
+                "reason": "contradicted by MCP lifecycle test",
+                "reason_type": "contradicted"
+            }))
+            .await
+            .expect("demote should pass");
+
+        assert_eq!(response.old_status, "promoted");
+        assert_eq!(response.new_status, "demoted");
+        assert_eq!(
+            response.counterexample_refs,
+            vec!["drawer_counterexample_1"]
+        );
+        let db = Database::open(&db_path).expect("open db");
+        let drawer = db
+            .get_drawer("drawer_lifecycle_demote")
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(drawer.status, Some(KnowledgeStatus::Demoted));
+        assert_eq!(drawer.counterexample_refs, vec!["drawer_counterexample_1"]);
+        assert_eq!(audit_line_count(&db_path), audit_before + 1);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_lifecycle_rejects_evidence_drawer_targets() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence_target",
+            "evidence target",
+            "mempal",
+            Some("lifecycle"),
+            "/tmp/evidence-target.md",
+            2,
+        );
+        let promote_error = server
+            .knowledge_promote_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_evidence_target",
+                "status": "promoted",
+                "verification_refs": ["drawer_evidence_target"],
+                "reason": "bad target"
+            }))
+            .await
+            .expect_err("evidence target should be rejected");
+        assert!(
+            promote_error
+                .to_string()
+                .contains("knowledge lifecycle requires a knowledge drawer"),
+            "error={promote_error}"
+        );
+
+        let demote_error = server
+            .knowledge_demote_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_evidence_target",
+                "status": "demoted",
+                "evidence_refs": ["drawer_evidence_target"],
+                "reason": "bad target",
+                "reason_type": "contradicted"
+            }))
+            .await
+            .expect_err("evidence target should be rejected");
+        assert!(
+            demote_error
+                .to_string()
+                .contains("knowledge lifecycle requires a knowledge drawer"),
+            "error={demote_error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_lifecycle_validates_refs_are_evidence_drawers() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_lifecycle_target",
+            KnowledgeTier::Qi,
+            KnowledgeStatus::Candidate,
+            "Knowledge target.",
+            "Knowledge content",
+            KnowledgeRefs::default(),
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_wrong_ref_kind",
+            KnowledgeTier::Qi,
+            KnowledgeStatus::Candidate,
+            "Wrong ref kind.",
+            "Knowledge content",
+            KnowledgeRefs::default(),
+        );
+
+        let promote_error = server
+            .knowledge_promote_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_lifecycle_target",
+                "status": "promoted",
+                "verification_refs": ["drawer_wrong_ref_kind"],
+                "reason": "bad ref"
+            }))
+            .await
+            .expect_err("knowledge ref should be rejected");
+        assert!(
+            promote_error
+                .to_string()
+                .contains("lifecycle refs must point to evidence drawers"),
+            "error={promote_error}"
+        );
+
+        let demote_error = server
+            .knowledge_demote_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_lifecycle_target",
+                "status": "demoted",
+                "evidence_refs": ["drawer_wrong_ref_kind"],
+                "reason": "bad ref",
+                "reason_type": "contradicted"
+            }))
+            .await
+            .expect_err("knowledge ref should be rejected");
+        assert!(
+            demote_error
+                .to_string()
+                .contains("lifecycle refs must point to evidence drawers"),
+            "error={demote_error}"
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_knowledge_lifecycle_tools() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let promote_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_knowledge_promote")
+            .expect("mempal_knowledge_promote tool exists");
+        assert!(
+            promote_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("gate pass")
+        );
+        let demote_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_knowledge_demote")
+            .expect("mempal_knowledge_demote tool exists");
+        assert!(
+            demote_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("counterexample evidence")
+        );
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_promote"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("MCP promotion is gate-enforced"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

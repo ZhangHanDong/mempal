@@ -171,12 +171,22 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    content, tier, and evidence refs explicitly. The tool only creates
    candidate dao_ren or qi knowledge and never promotes it automatically.
 
+14. MUTATE KNOWLEDGE LIFECYCLE WITH EVIDENCE
+   Use mempal_knowledge_promote only after you have evidence refs that satisfy
+   the promotion gate. MCP promotion is gate-enforced: the tool appends the
+   supplied verification refs to the effective drawer, runs the deterministic
+   gate, and mutates status only if allowed=true. Use mempal_knowledge_demote
+   when counterexample evidence shows promoted knowledge is contradicted,
+   obsolete, superseded, out of scope, or unsafe.
+
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
   mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi)
   mempal_knowledge_distill — create candidate knowledge from evidence refs
   mempal_knowledge_gate — read-only knowledge promotion readiness check
+  mempal_knowledge_promote — gate-enforced knowledge lifecycle promotion
+  mempal_knowledge_demote — evidence-backed knowledge demotion or retirement
   mempal_ingest        — save a new drawer (wing required, room optional, importance 0-5)
   mempal_delete        — soft-delete a drawer by ID
   mempal_taxonomy      — list or edit routing keywords
@@ -357,6 +367,23 @@ mod tests {
         assert!(
             MEMORY_PROTOCOL.contains("never promotes it automatically"),
             "MEMORY_PROTOCOL must state that distill never auto-promotes"
+        );
+    }
+
+    #[test]
+    fn contains_knowledge_lifecycle_mcp_guidance() {
+        assert!(
+            MEMORY_PROTOCOL.contains("14. MUTATE KNOWLEDGE LIFECYCLE WITH EVIDENCE"),
+            "MEMORY_PROTOCOL must include Rule 14 lifecycle guidance"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("mempal_knowledge_promote")
+                && MEMORY_PROTOCOL.contains("mempal_knowledge_demote"),
+            "MEMORY_PROTOCOL must mention MCP lifecycle tools"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("MCP promotion is gate-enforced"),
+            "MEMORY_PROTOCOL must state MCP promotion is gate-enforced"
         );
     }
 

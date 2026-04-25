@@ -825,6 +825,7 @@ Implemented Phase-1 runtime surface:
 - lifecycle verification / counterexample refs are hardened to require existing evidence drawers, preserving the rule that promotion and demotion are justified by evidence rather than arbitrary ids or other knowledge claims
 - promotion gate CLI provides a read-only advisory report before promotion, using deterministic evidence-count policy without mutating status, refs, vectors, schema, or audit history
 - `mempal_knowledge_gate` exposes the same read-only promotion gate to MCP-connected agents, so runtime agents can check readiness without shelling out or mutating lifecycle state
+- `mempal_knowledge_promote` and `mempal_knowledge_demote` expose lifecycle mutation to MCP-connected agents; promotion is gate-enforced after appending supplied verification refs, while demotion requires counterexample evidence
 - lifecycle updates are metadata-only in Stage 1; they do not rewrite content, re-embed vectors, or create Phase-2 knowledge cards
 
 ### Phase 2: Knowledge Card Extraction

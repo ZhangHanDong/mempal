@@ -11,5 +11,6 @@ pub mod factcheck;
 pub mod ingest;
 pub mod knowledge_distill;
 pub mod knowledge_gate;
+pub mod knowledge_lifecycle;
 pub mod mcp;
 pub mod search;

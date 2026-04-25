@@ -52,6 +52,24 @@ pub fn evaluate_gate_by_id(
     evaluate_gate(db, &drawer, &target_status, reviewer, allow_counterexamples)
 }
 
+pub fn evaluate_gate_for_drawer(
+    db: &Database,
+    drawer: &Drawer,
+    target_status: &KnowledgeStatus,
+    reviewer: Option<&str>,
+    allow_counterexamples: bool,
+) -> Result<GateReport> {
+    if drawer.memory_kind != MemoryKind::Knowledge {
+        bail!("knowledge gate requires a knowledge drawer");
+    }
+    let tier = drawer
+        .tier
+        .as_ref()
+        .context("knowledge gate requires tier metadata")?;
+    validate_tier_status(tier, target_status)?;
+    evaluate_gate(db, drawer, target_status, reviewer, allow_counterexamples)
+}
+
 fn load_gate_knowledge_drawer(db: &Database, drawer_id: &str) -> Result<Drawer> {
     let drawer = db
         .get_drawer(drawer_id)

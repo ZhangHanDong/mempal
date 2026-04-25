@@ -30,7 +30,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P22）
+### 已完成的 Spec（P0-P23）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -69,6 +69,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p20-promotion-gate-policy.spec.md` | 完成 | read-only promotion gate policy：`mempal knowledge gate` 评估 knowledge drawer 是否满足最小提升门槛 |
 | `specs/p21-mcp-knowledge-gate.spec.md` | 完成 | `mempal_knowledge_gate` MCP 工具：向 agent runtime 暴露 P20 read-only promotion gate |
 | `specs/p22-mcp-knowledge-distill.spec.md` | 完成 | `mempal_knowledge_distill` MCP 工具：从 evidence refs 创建 candidate knowledge drawer |
+| `specs/p23-mcp-knowledge-lifecycle.spec.md` | 完成 | `mempal_knowledge_promote` / `mempal_knowledge_demote` MCP 工具：gate-enforced promotion + evidence-backed demotion |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -100,6 +101,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-25-p20-promotion-gate-policy-implementation.md` — P20 promotion gate policy（已完成）
 - `docs/plans/2026-04-25-p21-mcp-knowledge-gate-implementation.md` — P21 MCP knowledge gate（已完成）
 - `docs/plans/2026-04-25-p22-mcp-knowledge-distill-implementation.md` — P22 MCP knowledge distill（已完成）
+- `docs/plans/2026-04-26-p23-mcp-knowledge-lifecycle-implementation.md` — P23 MCP knowledge lifecycle（已完成）
 
 ### Spec 使用方式
 
@@ -118,9 +120,9 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **搜索结果强制带引用**：`SearchResult` 包含 `source_file`、`drawer_id`、`tunnel_hints`
 - **知识图谱**：triples 表已激活（手动 CRUD），支持时态验证
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
-- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，13 条规则
+- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，14 条规则
 
-## MCP 工具（13 个）
+## MCP 工具（15 个）
 
 | 工具 | 作用 |
 |------|------|
@@ -129,6 +131,8 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_context` | mind-model runtime context：按 `dao_tian -> dao_ren -> shu -> qi` 组装指导性 context pack；用于辅助 workflow/skill/tool 选择但不自动执行（P15/P16） |
 | `mempal_knowledge_distill` | 从 existing evidence drawer refs 创建 candidate `dao_ren` / `qi` knowledge drawer（P22） |
 | `mempal_knowledge_gate` | read-only promotion readiness check：评估 knowledge drawer 是否满足提升门槛（P21） |
+| `mempal_knowledge_promote` | gate-enforced knowledge lifecycle promotion（P23） |
+| `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |
