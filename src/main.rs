@@ -32,6 +32,7 @@ use mempal::ingest::{
     normalize::CURRENT_NORMALIZE_VERSION,
     reindex::{ReindexMode, ReindexOptions, ReindexReport, reindex_sources},
 };
+use mempal::knowledge_gate::{GateReport, evaluate_gate_by_id};
 use mempal::mcp::MempalMcpServer;
 use mempal::search::{SearchFilters, SearchOptions, search_with_options};
 use serde::Serialize;
@@ -999,35 +1000,6 @@ fn anchor_kind_slug(value: &AnchorKind) -> &'static str {
     }
 }
 
-#[derive(Debug, Serialize)]
-struct GateReport {
-    drawer_id: String,
-    tier: String,
-    status: String,
-    target_status: String,
-    allowed: bool,
-    reasons: Vec<String>,
-    requirements: GateRequirements,
-    evidence_counts: GateEvidenceCounts,
-}
-
-#[derive(Debug, Serialize)]
-struct GateRequirements {
-    min_supporting_refs: usize,
-    min_verification_refs: usize,
-    min_teaching_refs: usize,
-    reviewer_required: bool,
-    counterexamples_block: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct GateEvidenceCounts {
-    supporting: usize,
-    counterexample: usize,
-    teaching: usize,
-    verification: usize,
-}
-
 fn effective_wake_up_text(drawer: &mempal::core::types::Drawer) -> &str {
     match drawer.memory_kind {
         MemoryKind::Knowledge => drawer
@@ -1483,17 +1455,10 @@ async fn knowledge_command(
             allow_counterexamples,
             format,
         } => {
-            let drawer = load_gate_knowledge_drawer(db, &drawer_id)?;
-            let tier = drawer.tier.as_ref().expect("knowledge drawer has tier");
-            let target_status = match target_status {
-                Some(value) => parse_lifecycle_status(&value)?,
-                None => default_gate_target_status(tier),
-            };
-            validate_tier_status(tier, &target_status)?;
-            let report = evaluate_gate(
+            let report = evaluate_gate_by_id(
                 db,
-                &drawer,
-                &target_status,
+                &drawer_id,
+                target_status.as_deref(),
                 reviewer.as_deref(),
                 allow_counterexamples,
             )?;
@@ -1608,23 +1573,6 @@ fn load_lifecycle_knowledge_drawer(
     Ok(drawer)
 }
 
-fn load_gate_knowledge_drawer(
-    db: &Database,
-    drawer_id: &str,
-) -> Result<mempal::core::types::Drawer> {
-    let drawer = db
-        .get_drawer(drawer_id)
-        .context("failed to look up drawer")?
-        .with_context(|| format!("drawer not found: {drawer_id}"))?;
-    if drawer.memory_kind != MemoryKind::Knowledge {
-        bail!("knowledge gate requires a knowledge drawer");
-    }
-    if drawer.tier.is_none() || drawer.status.is_none() {
-        bail!("knowledge gate requires tier and status metadata");
-    }
-    Ok(drawer)
-}
-
 fn parse_lifecycle_status(value: &str) -> Result<KnowledgeStatus> {
     match value {
         "candidate" => Ok(KnowledgeStatus::Candidate),
@@ -1633,13 +1581,6 @@ fn parse_lifecycle_status(value: &str) -> Result<KnowledgeStatus> {
         "demoted" => Ok(KnowledgeStatus::Demoted),
         "retired" => Ok(KnowledgeStatus::Retired),
         other => bail!("unsupported knowledge status: {other}"),
-    }
-}
-
-fn default_gate_target_status(tier: &KnowledgeTier) -> KnowledgeStatus {
-    match tier {
-        KnowledgeTier::DaoTian => KnowledgeStatus::Canonical,
-        KnowledgeTier::DaoRen | KnowledgeTier::Shu | KnowledgeTier::Qi => KnowledgeStatus::Promoted,
     }
 }
 
@@ -1677,125 +1618,6 @@ fn validate_tier_status(tier: &KnowledgeTier, status: &KnowledgeStatus) -> Resul
         KnowledgeTier::Shu => bail!("shu only allows promoted, demoted, or retired"),
         KnowledgeTier::Qi => bail!("qi only allows candidate, promoted, demoted, or retired"),
     }
-}
-
-fn gate_requirements(tier: &KnowledgeTier, target_status: &KnowledgeStatus) -> GateRequirements {
-    match (tier, target_status) {
-        (KnowledgeTier::DaoTian, KnowledgeStatus::Canonical) => GateRequirements {
-            min_supporting_refs: 3,
-            min_verification_refs: 2,
-            min_teaching_refs: 1,
-            reviewer_required: true,
-            counterexamples_block: true,
-        },
-        (KnowledgeTier::DaoRen, KnowledgeStatus::Promoted) => GateRequirements {
-            min_supporting_refs: 2,
-            min_verification_refs: 1,
-            min_teaching_refs: 0,
-            reviewer_required: false,
-            counterexamples_block: true,
-        },
-        (KnowledgeTier::Shu | KnowledgeTier::Qi, KnowledgeStatus::Promoted) => GateRequirements {
-            min_supporting_refs: 1,
-            min_verification_refs: 1,
-            min_teaching_refs: 0,
-            reviewer_required: false,
-            counterexamples_block: true,
-        },
-        _ => GateRequirements {
-            min_supporting_refs: 0,
-            min_verification_refs: 0,
-            min_teaching_refs: 0,
-            reviewer_required: false,
-            counterexamples_block: true,
-        },
-    }
-}
-
-fn evaluate_gate(
-    db: &Database,
-    drawer: &mempal::core::types::Drawer,
-    target_status: &KnowledgeStatus,
-    reviewer: Option<&str>,
-    allow_counterexamples: bool,
-) -> Result<GateReport> {
-    validate_gate_refs(db, &drawer.supporting_refs)?;
-    validate_gate_refs(db, &drawer.counterexample_refs)?;
-    validate_gate_refs(db, &drawer.teaching_refs)?;
-    validate_gate_refs(db, &drawer.verification_refs)?;
-
-    let tier = drawer.tier.as_ref().expect("knowledge drawer has tier");
-    let status = drawer.status.as_ref().expect("knowledge drawer has status");
-    let requirements = gate_requirements(tier, target_status);
-    let evidence_counts = GateEvidenceCounts {
-        supporting: drawer.supporting_refs.len(),
-        counterexample: drawer.counterexample_refs.len(),
-        teaching: drawer.teaching_refs.len(),
-        verification: drawer.verification_refs.len(),
-    };
-    let mut reasons = Vec::new();
-    if evidence_counts.supporting < requirements.min_supporting_refs {
-        reasons.push(format!(
-            "supporting evidence refs below requirement: have {}, need {}",
-            evidence_counts.supporting, requirements.min_supporting_refs
-        ));
-    }
-    if evidence_counts.verification < requirements.min_verification_refs {
-        reasons.push(format!(
-            "verification evidence refs below requirement: have {}, need {}",
-            evidence_counts.verification, requirements.min_verification_refs
-        ));
-    }
-    if evidence_counts.teaching < requirements.min_teaching_refs {
-        reasons.push(format!(
-            "teaching evidence refs below requirement: have {}, need {}",
-            evidence_counts.teaching, requirements.min_teaching_refs
-        ));
-    }
-    if requirements.reviewer_required
-        && reviewer
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_none()
-    {
-        reasons.push("reviewer is required for this gate".to_string());
-    }
-    if requirements.counterexamples_block
-        && evidence_counts.counterexample > 0
-        && !allow_counterexamples
-    {
-        reasons.push(format!(
-            "counterexample refs present: {}",
-            evidence_counts.counterexample
-        ));
-    }
-
-    Ok(GateReport {
-        drawer_id: drawer.id.clone(),
-        tier: knowledge_tier_slug(tier).to_string(),
-        status: knowledge_status_slug(status).to_string(),
-        target_status: knowledge_status_slug(target_status).to_string(),
-        allowed: reasons.is_empty(),
-        reasons,
-        requirements,
-        evidence_counts,
-    })
-}
-
-fn validate_gate_refs(db: &Database, refs: &[String]) -> Result<()> {
-    for drawer_id in refs {
-        if !drawer_id.starts_with("drawer_") {
-            bail!("gate refs must contain drawer ids");
-        }
-        let drawer = db
-            .get_drawer(drawer_id)
-            .with_context(|| format!("failed to load ref drawer {drawer_id}"))?
-            .with_context(|| format!("ref drawer not found: {drawer_id}"))?;
-        if drawer.memory_kind != MemoryKind::Evidence {
-            bail!("gate refs must point to evidence drawers");
-        }
-    }
-    Ok(())
 }
 
 fn print_gate_report(report: &GateReport) {

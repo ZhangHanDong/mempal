@@ -24,6 +24,7 @@ use crate::ingest::{
     },
     normalize::CURRENT_NORMALIZE_VERSION,
 };
+use crate::knowledge_gate::evaluate_gate_by_id;
 use crate::search::{SearchFilters, SearchOptions, resolve_route, search_with_vector_options};
 use anyhow::Context;
 use rmcp::{
@@ -37,10 +38,11 @@ use serde_json::Value;
 use super::tools::{
     ContextRequest, ContextResponse, CoworkPushRequest, CoworkPushResponse, DeleteRequest,
     DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, IngestRequest,
-    IngestResponse, KgRequest, KgResponse, KgStatsDto, PeekMessageDto, PeekPartnerRequest,
-    PeekPartnerResponse, ScopeCount, SearchRequest, SearchResponse, SearchResultDto,
-    StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse, TriggerHintsDto,
-    TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
+    IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeGateRequest, KnowledgeGateResponse,
+    PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest,
+    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
+    TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest,
+    TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -113,6 +115,17 @@ impl MempalMcpServer {
         let request = serde_json::from_value(value)
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         self.mempal_context(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn knowledge_gate_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<KnowledgeGateResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_knowledge_gate(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -660,6 +673,27 @@ impl MempalMcpServer {
         .map_err(context_error)?;
 
         Ok(Json(ContextResponse::from(pack)))
+    }
+
+    #[tool(
+        name = "mempal_knowledge_gate",
+        description = "Read-only promotion readiness check for a knowledge drawer. Evaluates whether dao_tian/dao_ren/shu/qi knowledge has enough supporting, verification, teaching, reviewer, and counterexample evidence for the target status. Does not mutate drawers, vectors, schema, audit logs, or lifecycle state."
+    )]
+    async fn mempal_knowledge_gate(
+        &self,
+        Parameters(request): Parameters<KnowledgeGateRequest>,
+    ) -> std::result::Result<Json<KnowledgeGateResponse>, ErrorData> {
+        let db = self.open_db()?;
+        let report = evaluate_gate_by_id(
+            &db,
+            &request.drawer_id,
+            request.target_status.as_deref(),
+            request.reviewer.as_deref(),
+            request.allow_counterexamples.unwrap_or(false),
+        )
+        .map_err(knowledge_gate_error)?;
+
+        Ok(Json(KnowledgeGateResponse::from(report)))
     }
 
     #[tool(
@@ -1360,6 +1394,10 @@ fn fact_check_error(error: crate::factcheck::FactCheckError) -> ErrorData {
     }
 }
 
+fn knowledge_gate_error(error: anyhow::Error) -> ErrorData {
+    ErrorData::invalid_params(error.to_string(), None)
+}
+
 fn context_error(error: crate::context::ContextError) -> ErrorData {
     match error {
         crate::context::ContextError::DeriveAnchor(_) => {
@@ -1474,6 +1512,7 @@ fn passive_tunnel_id(room: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -1491,6 +1530,14 @@ mod tests {
 
     struct StubEmbedder {
         vector: Vec<f32>,
+    }
+
+    #[derive(Default)]
+    struct KnowledgeRefs {
+        supporting: Vec<String>,
+        counterexample: Vec<String>,
+        teaching: Vec<String>,
+        verification: Vec<String>,
     }
 
     #[async_trait]
@@ -1563,6 +1610,29 @@ mod tests {
         statement: &str,
         content: &str,
     ) {
+        insert_knowledge_drawer_with_refs(
+            db_path,
+            id,
+            tier,
+            status,
+            statement,
+            content,
+            KnowledgeRefs {
+                supporting: vec!["drawer_supporting_ev".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+    }
+
+    fn insert_knowledge_drawer_with_refs(
+        db_path: &Path,
+        id: &str,
+        tier: KnowledgeTier,
+        status: KnowledgeStatus,
+        statement: &str,
+        content: &str,
+        refs: KnowledgeRefs,
+    ) {
         let db = Database::open(db_path).expect("open db");
         let drawer = Drawer {
             id: id.to_string(),
@@ -1585,16 +1655,26 @@ mod tests {
             statement: Some(statement.to_string()),
             tier: Some(tier),
             status: Some(status),
-            supporting_refs: vec!["drawer_supporting_ev".to_string()],
-            counterexample_refs: Vec::new(),
-            teaching_refs: Vec::new(),
-            verification_refs: Vec::new(),
+            supporting_refs: refs.supporting,
+            counterexample_refs: refs.counterexample,
+            teaching_refs: refs.teaching,
+            verification_refs: refs.verification,
             scope_constraints: None,
             trigger_hints: None,
         };
         db.insert_drawer(&drawer).expect("insert knowledge drawer");
         db.insert_vector(id, &[0.1, 0.2, 0.3])
             .expect("insert vector");
+    }
+
+    fn audit_line_count(db_path: &Path) -> usize {
+        let audit_path = db_path
+            .parent()
+            .expect("db path has parent")
+            .join("audit.jsonl");
+        fs::read_to_string(audit_path)
+            .map(|content| content.lines().count())
+            .unwrap_or(0)
     }
 
     fn insert_triple(
@@ -1945,6 +2025,357 @@ mod tests {
                 .unwrap_or_default()
                 .contains("dao_tian -> dao_ren -> shu -> qi")
         );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_gate_allows_dao_ren_promotion() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_support_1",
+            "support 1",
+            "mempal",
+            Some("gate"),
+            "/tmp/support-1.md",
+            2,
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_support_2",
+            "support 2",
+            "mempal",
+            Some("gate"),
+            "/tmp/support-2.md",
+            2,
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_verify_1",
+            "verify 1",
+            "mempal",
+            Some("gate"),
+            "/tmp/verify-1.md",
+            2,
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_knowledge_gate",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Candidate,
+            "Domain rules need evidence.",
+            "Knowledge content",
+            KnowledgeRefs {
+                supporting: vec![
+                    "drawer_support_1".to_string(),
+                    "drawer_support_2".to_string(),
+                ],
+                verification: vec!["drawer_verify_1".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+
+        let response = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_knowledge_gate"
+            }))
+            .await
+            .expect("gate should succeed");
+
+        assert!(response.allowed, "reasons={:?}", response.reasons);
+        assert_eq!(response.target_status, "promoted");
+        assert_eq!(response.evidence_counts.supporting, 2);
+        assert_eq!(response.evidence_counts.verification, 1);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_gate_rejects_missing_verification() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_support_1",
+            "support 1",
+            "mempal",
+            Some("gate"),
+            "/tmp/support-1.md",
+            2,
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_support_2",
+            "support 2",
+            "mempal",
+            Some("gate"),
+            "/tmp/support-2.md",
+            2,
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_knowledge_gate",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Candidate,
+            "Domain rules need verification.",
+            "Knowledge content",
+            KnowledgeRefs {
+                supporting: vec![
+                    "drawer_support_1".to_string(),
+                    "drawer_support_2".to_string(),
+                ],
+                ..KnowledgeRefs::default()
+            },
+        );
+
+        let db = Database::open(&db_path).expect("open db");
+        let schema_before = db.schema_version().expect("schema");
+        let drawer_count_before = db.drawer_count().expect("drawer count");
+        let triple_count_before = db.triple_count().expect("triple count");
+        let audit_before = audit_line_count(&db_path);
+
+        let response = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_knowledge_gate"
+            }))
+            .await
+            .expect("gate should return advisory denial");
+
+        assert!(!response.allowed);
+        assert!(
+            response
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("verification evidence refs below requirement")),
+            "reasons={:?}",
+            response.reasons
+        );
+        assert_eq!(db.schema_version().expect("schema"), schema_before);
+        assert_eq!(
+            db.drawer_count().expect("drawer count"),
+            drawer_count_before
+        );
+        assert_eq!(
+            db.triple_count().expect("triple count"),
+            triple_count_before
+        );
+        assert_eq!(audit_line_count(&db_path), audit_before);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_gate_requires_reviewer_for_dao_tian() {
+        let (_tempdir, db_path, server) = setup_server();
+        for id in [
+            "drawer_support_1",
+            "drawer_support_2",
+            "drawer_support_3",
+            "drawer_verify_1",
+            "drawer_verify_2",
+            "drawer_teach_1",
+        ] {
+            insert_drawer(
+                &db_path,
+                id,
+                id,
+                "mempal",
+                Some("gate"),
+                &format!("/tmp/{id}.md"),
+                2,
+            );
+        }
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_knowledge_gate",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Stable cross-domain principle.",
+            "Knowledge content",
+            KnowledgeRefs {
+                supporting: vec![
+                    "drawer_support_1".to_string(),
+                    "drawer_support_2".to_string(),
+                    "drawer_support_3".to_string(),
+                ],
+                verification: vec!["drawer_verify_1".to_string(), "drawer_verify_2".to_string()],
+                teaching: vec!["drawer_teach_1".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+
+        let without_reviewer = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_knowledge_gate"
+            }))
+            .await
+            .expect("gate should return advisory denial");
+        assert!(!without_reviewer.allowed);
+        assert!(
+            without_reviewer
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("reviewer is required")),
+            "reasons={:?}",
+            without_reviewer.reasons
+        );
+
+        let with_reviewer = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_knowledge_gate",
+                "reviewer": "alex"
+            }))
+            .await
+            .expect("gate should allow with reviewer");
+        assert!(with_reviewer.allowed, "reasons={:?}", with_reviewer.reasons);
+        assert_eq!(with_reviewer.target_status, "canonical");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_gate_blocks_counterexamples_by_default() {
+        let (_tempdir, db_path, server) = setup_server();
+        for id in ["drawer_support_1", "drawer_verify_1", "drawer_counter_1"] {
+            insert_drawer(
+                &db_path,
+                id,
+                id,
+                "mempal",
+                Some("gate"),
+                &format!("/tmp/{id}.md"),
+                2,
+            );
+        }
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_knowledge_gate",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Reusable method.",
+            "Knowledge content",
+            KnowledgeRefs {
+                supporting: vec!["drawer_support_1".to_string()],
+                verification: vec!["drawer_verify_1".to_string()],
+                counterexample: vec!["drawer_counter_1".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+
+        let blocked = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_knowledge_gate"
+            }))
+            .await
+            .expect("gate should return advisory denial");
+        assert!(!blocked.allowed);
+        assert!(
+            blocked
+                .reasons
+                .iter()
+                .any(|reason| reason.contains("counterexample refs present")),
+            "reasons={:?}",
+            blocked.reasons
+        );
+
+        let allowed = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_knowledge_gate",
+                "allow_counterexamples": true
+            }))
+            .await
+            .expect("gate should allow explicit counterexample override");
+        assert!(allowed.allowed, "reasons={:?}", allowed.reasons);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_gate_rejects_evidence_drawer() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "evidence",
+            "mempal",
+            Some("gate"),
+            "/tmp/evidence.md",
+            2,
+        );
+
+        let error = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_evidence"
+            }))
+            .await
+            .expect_err("evidence drawer should be rejected");
+        assert!(
+            error.to_string().contains("knowledge drawer"),
+            "error={error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_gate_validates_role_refs() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_support_1",
+            "support",
+            "mempal",
+            Some("gate"),
+            "/tmp/support.md",
+            2,
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_ref_knowledge",
+            KnowledgeTier::Qi,
+            KnowledgeStatus::Candidate,
+            "Tool capability.",
+            "Knowledge ref content",
+            KnowledgeRefs {
+                supporting: vec!["drawer_support_1".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_knowledge_gate",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Candidate,
+            "Domain rule.",
+            "Knowledge content",
+            KnowledgeRefs {
+                supporting: vec![
+                    "drawer_support_1".to_string(),
+                    "drawer_support_1".to_string(),
+                ],
+                verification: vec!["drawer_ref_knowledge".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+
+        let error = server
+            .knowledge_gate_json_for_test(serde_json::json!({
+                "drawer_id": "drawer_knowledge_gate"
+            }))
+            .await
+            .expect_err("knowledge ref should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("gate refs must point to evidence drawers"),
+            "error={error}"
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_mempal_knowledge_gate() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let gate_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_knowledge_gate")
+            .expect("mempal_knowledge_gate tool exists");
+        assert!(
+            gate_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Read-only promotion readiness")
+        );
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_gate"));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

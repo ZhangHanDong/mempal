@@ -201,7 +201,8 @@ ids or other knowledge drawers:
 
 P20 adds a read-only promotion gate report. Use it before `promote` to check the
 minimum deterministic policy without changing status, refs, vectors, schema, or
-the audit log:
+the audit log. P21 exposes the same policy to MCP agents as
+`mempal_knowledge_gate`.
 
 ```bash
 mempal knowledge gate drawer_knowledge --format json
@@ -214,6 +215,16 @@ mempal knowledge gate drawer_dao_tian \
   --target-status canonical \
   --reviewer human \
   --format json
+```
+
+Equivalent MCP request:
+
+```json
+{
+  "drawer_id": "drawer_dao_tian",
+  "target_status": "canonical",
+  "reviewer": "human"
+}
 ```
 
 ```bash
@@ -496,11 +507,12 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes eleven tools:
+The MCP server exposes twelve tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
 - `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in); guides workflow / skill / tool choice but never executes skills
+- `mempal_knowledge_gate` — read-only promotion readiness check for knowledge drawers; returns the same deterministic gate report as `mempal knowledge gate --format json`
 - `mempal_ingest` — store memories with optional importance (0-5) and dry_run
 - `mempal_delete` — soft-delete with audit
 - `mempal_taxonomy` — list or edit routing keywords

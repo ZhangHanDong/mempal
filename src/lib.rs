@@ -9,5 +9,6 @@ pub mod cowork;
 pub mod embed;
 pub mod factcheck;
 pub mod ingest;
+pub mod knowledge_gate;
 pub mod mcp;
 pub mod search;

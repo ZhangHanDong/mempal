@@ -3,6 +3,7 @@ use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
     NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry, TunnelEndpoint,
 };
+use crate::knowledge_gate::GateReport;
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +73,69 @@ pub struct ContextResponse {
     pub field: String,
     pub anchors: Vec<ContextAnchorDto>,
     pub sections: Vec<ContextSectionDto>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct KnowledgeGateRequest {
+    pub drawer_id: String,
+    pub target_status: Option<String>,
+    pub reviewer: Option<String>,
+    pub allow_counterexamples: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeGateResponse {
+    pub drawer_id: String,
+    pub tier: String,
+    pub status: String,
+    pub target_status: String,
+    pub allowed: bool,
+    pub reasons: Vec<String>,
+    pub requirements: KnowledgeGateRequirementsDto,
+    pub evidence_counts: KnowledgeGateEvidenceCountsDto,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeGateRequirementsDto {
+    pub min_supporting_refs: usize,
+    pub min_verification_refs: usize,
+    pub min_teaching_refs: usize,
+    pub reviewer_required: bool,
+    pub counterexamples_block: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeGateEvidenceCountsDto {
+    pub supporting: usize,
+    pub counterexample: usize,
+    pub teaching: usize,
+    pub verification: usize,
+}
+
+impl From<GateReport> for KnowledgeGateResponse {
+    fn from(report: GateReport) -> Self {
+        Self {
+            drawer_id: report.drawer_id,
+            tier: report.tier,
+            status: report.status,
+            target_status: report.target_status,
+            allowed: report.allowed,
+            reasons: report.reasons,
+            requirements: KnowledgeGateRequirementsDto {
+                min_supporting_refs: report.requirements.min_supporting_refs,
+                min_verification_refs: report.requirements.min_verification_refs,
+                min_teaching_refs: report.requirements.min_teaching_refs,
+                reviewer_required: report.requirements.reviewer_required,
+                counterexamples_block: report.requirements.counterexamples_block,
+            },
+            evidence_counts: KnowledgeGateEvidenceCountsDto {
+                supporting: report.evidence_counts.supporting,
+                counterexample: report.evidence_counts.counterexample,
+                teaching: report.evidence_counts.teaching,
+                verification: report.evidence_counts.verification,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

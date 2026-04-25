@@ -157,10 +157,18 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    Skip for brainstorming or scratch text — it is for load-bearing
    claims only.
 
+12. CHECK KNOWLEDGE PROMOTION READINESS
+   Before proposing that a knowledge drawer should be promoted or treated as
+   canonical, call mempal_knowledge_gate with its drawer_id. The tool is a
+   read-only policy check over existing evidence refs. If allowed=false, use
+   the reasons to gather more evidence or keep the drawer at its current
+   lifecycle status. A passing gate is advisory; it does not auto-promote.
+
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
   mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi)
+  mempal_knowledge_gate — read-only knowledge promotion readiness check
   mempal_ingest        — save a new drawer (wing required, room optional, importance 0-5)
   mempal_delete        — soft-delete a drawer by ID
   mempal_taxonomy      — list or edit routing keywords
@@ -309,6 +317,22 @@ mod tests {
         assert!(
             MEMORY_PROTOCOL.contains("Use\n   mempal_search to verify project facts"),
             "MEMORY_PROTOCOL must keep fact verification and citations on mempal_search"
+        );
+    }
+
+    #[test]
+    fn contains_knowledge_gate_guidance() {
+        assert!(
+            MEMORY_PROTOCOL.contains("12. CHECK KNOWLEDGE PROMOTION READINESS"),
+            "MEMORY_PROTOCOL must include Rule 12 knowledge gate guidance"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("mempal_knowledge_gate"),
+            "MEMORY_PROTOCOL must mention mempal_knowledge_gate in TOOLS list"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("A passing gate is advisory; it does not auto-promote"),
+            "MEMORY_PROTOCOL must state that the gate is advisory"
         );
     }
 
