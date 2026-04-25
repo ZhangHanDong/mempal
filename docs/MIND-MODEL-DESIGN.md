@@ -820,6 +820,7 @@ Implemented Phase-1 runtime surface:
 - MCP protocol guidance consumes context in order: read `dao_tian` and `dao_ren` for judgment, use `shu` to bias workflow / skill choice, and use `qi` to bias concrete tool choice
 - memory hints never override system, user, repo, or client-native skill rules
 - bootstrap distill CLI creates candidate `dao_ren` / `qi` knowledge drawers from existing evidence refs without auto-promotion or LLM summarization
+- `mempal_knowledge_distill` exposes the same deterministic distill operation to MCP-connected agents, letting runtime agents create candidate knowledge from evidence refs without shelling out
 - bootstrap lifecycle CLI supports manual `promote` / `demote` on existing knowledge drawers by updating status plus verification / counterexample refs and writing audit entries
 - lifecycle verification / counterexample refs are hardened to require existing evidence drawers, preserving the rule that promotion and demotion are justified by evidence rather than arbitrary ids or other knowledge claims
 - promotion gate CLI provides a read-only advisory report before promotion, using deterministic evidence-count policy without mutating status, refs, vectors, schema, or audit history

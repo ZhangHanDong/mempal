@@ -199,6 +199,21 @@ P17 adds manual lifecycle commands for Stage-1 knowledge drawers. P19 hardens
 those commands so lifecycle refs must be existing evidence drawers, not arbitrary
 ids or other knowledge drawers:
 
+P18 adds deterministic CLI distill. P22 exposes the same operation to MCP agents
+as `mempal_knowledge_distill`: create candidate `dao_ren` / `qi` knowledge from
+existing evidence refs without LLM summarization or auto-promotion.
+
+Equivalent MCP distill request:
+
+```json
+{
+  "statement": "Prefer evidence first",
+  "content": "Use cited evidence before asserting project facts.",
+  "tier": "dao_ren",
+  "supporting_refs": ["drawer_evidence"]
+}
+```
+
 P20 adds a read-only promotion gate report. Use it before `promote` to check the
 minimum deterministic policy without changing status, refs, vectors, schema, or
 the audit log. P21 exposes the same policy to MCP agents as
@@ -507,11 +522,12 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes twelve tools:
+The MCP server exposes thirteen tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
 - `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in); guides workflow / skill / tool choice but never executes skills
+- `mempal_knowledge_distill` — create candidate `dao_ren` / `qi` knowledge from existing evidence refs; deterministic and never auto-promotes
 - `mempal_knowledge_gate` — read-only promotion readiness check for knowledge drawers; returns the same deterministic gate report as `mempal knowledge gate --format json`
 - `mempal_ingest` — store memories with optional importance (0-5) and dry_run
 - `mempal_delete` — soft-delete with audit

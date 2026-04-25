@@ -164,10 +164,18 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    the reasons to gather more evidence or keep the drawer at its current
    lifecycle status. A passing gate is advisory; it does not auto-promote.
 
+13. DISTILL KNOWLEDGE FROM EVIDENCE
+   When repeated evidence suggests a reusable rule, call
+   mempal_knowledge_distill to create candidate knowledge from evidence
+   drawer refs. Distill is not summarization magic: provide the statement,
+   content, tier, and evidence refs explicitly. The tool only creates
+   candidate dao_ren or qi knowledge and never promotes it automatically.
+
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
   mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi)
+  mempal_knowledge_distill — create candidate knowledge from evidence refs
   mempal_knowledge_gate — read-only knowledge promotion readiness check
   mempal_ingest        — save a new drawer (wing required, room optional, importance 0-5)
   mempal_delete        — soft-delete a drawer by ID
@@ -333,6 +341,22 @@ mod tests {
         assert!(
             MEMORY_PROTOCOL.contains("A passing gate is advisory; it does not auto-promote"),
             "MEMORY_PROTOCOL must state that the gate is advisory"
+        );
+    }
+
+    #[test]
+    fn contains_knowledge_distill_guidance() {
+        assert!(
+            MEMORY_PROTOCOL.contains("13. DISTILL KNOWLEDGE FROM EVIDENCE"),
+            "MEMORY_PROTOCOL must include Rule 13 knowledge distill guidance"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("mempal_knowledge_distill"),
+            "MEMORY_PROTOCOL must mention mempal_knowledge_distill in TOOLS list"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("never promotes it automatically"),
+            "MEMORY_PROTOCOL must state that distill never auto-promotes"
         );
     }
 

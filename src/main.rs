@@ -13,25 +13,21 @@ use mempal::aaak::{AaakCodec, AaakMeta};
 use mempal::api::{ApiState, DEFAULT_REST_ADDR, serve as serve_rest_api};
 use mempal::context::{ContextPack, ContextRequest, assemble_context};
 use mempal::core::{
-    anchor,
     config::Config,
     db::Database,
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
-        AnchorKind, BootstrapIdentityParts, Drawer, KnowledgeStatus, KnowledgeTier, MemoryDomain,
-        MemoryKind, SourceType, TaxonomyEntry, TriggerHints, TunnelEndpoint,
+        AnchorKind, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, TaxonomyEntry,
+        TriggerHints, TunnelEndpoint,
     },
-    utils::{
-        build_bootstrap_drawer_id_from_parts, build_triple_id, current_timestamp,
-        format_tunnel_endpoint, knowledge_source_file,
-    },
+    utils::{build_triple_id, current_timestamp, format_tunnel_endpoint},
 };
 use mempal::embed::{ConfiguredEmbedderFactory, Embedder};
 use mempal::ingest::{
     IngestOptions, IngestStats, ingest_dir_with_options, ingest_file_with_options,
-    normalize::CURRENT_NORMALIZE_VERSION,
     reindex::{ReindexMode, ReindexOptions, ReindexReport, reindex_sources},
 };
+use mempal::knowledge_distill::{DistillPlan, DistillRequest, commit_distill, prepare_distill};
 use mempal::knowledge_gate::{GateReport, evaluate_gate_by_id};
 use mempal::mcp::MempalMcpServer;
 use mempal::search::{SearchFilters, SearchOptions, search_with_options};
@@ -1221,129 +1217,48 @@ async fn knowledge_command(
             importance,
             dry_run,
         } => {
-            if !(0..=5).contains(&importance) {
-                bail!("importance must be between 0 and 5");
-            }
-            let statement = trim_required(&statement, "statement")?;
-            let content = trim_required(&content, "content")?;
-            let wing = trim_required(&wing, "wing")?;
-            let room = trim_required(&room, "room")?;
-            let field = trim_required(&field, "field")?;
-            let domain = parse_domain(&domain)?;
-            let tier = parse_distill_tier(&tier)?;
-            let memory_kind = MemoryKind::Knowledge;
-            let status = KnowledgeStatus::Candidate;
-            let verification_refs: &[String] = &[];
-
-            let supporting_refs = normalized_nonempty_strings(&supporting_refs);
-            let counterexample_refs = normalized_nonempty_strings(&counterexample_refs);
-            let teaching_refs = normalized_nonempty_strings(&teaching_refs);
-            validate_distill_refs(db, "supporting_refs", &supporting_refs)?;
-            validate_distill_refs(db, "counterexample_refs", &counterexample_refs)?;
-            validate_distill_refs(db, "teaching_refs", &teaching_refs)?;
-
-            let scope_constraints = scope_constraints
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned);
             let trigger_hints = build_trigger_hints(intent_tags, workflow_bias, tool_needs);
-            let anchor = distill_anchor(&domain, cwd.as_deref())?;
-            anchor::validate_anchor_domain(&domain, &anchor.anchor_kind)
-                .map_err(|message| anyhow::anyhow!(message.to_string()))?;
-
-            let drawer_id = build_bootstrap_drawer_id_from_parts(
-                &wing,
-                Some(&room),
-                &content,
-                BootstrapIdentityParts {
-                    memory_kind: &memory_kind,
-                    domain: &domain,
-                    field: &field,
-                    anchor_kind: &anchor.anchor_kind,
-                    anchor_id: &anchor.anchor_id,
-                    parent_anchor_id: anchor.parent_anchor_id.as_deref(),
-                    provenance: None,
-                    statement: Some(&statement),
-                    tier: Some(&tier),
-                    status: Some(&status),
-                    supporting_refs: &supporting_refs,
-                    counterexample_refs: &counterexample_refs,
-                    teaching_refs: &teaching_refs,
-                    verification_refs,
-                    scope_constraints: scope_constraints.as_deref(),
-                    trigger_hints: trigger_hints.as_ref(),
-                },
-            );
-
-            if dry_run {
-                println!("dry_run=true drawer_id={drawer_id}");
-                return Ok(());
-            }
-
-            if db
-                .drawer_exists(&drawer_id)
-                .context("failed to check existing distilled drawer")?
-            {
-                println!("drawer_id={drawer_id} created=false");
-                return Ok(());
-            }
-
-            let embedder = build_embedder(config).await?;
-            let vector = embedder
-                .embed(&[content.as_str()])
-                .await
-                .context("failed to embed distilled knowledge")?
-                .into_iter()
-                .next()
-                .context("embedder returned no vector")?;
-            let drawer = Drawer {
-                id: drawer_id.clone(),
+            let request = DistillRequest {
+                statement,
                 content,
+                tier,
+                supporting_refs,
                 wing,
-                room: Some(room),
-                source_file: Some(knowledge_source_file(&domain, &field, &tier, &statement)),
-                source_type: SourceType::Manual,
-                added_at: current_timestamp(),
-                chunk_index: Some(0),
-                normalize_version: CURRENT_NORMALIZE_VERSION,
-                importance,
-                memory_kind: MemoryKind::Knowledge,
+                room,
                 domain,
                 field,
-                anchor_kind: anchor.anchor_kind,
-                anchor_id: anchor.anchor_id,
-                parent_anchor_id: anchor.parent_anchor_id,
-                provenance: None,
-                statement: Some(statement),
-                tier: Some(tier),
-                status: Some(status),
-                supporting_refs: supporting_refs.clone(),
-                counterexample_refs: counterexample_refs.clone(),
-                teaching_refs: teaching_refs.clone(),
-                verification_refs: Vec::new(),
+                cwd,
                 scope_constraints,
+                counterexample_refs,
+                teaching_refs,
                 trigger_hints,
+                importance,
+                dry_run,
             };
-            db.insert_drawer(&drawer)
-                .context("failed to insert distilled knowledge drawer")?;
-            db.insert_vector(&drawer_id, &vector)
-                .context("failed to insert distilled knowledge vector")?;
-            append_audit_entry(
-                db,
-                "knowledge_distill",
-                &serde_json::json!({
-                    "drawer_id": drawer_id,
-                    "statement": drawer.statement,
-                    "tier": drawer.tier.as_ref().map(knowledge_tier_slug),
-                    "status": drawer.status.as_ref().map(knowledge_status_slug),
-                    "supporting_refs": supporting_refs,
-                    "counterexample_refs": counterexample_refs,
-                    "teaching_refs": teaching_refs,
-                }),
-            )
-            .context("failed to append audit log")?;
-            println!("drawer_id={drawer_id} created=true");
+            let outcome = match prepare_distill(db, request)? {
+                DistillPlan::Done(outcome) => outcome,
+                DistillPlan::Create(prepared) => {
+                    let embedder = build_embedder(config).await?;
+                    let vector = embedder
+                        .embed(&[prepared.content.as_str()])
+                        .await
+                        .context("failed to embed distilled knowledge")?
+                        .into_iter()
+                        .next()
+                        .context("embedder returned no vector")?;
+                    commit_distill(db, *prepared, &vector)?
+                }
+            };
+
+            if outcome.dry_run {
+                println!("dry_run=true drawer_id={}", outcome.drawer_id);
+                return Ok(());
+            }
+
+            println!(
+                "drawer_id={} created={}",
+                outcome.drawer_id, outcome.created
+            );
         }
         KnowledgeCommands::Promote {
             drawer_id,
@@ -1477,14 +1392,6 @@ async fn knowledge_command(
     Ok(())
 }
 
-fn trim_required(value: &str, field: &str) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        bail!("{field} must not be empty");
-    }
-    Ok(trimmed.to_string())
-}
-
 fn normalized_nonempty_strings(values: &[String]) -> Vec<String> {
     values
         .iter()
@@ -1493,15 +1400,6 @@ fn normalized_nonempty_strings(values: &[String]) -> Vec<String> {
             (!trimmed.is_empty()).then(|| trimmed.to_string())
         })
         .collect()
-}
-
-fn parse_distill_tier(value: &str) -> Result<KnowledgeTier> {
-    match value.trim() {
-        "dao_ren" => Ok(KnowledgeTier::DaoRen),
-        "qi" => Ok(KnowledgeTier::Qi),
-        "dao_tian" | "shu" => bail!("distill only allows candidate dao_ren or qi"),
-        other => bail!("unsupported knowledge tier: {other}"),
-    }
 }
 
 fn build_trigger_hints(
@@ -1520,40 +1418,6 @@ fn build_trigger_hints(
         workflow_bias,
         tool_needs,
     })
-}
-
-fn distill_anchor(domain: &MemoryDomain, cwd: Option<&Path>) -> Result<anchor::DerivedAnchor> {
-    if matches!(domain, MemoryDomain::Global) {
-        return Ok(anchor::DerivedAnchor {
-            anchor_kind: AnchorKind::Global,
-            anchor_id: "global://default".to_string(),
-            parent_anchor_id: None,
-        });
-    }
-    let cwd = match cwd {
-        Some(path) => path.to_path_buf(),
-        None => env::current_dir().context("failed to read current directory")?,
-    };
-    anchor::derive_anchor_from_cwd(Some(&cwd)).context("failed to derive distill anchor")
-}
-
-fn validate_distill_refs(db: &Database, field: &str, refs: &[String]) -> Result<()> {
-    if field == "supporting_refs" && refs.is_empty() {
-        bail!("supporting_refs must not be empty");
-    }
-    for drawer_id in refs {
-        if !drawer_id.starts_with("drawer_") {
-            bail!("{field} must contain drawer ids");
-        }
-        let drawer = db
-            .get_drawer(drawer_id)
-            .with_context(|| format!("failed to load ref drawer {drawer_id}"))?
-            .with_context(|| format!("ref drawer not found: {drawer_id}"))?;
-        if drawer.memory_kind != MemoryKind::Evidence {
-            bail!("{field} must point to evidence drawers");
-        }
-    }
-    Ok(())
 }
 
 fn load_lifecycle_knowledge_drawer(

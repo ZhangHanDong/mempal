@@ -24,6 +24,9 @@ use crate::ingest::{
     },
     normalize::CURRENT_NORMALIZE_VERSION,
 };
+use crate::knowledge_distill::{
+    DistillPlan, DistillRequest as CoreDistillRequest, commit_distill, prepare_distill,
+};
 use crate::knowledge_gate::evaluate_gate_by_id;
 use crate::search::{SearchFilters, SearchOptions, resolve_route, search_with_vector_options};
 use anyhow::Context;
@@ -38,11 +41,11 @@ use serde_json::Value;
 use super::tools::{
     ContextRequest, ContextResponse, CoworkPushRequest, CoworkPushResponse, DeleteRequest,
     DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, IngestRequest,
-    IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeGateRequest, KnowledgeGateResponse,
-    PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest,
-    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
-    TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest,
-    TunnelsResponse,
+    IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeDistillRequest,
+    KnowledgeDistillResponse, KnowledgeGateRequest, KnowledgeGateResponse, PeekMessageDto,
+    PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest, SearchResponse,
+    SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse,
+    TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -126,6 +129,17 @@ impl MempalMcpServer {
         let request = serde_json::from_value(value)
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         self.mempal_knowledge_gate(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn knowledge_distill_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<KnowledgeDistillResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_knowledge_distill(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -673,6 +687,58 @@ impl MempalMcpServer {
         .map_err(context_error)?;
 
         Ok(Json(ContextResponse::from(pack)))
+    }
+
+    #[tool(
+        name = "mempal_knowledge_distill",
+        description = "Create candidate knowledge from existing evidence drawer refs. Deterministic Stage-1 distill: writes memory_kind=knowledge/status=candidate for tier dao_ren or qi, validates refs are evidence drawers, and never calls an LLM, promotes, or creates Phase-2 knowledge cards."
+    )]
+    async fn mempal_knowledge_distill(
+        &self,
+        Parameters(request): Parameters<KnowledgeDistillRequest>,
+    ) -> std::result::Result<Json<KnowledgeDistillResponse>, ErrorData> {
+        let dry_run = request.dry_run.unwrap_or(false);
+        let core_request = CoreDistillRequest {
+            statement: request.statement,
+            content: request.content,
+            tier: request.tier,
+            supporting_refs: request.supporting_refs,
+            wing: request.wing.unwrap_or_else(|| "mempal".to_string()),
+            room: request.room.unwrap_or_else(|| "knowledge".to_string()),
+            domain: request.domain.unwrap_or_else(|| "project".to_string()),
+            field: request
+                .field
+                .unwrap_or_else(|| anchor::DEFAULT_FIELD.to_string()),
+            cwd: request.cwd.map(PathBuf::from),
+            scope_constraints: request.scope_constraints,
+            counterexample_refs: request.counterexample_refs.unwrap_or_default(),
+            teaching_refs: request.teaching_refs.unwrap_or_default(),
+            trigger_hints: request.trigger_hints.as_ref().map(trigger_hints_from_dto),
+            importance: request.importance.unwrap_or(3),
+            dry_run,
+        };
+        let plan = {
+            let db = self.open_db()?;
+            prepare_distill(&db, core_request).map_err(knowledge_distill_error)?
+        };
+        let prepared = match plan {
+            DistillPlan::Done(outcome) => return Ok(Json(KnowledgeDistillResponse::from(outcome))),
+            DistillPlan::Create(prepared) => prepared,
+        };
+
+        let embedder = self.embedder_factory.build().await.map_err(|error| {
+            ErrorData::internal_error(format!("failed to build embedder: {error}"), None)
+        })?;
+        let vector = embedder
+            .embed(&[prepared.content.as_str()])
+            .await
+            .map_err(|error| ErrorData::internal_error(format!("embedding failed: {error}"), None))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| ErrorData::internal_error("embedder returned no vector", None))?;
+        let db = self.open_db()?;
+        let outcome = commit_distill(&db, *prepared, &vector).map_err(knowledge_distill_error)?;
+        Ok(Json(KnowledgeDistillResponse::from(outcome)))
     }
 
     #[tool(
@@ -1398,6 +1464,18 @@ fn knowledge_gate_error(error: anyhow::Error) -> ErrorData {
     ErrorData::invalid_params(error.to_string(), None)
 }
 
+fn knowledge_distill_error(error: anyhow::Error) -> ErrorData {
+    let message = error.to_string();
+    if message.contains("failed to embed")
+        || message.contains("failed to insert")
+        || message.contains("failed to append audit")
+        || message.contains("embedder required")
+    {
+        return ErrorData::internal_error(message, None);
+    }
+    ErrorData::invalid_params(message, None)
+}
+
 fn context_error(error: crate::context::ContextError) -> ErrorData {
     match error {
         crate::context::ContextError::DeriveAnchor(_) => {
@@ -1517,6 +1595,7 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
+    use rusqlite::params;
     use tempfile::TempDir;
 
     use super::*;
@@ -1675,6 +1754,22 @@ mod tests {
         fs::read_to_string(audit_path)
             .map(|content| content.lines().count())
             .unwrap_or(0)
+    }
+
+    fn vector_row_count(db: &Database, id: &str) -> i64 {
+        db.conn()
+            .query_row(
+                "SELECT COUNT(*) FROM drawer_vectors WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .expect("count vector rows")
+    }
+
+    fn total_vector_count(db: &Database) -> i64 {
+        db.conn()
+            .query_row("SELECT COUNT(*) FROM drawer_vectors", [], |row| row.get(0))
+            .expect("count vector rows")
     }
 
     fn insert_triple(
@@ -2025,6 +2120,294 @@ mod tests {
                 .unwrap_or_default()
                 .contains("dao_tian -> dao_ren -> shu -> qi")
         );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_distill_creates_candidate_knowledge() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "evidence first observation",
+            "mempal",
+            Some("distill"),
+            "/tmp/evidence.md",
+            2,
+        );
+
+        let response = server
+            .knowledge_distill_json_for_test(serde_json::json!({
+                "statement": "Prefer evidence first",
+                "content": "Use cited evidence before asserting project facts.",
+                "tier": "dao_ren",
+                "supporting_refs": ["drawer_evidence"]
+            }))
+            .await
+            .expect("distill should succeed");
+        assert!(response.created);
+        assert!(!response.dry_run);
+        assert!(response.drawer_id.starts_with("drawer_"));
+
+        let db = Database::open(&db_path).expect("open db");
+        let drawer = db
+            .get_drawer(&response.drawer_id)
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(drawer.memory_kind, MemoryKind::Knowledge);
+        assert_eq!(drawer.tier, Some(KnowledgeTier::DaoRen));
+        assert_eq!(drawer.status, Some(KnowledgeStatus::Candidate));
+        assert_eq!(drawer.supporting_refs, vec!["drawer_evidence"]);
+
+        let context = server
+            .context_json_for_test(serde_json::json!({
+                "query": "evidence first",
+                "cwd": db_path.parent().expect("db parent").to_string_lossy()
+            }))
+            .await
+            .expect("context should succeed");
+        let context_ids: Vec<_> = context
+            .sections
+            .into_iter()
+            .flat_map(|section| section.items)
+            .map(|item| item.drawer_id)
+            .collect();
+        assert!(!context_ids.contains(&response.drawer_id));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_distill_dry_run_no_write() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "dry run evidence",
+            "mempal",
+            Some("distill"),
+            "/tmp/evidence.md",
+            2,
+        );
+        let db = Database::open(&db_path).expect("open db");
+        let drawer_count_before = db.drawer_count().expect("drawer count");
+        let vector_count_before = total_vector_count(&db);
+        let schema_before = db.schema_version().expect("schema");
+        let audit_before = audit_line_count(&db_path);
+
+        let request = serde_json::json!({
+            "statement": "Dry run candidate",
+            "content": "This should not be written.",
+            "tier": "qi",
+            "supporting_refs": ["drawer_evidence"],
+            "dry_run": true
+        });
+        let first = server
+            .knowledge_distill_json_for_test(request.clone())
+            .await
+            .expect("first dry-run should succeed");
+        let second = server
+            .knowledge_distill_json_for_test(request)
+            .await
+            .expect("second dry-run should succeed");
+
+        assert_eq!(first.drawer_id, second.drawer_id);
+        assert!(!first.created);
+        assert!(first.dry_run);
+        assert!(!second.created);
+        assert!(second.dry_run);
+        assert_eq!(
+            db.drawer_count().expect("drawer count"),
+            drawer_count_before
+        );
+        assert_eq!(total_vector_count(&db), vector_count_before);
+        assert_eq!(db.schema_version().expect("schema"), schema_before);
+        assert_eq!(audit_line_count(&db_path), audit_before);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_distill_rejects_dao_tian_candidate() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "dao tian evidence",
+            "mempal",
+            Some("distill"),
+            "/tmp/evidence.md",
+            2,
+        );
+
+        let error = server
+            .knowledge_distill_json_for_test(serde_json::json!({
+                "statement": "Universal law",
+                "content": "This should not be candidate dao_tian.",
+                "tier": "dao_tian",
+                "supporting_refs": ["drawer_evidence"]
+            }))
+            .await
+            .expect_err("dao_tian candidate should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("distill only allows candidate dao_ren or qi"),
+            "error={error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_distill_rejects_missing_supporting_refs() {
+        let (_tempdir, db_path, server) = setup_server();
+        let missing = server
+            .knowledge_distill_json_for_test(serde_json::json!({
+                "statement": "Missing refs",
+                "content": "This should fail before writing.",
+                "tier": "qi",
+                "supporting_refs": []
+            }))
+            .await
+            .expect_err("missing refs should be rejected");
+        assert!(
+            missing.to_string().contains("supporting_refs"),
+            "error={missing}"
+        );
+
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "support evidence",
+            "mempal",
+            Some("distill"),
+            "/tmp/evidence.md",
+            2,
+        );
+        insert_knowledge_drawer_with_refs(
+            &db_path,
+            "drawer_ref_knowledge",
+            KnowledgeTier::Qi,
+            KnowledgeStatus::Candidate,
+            "Tool candidate.",
+            "Knowledge ref content",
+            KnowledgeRefs {
+                supporting: vec!["drawer_evidence".to_string()],
+                ..KnowledgeRefs::default()
+            },
+        );
+
+        let wrong_kind = server
+            .knowledge_distill_json_for_test(serde_json::json!({
+                "statement": "Wrong ref kind",
+                "content": "This should fail before writing.",
+                "tier": "qi",
+                "supporting_refs": ["drawer_ref_knowledge"]
+            }))
+            .await
+            .expect_err("knowledge refs should be rejected");
+        assert!(
+            wrong_kind
+                .to_string()
+                .contains("supporting_refs must point to evidence drawers"),
+            "error={wrong_kind}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_distill_stores_trigger_hints() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "trigger hint evidence",
+            "mempal",
+            Some("distill"),
+            "/tmp/evidence.md",
+            2,
+        );
+
+        let response = server
+            .knowledge_distill_json_for_test(serde_json::json!({
+                "statement": "Reproduce before patching",
+                "content": "Reproduce failures before changing code.",
+                "tier": "qi",
+                "supporting_refs": ["drawer_evidence"],
+                "trigger_hints": {
+                    "intent_tags": ["debugging"],
+                    "workflow_bias": ["reproduce-first"],
+                    "tool_needs": ["cargo-test"]
+                }
+            }))
+            .await
+            .expect("distill should succeed");
+        let db = Database::open(&db_path).expect("open db");
+        let drawer = db
+            .get_drawer(&response.drawer_id)
+            .expect("load drawer")
+            .expect("drawer exists");
+        let hints = drawer.trigger_hints.expect("trigger hints");
+        assert_eq!(hints.intent_tags, vec!["debugging"]);
+        assert_eq!(hints.workflow_bias, vec!["reproduce-first"]);
+        assert_eq!(hints.tool_needs, vec!["cargo-test"]);
+        assert!(
+            crate::core::protocol::MEMORY_PROTOCOL.contains("trigger_hints as bias metadata only")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_distill_existing_drawer_no_duplicate_or_audit() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "idempotent evidence",
+            "mempal",
+            Some("distill"),
+            "/tmp/evidence.md",
+            2,
+        );
+        let request = serde_json::json!({
+            "statement": "Idempotent distill",
+            "content": "Equivalent requests should not duplicate drawers.",
+            "tier": "dao_ren",
+            "supporting_refs": ["drawer_evidence"]
+        });
+        let first = server
+            .knowledge_distill_json_for_test(request.clone())
+            .await
+            .expect("first distill should create");
+        assert!(first.created);
+        let db = Database::open(&db_path).expect("open db");
+        let drawer_count_before_second = db.drawer_count().expect("drawer count");
+        let vector_count_before_second = total_vector_count(&db);
+        let audit_before_second = audit_line_count(&db_path);
+
+        let second = server
+            .knowledge_distill_json_for_test(request)
+            .await
+            .expect("second distill should be idempotent");
+        assert_eq!(second.drawer_id, first.drawer_id);
+        assert!(!second.created);
+        assert_eq!(
+            db.drawer_count().expect("drawer count"),
+            drawer_count_before_second
+        );
+        assert_eq!(total_vector_count(&db), vector_count_before_second);
+        assert_eq!(audit_line_count(&db_path), audit_before_second);
+        assert_eq!(vector_row_count(&db, &first.drawer_id), 1);
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_mempal_knowledge_distill() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let distill_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_knowledge_distill")
+            .expect("mempal_knowledge_distill tool exists");
+        assert!(
+            distill_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("candidate knowledge from existing evidence")
+        );
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_distill"));
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@ use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
     NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry, TunnelEndpoint,
 };
+use crate::knowledge_distill::DistillOutcome;
 use crate::knowledge_gate::GateReport;
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -81,6 +82,42 @@ pub struct KnowledgeGateRequest {
     pub target_status: Option<String>,
     pub reviewer: Option<String>,
     pub allow_counterexamples: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct KnowledgeDistillRequest {
+    pub statement: String,
+    pub content: String,
+    pub tier: String,
+    pub supporting_refs: Vec<String>,
+    pub counterexample_refs: Option<Vec<String>>,
+    pub teaching_refs: Option<Vec<String>>,
+    pub domain: Option<String>,
+    pub field: Option<String>,
+    pub wing: Option<String>,
+    pub room: Option<String>,
+    pub scope_constraints: Option<String>,
+    pub trigger_hints: Option<TriggerHintsDto>,
+    pub cwd: Option<String>,
+    pub importance: Option<i32>,
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeDistillResponse {
+    pub drawer_id: String,
+    pub created: bool,
+    pub dry_run: bool,
+}
+
+impl From<DistillOutcome> for KnowledgeDistillResponse {
+    fn from(outcome: DistillOutcome) -> Self {
+        Self {
+            drawer_id: outcome.drawer_id,
+            created: outcome.created,
+            dry_run: outcome.dry_run,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
