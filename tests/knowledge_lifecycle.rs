@@ -20,6 +20,14 @@ use tempfile::TempDir;
 
 struct StubEmbedder;
 
+#[derive(Default)]
+struct KnowledgeRefs {
+    supporting: Vec<String>,
+    counterexample: Vec<String>,
+    teaching: Vec<String>,
+    verification: Vec<String>,
+}
+
 #[async_trait]
 impl Embedder for StubEmbedder {
     async fn embed(&self, texts: &[&str]) -> mempal::embed::Result<Vec<Vec<f32>>> {
@@ -134,6 +142,29 @@ fn insert_knowledge(
     statement: &str,
     content: &str,
 ) {
+    insert_knowledge_with_refs(
+        db,
+        id,
+        tier,
+        status,
+        statement,
+        content,
+        KnowledgeRefs {
+            supporting: vec!["drawer_supporting".to_string()],
+            ..KnowledgeRefs::default()
+        },
+    );
+}
+
+fn insert_knowledge_with_refs(
+    db: &Database,
+    id: &str,
+    tier: KnowledgeTier,
+    status: KnowledgeStatus,
+    statement: &str,
+    content: &str,
+    refs: KnowledgeRefs,
+) {
     let drawer = Drawer {
         id: id.to_string(),
         content: content.to_string(),
@@ -155,10 +186,10 @@ fn insert_knowledge(
         statement: Some(statement.to_string()),
         tier: Some(tier),
         status: Some(status),
-        supporting_refs: vec!["drawer_supporting".to_string()],
-        counterexample_refs: Vec::new(),
-        teaching_refs: Vec::new(),
-        verification_refs: Vec::new(),
+        supporting_refs: refs.supporting,
+        counterexample_refs: refs.counterexample,
+        teaching_refs: refs.teaching,
+        verification_refs: refs.verification,
         scope_constraints: None,
         trigger_hints: None,
     };
@@ -205,6 +236,17 @@ fn knowledge_status(db: &Database, id: &str) -> KnowledgeStatus {
         .expect("drawer exists")
         .status
         .expect("knowledge status")
+}
+
+fn audit_line_count(home: &Path) -> usize {
+    let audit_path = home.join(".mempal").join("audit.jsonl");
+    fs::read_to_string(audit_path)
+        .map(|content| content.lines().count())
+        .unwrap_or(0)
+}
+
+fn gate_json(output: &Output) -> Value {
+    serde_json::from_slice(&output.stdout).expect("gate json")
 }
 
 #[tokio::test]
@@ -408,6 +450,310 @@ fn test_cli_knowledge_lifecycle_accepts_evidence_refs() {
         .expect("drawer exists");
     assert_eq!(drawer.status, Some(KnowledgeStatus::Promoted));
     assert_eq!(drawer.verification_refs, vec!["drawer_verify"]);
+}
+
+#[test]
+fn test_cli_knowledge_gate_allows_dao_ren_promotion() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_supporting_a", "supporting evidence a");
+    insert_evidence(&db, "drawer_supporting_b", "supporting evidence b");
+    insert_evidence(&db, "drawer_verify", "verification evidence");
+    insert_knowledge_with_refs(
+        &db,
+        "drawer_knowledge",
+        KnowledgeTier::DaoRen,
+        KnowledgeStatus::Candidate,
+        "Gate dao_ren with enough evidence.",
+        "gate dao ren",
+        KnowledgeRefs {
+            supporting: vec![
+                "drawer_supporting_a".to_string(),
+                "drawer_supporting_b".to_string(),
+            ],
+            verification: vec!["drawer_verify".to_string()],
+            ..KnowledgeRefs::default()
+        },
+    );
+    let schema_before = db.schema_version().expect("schema version");
+    let audit_before = audit_line_count(home.path());
+    assert_eq!(vector_row_count(&db, "drawer_knowledge"), 1);
+
+    let output = run_mempal(home.path(), &["knowledge", "gate", "drawer_knowledge"]);
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("allowed=true"));
+    assert_eq!(
+        knowledge_status(&db, "drawer_knowledge"),
+        KnowledgeStatus::Candidate
+    );
+    assert_eq!(audit_line_count(home.path()), audit_before);
+    assert_eq!(db.schema_version().expect("schema version"), schema_before);
+    assert_eq!(vector_row_count(&db, "drawer_knowledge"), 1);
+}
+
+#[test]
+fn test_cli_knowledge_gate_rejects_missing_verification() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_supporting_a", "supporting evidence a");
+    insert_evidence(&db, "drawer_supporting_b", "supporting evidence b");
+    insert_knowledge_with_refs(
+        &db,
+        "drawer_knowledge",
+        KnowledgeTier::DaoRen,
+        KnowledgeStatus::Candidate,
+        "Gate needs verification.",
+        "missing verification",
+        KnowledgeRefs {
+            supporting: vec![
+                "drawer_supporting_a".to_string(),
+                "drawer_supporting_b".to_string(),
+            ],
+            ..KnowledgeRefs::default()
+        },
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &["knowledge", "gate", "drawer_knowledge", "--format", "json"],
+    );
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value = gate_json(&output);
+    assert_eq!(value["allowed"], false);
+    assert!(
+        value["reasons"]
+            .as_array()
+            .expect("reasons")
+            .iter()
+            .any(|reason| reason.as_str().expect("reason").contains("verification"))
+    );
+}
+
+#[test]
+fn test_cli_knowledge_gate_requires_reviewer_for_dao_tian() {
+    let (home, db) = setup_home();
+    for id in [
+        "drawer_supporting_a",
+        "drawer_supporting_b",
+        "drawer_supporting_c",
+        "drawer_verify_a",
+        "drawer_verify_b",
+        "drawer_teaching",
+    ] {
+        insert_evidence(&db, id, "dao tian gate evidence");
+    }
+    insert_knowledge_with_refs(
+        &db,
+        "drawer_dao_tian",
+        KnowledgeTier::DaoTian,
+        KnowledgeStatus::Canonical,
+        "Dao tian requires reviewer.",
+        "dao tian gate",
+        KnowledgeRefs {
+            supporting: vec![
+                "drawer_supporting_a".to_string(),
+                "drawer_supporting_b".to_string(),
+                "drawer_supporting_c".to_string(),
+            ],
+            teaching: vec!["drawer_teaching".to_string()],
+            verification: vec!["drawer_verify_a".to_string(), "drawer_verify_b".to_string()],
+            ..KnowledgeRefs::default()
+        },
+    );
+
+    let missing_reviewer = run_mempal(home.path(), &["knowledge", "gate", "drawer_dao_tian"]);
+    assert!(missing_reviewer.status.success());
+    assert!(String::from_utf8_lossy(&missing_reviewer.stdout).contains("allowed=false"));
+    assert!(String::from_utf8_lossy(&missing_reviewer.stdout).contains("reviewer"));
+
+    let reviewed = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "gate",
+            "drawer_dao_tian",
+            "--reviewer",
+            "human",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(reviewed.status.success());
+    let value = gate_json(&reviewed);
+    assert_eq!(value["allowed"], true);
+}
+
+#[test]
+fn test_cli_knowledge_gate_allows_shu_promotion() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_supporting", "supporting evidence");
+    insert_evidence(&db, "drawer_verify", "verification evidence");
+    insert_knowledge_with_refs(
+        &db,
+        "drawer_shu",
+        KnowledgeTier::Shu,
+        KnowledgeStatus::Promoted,
+        "Shu gate uses one support and verification.",
+        "shu gate",
+        KnowledgeRefs {
+            supporting: vec!["drawer_supporting".to_string()],
+            verification: vec!["drawer_verify".to_string()],
+            ..KnowledgeRefs::default()
+        },
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "gate",
+            "drawer_shu",
+            "--target-status",
+            "promoted",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(output.status.success());
+    let value = gate_json(&output);
+    assert_eq!(value["allowed"], true);
+    assert_eq!(value["evidence_counts"]["supporting"], 1);
+    assert_eq!(value["evidence_counts"]["verification"], 1);
+}
+
+#[test]
+fn test_cli_knowledge_gate_blocks_counterexamples_by_default() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_supporting", "supporting evidence");
+    insert_evidence(&db, "drawer_verify", "verification evidence");
+    insert_evidence(&db, "drawer_counterexample", "counterexample evidence");
+    insert_knowledge_with_refs(
+        &db,
+        "drawer_qi",
+        KnowledgeTier::Qi,
+        KnowledgeStatus::Candidate,
+        "Qi gate blocks counterexamples.",
+        "qi gate",
+        KnowledgeRefs {
+            supporting: vec!["drawer_supporting".to_string()],
+            counterexample: vec!["drawer_counterexample".to_string()],
+            verification: vec!["drawer_verify".to_string()],
+            ..KnowledgeRefs::default()
+        },
+    );
+
+    let blocked = run_mempal(
+        home.path(),
+        &["knowledge", "gate", "drawer_qi", "--format", "json"],
+    );
+    assert!(blocked.status.success());
+    let blocked_json = gate_json(&blocked);
+    assert_eq!(blocked_json["allowed"], false);
+    assert!(
+        blocked_json["reasons"]
+            .as_array()
+            .expect("reasons")
+            .iter()
+            .any(|reason| reason.as_str().expect("reason").contains("counterexample"))
+    );
+
+    let allowed = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "gate",
+            "drawer_qi",
+            "--allow-counterexamples",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(allowed.status.success());
+    let allowed_json = gate_json(&allowed);
+    assert_eq!(allowed_json["allowed"], true);
+}
+
+#[test]
+fn test_cli_knowledge_gate_rejects_evidence_drawer() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_evidence", "raw evidence");
+
+    let output = run_mempal(home.path(), &["knowledge", "gate", "drawer_evidence"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("knowledge gate requires a knowledge drawer")
+    );
+}
+
+#[test]
+fn test_cli_knowledge_gate_validates_role_refs() {
+    let (home, db) = setup_home();
+    insert_evidence(&db, "drawer_verify", "verification evidence");
+    insert_knowledge(
+        &db,
+        "drawer_other_knowledge",
+        KnowledgeTier::Qi,
+        KnowledgeStatus::Candidate,
+        "Knowledge ref is not evidence.",
+        "wrong gate ref",
+    );
+    insert_knowledge_with_refs(
+        &db,
+        "drawer_knowledge",
+        KnowledgeTier::DaoRen,
+        KnowledgeStatus::Candidate,
+        "Gate validates refs.",
+        "bad role refs",
+        KnowledgeRefs {
+            supporting: vec!["drawer_other_knowledge".to_string()],
+            verification: vec!["drawer_verify".to_string()],
+            ..KnowledgeRefs::default()
+        },
+    );
+
+    let output = run_mempal(home.path(), &["knowledge", "gate", "drawer_knowledge"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("gate refs must point to evidence drawers")
+    );
+}
+
+#[test]
+fn test_cli_knowledge_gate_rejects_invalid_target_status() {
+    let (home, db) = setup_home();
+    insert_knowledge(
+        &db,
+        "drawer_dao_tian",
+        KnowledgeTier::DaoTian,
+        KnowledgeStatus::Canonical,
+        "Dao tian rejects promoted.",
+        "invalid target",
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge",
+            "gate",
+            "drawer_dao_tian",
+            "--target-status",
+            "promoted",
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("dao_tian only allows canonical or demoted")
+    );
 }
 
 #[tokio::test]

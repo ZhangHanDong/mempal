@@ -97,6 +97,7 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
 | `mempal context <QUERY> [--format json] [--include-evidence]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`) |
 | `mempal knowledge distill --statement ... --content ... --tier dao_ren --supporting-ref <ID>` | create candidate knowledge from evidence refs |
+| `mempal knowledge gate <ID> [--format json]` | evaluate whether knowledge satisfies promotion gate policy without mutating it |
 | `mempal knowledge promote <ID> --status promoted --verification-ref <ID> --reason ...` | promote bootstrap knowledge into active runtime use |
 | `mempal knowledge demote <ID> --status demoted --evidence-ref <ID> --reason ... --reason-type contradicted` | demote or retire contradicted / obsolete bootstrap knowledge |
 | `mempal wake-up [--format aaak]` | context refresh sorted by importance (not just recency) |
@@ -197,6 +198,23 @@ for those tiers. Use `promote` only after review.
 P17 adds manual lifecycle commands for Stage-1 knowledge drawers. P19 hardens
 those commands so lifecycle refs must be existing evidence drawers, not arbitrary
 ids or other knowledge drawers:
+
+P20 adds a read-only promotion gate report. Use it before `promote` to check the
+minimum deterministic policy without changing status, refs, vectors, schema, or
+the audit log:
+
+```bash
+mempal knowledge gate drawer_knowledge --format json
+```
+
+For `dao_tian -> canonical`, provide a reviewer for the advisory gate:
+
+```bash
+mempal knowledge gate drawer_dao_tian \
+  --target-status canonical \
+  --reviewer human \
+  --format json
+```
 
 ```bash
 mempal knowledge promote drawer_knowledge \
