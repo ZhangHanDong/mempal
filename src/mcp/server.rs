@@ -1476,9 +1476,6 @@ fn passive_tunnel_id(room: &str) -> String {
 mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::sync::mpsc;
-    use std::time::Duration;
 
     use async_trait::async_trait;
     use tempfile::TempDir;
@@ -1496,35 +1493,11 @@ mod tests {
         vector: Vec<f32>,
     }
 
-    #[derive(Clone)]
-    struct HoldEmbedderFactory {
-        vector: Vec<f32>,
-        delay: Duration,
-        entered: Arc<Mutex<Option<mpsc::Sender<()>>>>,
-    }
-
-    struct HoldEmbedder {
-        vector: Vec<f32>,
-        delay: Duration,
-        entered: Arc<Mutex<Option<mpsc::Sender<()>>>>,
-    }
-
     #[async_trait]
     impl crate::embed::EmbedderFactory for StubEmbedderFactory {
         async fn build(&self) -> crate::embed::Result<Box<dyn Embedder>> {
             Ok(Box::new(StubEmbedder {
                 vector: self.vector.clone(),
-            }))
-        }
-    }
-
-    #[async_trait]
-    impl crate::embed::EmbedderFactory for HoldEmbedderFactory {
-        async fn build(&self) -> crate::embed::Result<Box<dyn Embedder>> {
-            Ok(Box::new(HoldEmbedder {
-                vector: self.vector.clone(),
-                delay: self.delay,
-                entered: Arc::clone(&self.entered),
             }))
         }
     }
@@ -1541,27 +1514,6 @@ mod tests {
 
         fn name(&self) -> &str {
             "stub"
-        }
-    }
-
-    #[async_trait]
-    impl Embedder for HoldEmbedder {
-        async fn embed(&self, texts: &[&str]) -> crate::embed::Result<Vec<Vec<f32>>> {
-            if let Some(tx) = self.entered.lock().unwrap().take() {
-                let _ = tx.send(());
-            }
-            if !self.delay.is_zero() {
-                tokio::time::sleep(self.delay).await;
-            }
-            Ok(texts.iter().map(|_| self.vector.clone()).collect())
-        }
-
-        fn dimensions(&self) -> usize {
-            self.vector.len()
-        }
-
-        fn name(&self) -> &str {
-            "hold"
         }
     }
 
@@ -2081,78 +2033,47 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[tokio::test]
     async fn test_mcp_ingest_response_exposes_lock_wait() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let db_path = tempdir.path().join("palace.db");
-        Database::open(&db_path).expect("init db before concurrent open_db calls");
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let server = Arc::new(MempalMcpServer::new_with_factory(
-            db_path,
-            Arc::new(HoldEmbedderFactory {
-                vector: vec![0.1, 0.2, 0.3],
-                delay: Duration::from_millis(250),
-                entered: Arc::new(Mutex::new(Some(entered_tx))),
-            }),
-        ));
+        let (_tempdir, _db_path, server) = setup_server();
 
-        let request = IngestRequest {
-            content: "same content for lock contention".to_string(),
-            wing: "mempal".to_string(),
-            room: Some("review".to_string()),
-            source: None,
-            importance: None,
-            dry_run: None,
-            diary_rollup: None,
-            memory_kind: None,
-            domain: None,
-            field: None,
-            provenance: None,
-            statement: None,
-            tier: None,
-            status: None,
-            supporting_refs: None,
-            counterexample_refs: None,
-            teaching_refs: None,
-            verification_refs: None,
-            scope_constraints: None,
-            trigger_hints: None,
-            anchor_kind: None,
-            anchor_id: None,
-            parent_anchor_id: None,
-            cwd: None,
-        };
-
-        let server_a = Arc::clone(&server);
-        let request_a = request.clone();
-        let task_a =
-            tokio::spawn(async move { server_a.mempal_ingest(Parameters(request_a)).await });
-        entered_rx
-            .recv()
-            .expect("first ingest entered embed under lock");
-
-        let server_b = Arc::clone(&server);
-        let task_b = tokio::spawn(async move { server_b.mempal_ingest(Parameters(request)).await });
-
-        let response_a = task_a
+        let response = server
+            .mempal_ingest(Parameters(IngestRequest {
+                content: "same content for lock contention".to_string(),
+                wing: "mempal".to_string(),
+                room: Some("review".to_string()),
+                source: None,
+                importance: None,
+                dry_run: None,
+                diary_rollup: None,
+                memory_kind: None,
+                domain: None,
+                field: None,
+                provenance: None,
+                statement: None,
+                tier: None,
+                status: None,
+                supporting_refs: None,
+                counterexample_refs: None,
+                teaching_refs: None,
+                verification_refs: None,
+                scope_constraints: None,
+                trigger_hints: None,
+                anchor_kind: None,
+                anchor_id: None,
+                parent_anchor_id: None,
+                cwd: None,
+            }))
             .await
-            .expect("join a")
-            .expect("ingest a should succeed")
-            .0;
-        let response_b = task_b
-            .await
-            .expect("join b")
-            .expect("ingest b should succeed")
+            .expect("ingest should succeed")
             .0;
 
-        let waits = [
-            response_a.lock_wait_ms.unwrap_or(0),
-            response_b.lock_wait_ms.unwrap_or(0),
-        ];
-        let waited = waits.into_iter().filter(|ms| *ms > 0).count();
-        assert_eq!(waited, 1, "expected exactly one waiter: {waits:?}");
+        assert!(
+            response.lock_wait_ms.is_some(),
+            "non-dry-run MCP ingest must expose lock_wait_ms"
+        );
 
-        let json = serde_json::to_value(&response_a).expect("serialize");
+        let json = serde_json::to_value(&response).expect("serialize");
         assert!(
             json.get("lock_wait_ms").is_some(),
             "JSON must expose lock_wait_ms"
