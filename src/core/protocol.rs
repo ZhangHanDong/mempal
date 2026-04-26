@@ -67,6 +67,9 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 
    Use mempal_context to choose an approach, workflow, or skill. Use
    mempal_search to verify project facts, past decisions, and citations.
+   Use mempal_field_taxonomy when choosing a `field` value for typed evidence,
+   knowledge, search, or context. Field taxonomy is guidance only; custom
+   field strings remain valid when the recommended fields are too coarse.
 
 3a. TRANSLATE QUERIES TO ENGLISH
    The default embedding model is a multilingual distillation (model2vec) but
@@ -197,6 +200,7 @@ TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
   mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi)
+  mempal_field_taxonomy — read-only recommended mind-model field values
   mempal_knowledge_distill — create candidate knowledge from evidence refs
   mempal_knowledge_policy — read-only Stage-1 promotion policy thresholds
   mempal_knowledge_gate — read-only knowledge promotion readiness check
@@ -352,6 +356,20 @@ mod tests {
             MEMORY_PROTOCOL.contains("Use\n   mempal_search to verify project facts"),
             "MEMORY_PROTOCOL must keep fact verification and citations on mempal_search"
         );
+    }
+
+    #[test]
+    fn contains_field_taxonomy_guidance() {
+        for phrase in [
+            "Use mempal_field_taxonomy",
+            "Field taxonomy is guidance only",
+            "custom\n   field strings remain valid",
+        ] {
+            assert!(
+                MEMORY_PROTOCOL.contains(phrase),
+                "MEMORY_PROTOCOL must include field taxonomy phrase: {phrase}"
+            );
+        }
     }
 
     #[test]

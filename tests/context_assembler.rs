@@ -714,6 +714,30 @@ async fn test_context_domain_and_field_filters_exclude_unrelated_knowledge() {
     assert_eq!(ids, vec!["drawer_skill_debugging"]);
 }
 
+#[tokio::test]
+async fn test_field_taxonomy_does_not_restrict_custom_context_field() {
+    let (tmp, db) = new_db();
+    let mut target = knowledge_drawer(
+        "drawer_compiler_design",
+        KnowledgeTier::DaoRen,
+        KnowledgeStatus::Promoted,
+        "Compiler lowering should preserve source-level intent.",
+        "compiler design custom field",
+    );
+    target.field = "compiler-design".to_string();
+    insert_fixture(&db, &target);
+
+    let mut request = default_request("compiler design", tmp.path());
+    request.field = "compiler-design".to_string();
+    let pack = assemble_context(&db, &embedder(), request)
+        .await
+        .expect("assemble context");
+    assert_eq!(
+        pack.sections[0].items[0].drawer_id,
+        "drawer_compiler_design"
+    );
+}
+
 #[test]
 fn test_context_empty_result_exits_successfully() {
     let (tmp, _db) = setup_cli_home();

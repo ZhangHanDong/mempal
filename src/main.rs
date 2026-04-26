@@ -23,6 +23,7 @@ use mempal::core::{
     utils::{build_triple_id, current_timestamp, format_tunnel_endpoint},
 };
 use mempal::embed::{ConfiguredEmbedderFactory, Embedder};
+use mempal::field_taxonomy::{FieldTaxonomyEntry, field_taxonomy};
 use mempal::ingest::{
     IngestOptions, IngestStats, ingest_dir_with_options, ingest_file_with_options,
     reindex::{ReindexMode, ReindexOptions, ReindexReport, reindex_sources},
@@ -156,6 +157,10 @@ enum Commands {
     Taxonomy {
         #[command(subcommand)]
         command: TaxonomyCommands,
+    },
+    FieldTaxonomy {
+        #[arg(long, default_value = "plain")]
+        format: String,
     },
     Serve {
         #[arg(long)]
@@ -533,6 +538,7 @@ async fn run() -> Result<()> {
         Commands::Knowledge { command } => knowledge_command(&db, &config, command).await,
         Commands::Tunnels { command } => tunnels_command(&db, command),
         Commands::Taxonomy { command } => taxonomy_command(&db, command),
+        Commands::FieldTaxonomy { format } => field_taxonomy_command(&format),
         Commands::Serve { mcp } => serve_command(&config, mcp).await,
         Commands::Status => status_command(&db),
         Commands::FactCheck {
@@ -1834,6 +1840,34 @@ fn taxonomy_edit_command(db: &Database, wing: &str, room: &str, keywords: &str) 
     );
 
     Ok(())
+}
+
+fn field_taxonomy_command(format: &str) -> Result<()> {
+    let entries = field_taxonomy();
+    match format {
+        "plain" => print_field_taxonomy(&entries),
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&entries)
+                    .context("failed to serialize field taxonomy")?
+            );
+        }
+        other => bail!("unsupported field taxonomy format: {other}"),
+    }
+    Ok(())
+}
+
+fn print_field_taxonomy(entries: &[FieldTaxonomyEntry]) {
+    for entry in entries {
+        println!(
+            "- {} domains={} examples={} :: {}",
+            entry.field,
+            entry.domains.join(","),
+            entry.examples.join("; "),
+            entry.description
+        );
+    }
 }
 
 fn fact_check_command(

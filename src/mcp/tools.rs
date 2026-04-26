@@ -3,6 +3,7 @@ use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
     NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry, TunnelEndpoint,
 };
+use crate::field_taxonomy::FieldTaxonomyEntry;
 use crate::knowledge_anchor::PublishAnchorOutcome;
 use crate::knowledge_distill::DistillOutcome;
 use crate::knowledge_gate::{GateReport, PromotionPolicyEntry};
@@ -518,6 +519,38 @@ pub struct TaxonomyEntryDto {
     pub room: String,
     pub display_name: Option<String>,
     pub keywords: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FieldTaxonomyResponse {
+    pub entries: Vec<FieldTaxonomyEntryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct FieldTaxonomyEntryDto {
+    pub field: String,
+    pub domains: Vec<String>,
+    pub description: String,
+    pub examples: Vec<String>,
+}
+
+impl From<FieldTaxonomyEntry> for FieldTaxonomyEntryDto {
+    fn from(value: FieldTaxonomyEntry) -> Self {
+        Self {
+            field: value.field.to_string(),
+            domains: value
+                .domains
+                .iter()
+                .map(|domain| (*domain).to_string())
+                .collect(),
+            description: value.description.to_string(),
+            examples: value
+                .examples
+                .iter()
+                .map(|example| (*example).to_string())
+                .collect(),
+        }
+    }
 }
 
 // --- Knowledge Graph ---

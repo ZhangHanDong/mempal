@@ -16,6 +16,7 @@ use crate::core::{
 };
 use crate::cowork::{PeekError, PeekRequest as CoworkPeekRequest, Tool, peek_partner};
 use crate::embed::EmbedderFactory;
+use crate::field_taxonomy::field_taxonomy;
 use crate::ingest::{
     IngestError,
     diary::{
@@ -45,15 +46,15 @@ use serde_json::Value;
 
 use super::tools::{
     ContextRequest, ContextResponse, CoworkPushRequest, CoworkPushResponse, DeleteRequest,
-    DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, IngestRequest,
-    IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeDemoteRequest,
-    KnowledgeDemoteResponse, KnowledgeDistillRequest, KnowledgeDistillResponse,
-    KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePolicyResponse, KnowledgePromoteRequest,
-    KnowledgePromoteResponse, KnowledgePublishAnchorRequest, KnowledgePublishAnchorResponse,
-    PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest,
-    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
-    TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest,
-    TunnelsResponse,
+    DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, FieldTaxonomyEntryDto,
+    FieldTaxonomyResponse, IngestRequest, IngestResponse, KgRequest, KgResponse, KgStatsDto,
+    KnowledgeDemoteRequest, KnowledgeDemoteResponse, KnowledgeDistillRequest,
+    KnowledgeDistillResponse, KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePolicyResponse,
+    KnowledgePromoteRequest, KnowledgePromoteResponse, KnowledgePublishAnchorRequest,
+    KnowledgePublishAnchorResponse, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse,
+    ScopeCount, SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
+    TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
+    TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -204,6 +205,14 @@ impl MempalMcpServer {
         &self,
     ) -> std::result::Result<KnowledgePolicyResponse, ErrorData> {
         self.mempal_knowledge_policy()
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn field_taxonomy_json_for_test(
+        &self,
+    ) -> std::result::Result<FieldTaxonomyResponse, ErrorData> {
+        self.mempal_field_taxonomy()
             .await
             .map(|response| response.0)
     }
@@ -1145,6 +1154,21 @@ impl MempalMcpServer {
                 None,
             )),
         }
+    }
+
+    #[tool(
+        name = "mempal_field_taxonomy",
+        description = "Read-only mind-model field taxonomy guidance. Lists recommended Stage-1 field values such as general, epistemics, software-engineering, debugging, tooling, research, writing, and diary. Guidance only; custom fields remain accepted."
+    )]
+    async fn mempal_field_taxonomy(
+        &self,
+    ) -> std::result::Result<Json<FieldTaxonomyResponse>, ErrorData> {
+        Ok(Json(FieldTaxonomyResponse {
+            entries: field_taxonomy()
+                .into_iter()
+                .map(FieldTaxonomyEntryDto::from)
+                .collect(),
+        }))
     }
 
     #[tool(
@@ -2372,6 +2396,50 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("dao_tian -> dao_ren -> shu -> qi")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_field_taxonomy_lists_stage1_fields() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let response = server
+            .field_taxonomy_json_for_test()
+            .await
+            .expect("field taxonomy should succeed");
+        for field in [
+            "general",
+            "epistemics",
+            "software-engineering",
+            "tooling",
+            "diary",
+        ] {
+            assert!(
+                response.entries.iter().any(|entry| entry.field == field),
+                "missing field {field}"
+            );
+        }
+        let epistemics = response
+            .entries
+            .iter()
+            .find(|entry| entry.field == "epistemics")
+            .expect("epistemics field");
+        assert!(epistemics.domains.iter().any(|domain| domain == "global"));
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_includes_mempal_field_taxonomy() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let field_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_field_taxonomy")
+            .expect("mempal_field_taxonomy tool exists");
+        assert!(
+            field_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("custom fields remain accepted")
         );
     }
 

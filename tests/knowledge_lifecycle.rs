@@ -322,6 +322,15 @@ fn policy_entry<'a>(value: &'a Value, tier: &str, target_status: &str) -> &'a Va
         .expect("policy entry")
 }
 
+fn field_entry<'a>(value: &'a Value, field: &str) -> &'a Value {
+    value
+        .as_array()
+        .expect("field taxonomy array")
+        .iter()
+        .find(|entry| entry["field"] == field)
+        .expect("field taxonomy entry")
+}
+
 #[test]
 fn test_cli_knowledge_publish_anchor_worktree_to_repo() {
     let (home, db) = setup_home();
@@ -1030,6 +1039,54 @@ fn test_cli_knowledge_policy_rejects_invalid_format() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unsupported policy format"));
+}
+
+#[test]
+fn test_cli_field_taxonomy_json_lists_stage1_fields() {
+    let (home, _db) = setup_home();
+    let output = run_mempal(home.path(), &["field-taxonomy", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("field taxonomy json");
+    for field in [
+        "general",
+        "epistemics",
+        "software-engineering",
+        "tooling",
+        "diary",
+    ] {
+        let _ = field_entry(&value, field);
+    }
+    let epistemics = field_entry(&value, "epistemics");
+    assert!(
+        epistemics["domains"]
+            .as_array()
+            .expect("domains")
+            .iter()
+            .any(|domain| domain == "global")
+    );
+}
+
+#[test]
+fn test_cli_field_taxonomy_plain_lists_descriptions() {
+    let (home, _db) = setup_home();
+    let output = run_mempal(home.path(), &["field-taxonomy"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("epistemics"));
+    assert!(stdout.contains("domains="));
+}
+
+#[test]
+fn test_cli_field_taxonomy_rejects_invalid_format() {
+    let (home, _db) = setup_home();
+    let output = run_mempal(home.path(), &["field-taxonomy", "--format", "yaml"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported field taxonomy format"));
 }
 
 #[test]

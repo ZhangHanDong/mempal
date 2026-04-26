@@ -8,6 +8,7 @@ pub mod core;
 pub mod cowork;
 pub mod embed;
 pub mod factcheck;
+pub mod field_taxonomy;
 pub mod ingest;
 pub mod knowledge_anchor;
 pub mod knowledge_distill;

@@ -28,7 +28,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P27）
+### 已完成的 Spec（P0-P28）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -72,6 +72,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p25-mcp-anchor-publication.spec.md` | 完成 | `mempal_knowledge_publish_anchor` MCP 工具：显式 outward anchor publication |
 | `specs/p26-dao-tian-runtime-budget.spec.md` | 完成 | `mempal context` / `mempal_context` 默认最多注入 1 条 `dao_tian`，支持显式禁用或提高预算 |
 | `specs/p27-knowledge-policy-surface.spec.md` | 完成 | `mempal knowledge policy` / `mempal_knowledge_policy`：只读 Stage-1 promotion policy 阈值表 |
+| `specs/p28-field-taxonomy-surface.spec.md` | 完成 | `mempal field-taxonomy` / `mempal_field_taxonomy`：只读 Stage-1 field taxonomy guidance |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -108,6 +109,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-26-p25-mcp-anchor-publication-implementation.md` — P25 MCP anchor publication（已完成）
 - `docs/plans/2026-04-26-p26-dao-tian-runtime-budget-implementation.md` — P26 dao_tian runtime budget（已完成）
 - `docs/plans/2026-04-26-p27-knowledge-policy-surface-implementation.md` — P27 knowledge policy surface（已完成）
+- `docs/plans/2026-04-26-p28-field-taxonomy-surface-implementation.md` — P28 field taxonomy surface（已完成）
 
 ### Spec 使用方式
 
@@ -128,13 +130,14 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
 - **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，15 条规则
 
-## MCP 工具（17 个）
+## MCP 工具（18 个）
 
 | 工具 | 作用 |
 |------|------|
 | `mempal_status` | 状态 + 协议 + AAAK spec |
 | `mempal_search` | 混合检索（BM25 + 向量 + RRF + tunnel hints）+ AAAK 结构化 signals（P7） |
 | `mempal_context` | mind-model runtime context：按 `dao_tian -> dao_ren -> shu -> qi` 组装指导性 context pack；`dao_tian_limit` 默认 1；用于辅助 workflow/skill/tool 选择但不自动执行（P15/P16/P26） |
+| `mempal_field_taxonomy` | read-only Stage-1 field taxonomy guidance：推荐 `field` 值但不限制自定义字段（P28） |
 | `mempal_knowledge_distill` | 从 existing evidence drawer refs 创建 candidate `dao_ren` / `qi` knowledge drawer（P22） |
 | `mempal_knowledge_policy` | read-only Stage-1 promotion policy：列出 `dao_tian/dao_ren/shu/qi` 提升阈值（P27） |
 | `mempal_knowledge_gate` | read-only promotion readiness check：评估 knowledge drawer 是否满足提升门槛（P21） |

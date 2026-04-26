@@ -96,6 +96,7 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal ingest --wing <WING> <DIR> [--dry-run]` | chunk, embed, and store a project tree |
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
 | `mempal context <QUERY> [--format json] [--include-evidence] [--dao-tian-limit N]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`); default `dao_tian` budget is 1 |
+| `mempal field-taxonomy [--format json]` | inspect read-only recommended `field` values for typed memory |
 | `mempal knowledge distill --statement ... --content ... --tier dao_ren --supporting-ref <ID>` | create candidate knowledge from evidence refs |
 | `mempal knowledge policy [--format json]` | inspect read-only Stage-1 promotion policy thresholds |
 | `mempal knowledge gate <ID> [--format json]` | evaluate whether knowledge satisfies promotion gate policy without mutating it |
@@ -343,6 +344,20 @@ What a search result includes:
 
 If you care about deterministic scope, pass `--wing` and optionally `--room` explicitly instead of relying on routing.
 
+### Field Taxonomy
+
+`field` is a mind-model metadata dimension used by typed memory search and
+context assembly. It is separate from wing/room routing taxonomy. P28 exposes a
+read-only recommended field list:
+
+```bash
+mempal field-taxonomy
+mempal field-taxonomy --format json
+```
+
+The field taxonomy is guidance only. Custom fields remain valid for ingest,
+distill, search, and context when the recommended Stage-1 fields are too coarse.
+
 ### Wake-Up and AAAK
 
 `wake-up` emits a short memory summary for agent context refresh:
@@ -549,11 +564,12 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes seventeen tools:
+The MCP server exposes eighteen tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
 - `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in, `dao_tian_limit` default 1); guides workflow / skill / tool choice but never executes skills
+- `mempal_field_taxonomy` — read-only recommended `field` values for typed evidence / knowledge; guidance only, custom fields remain valid
 - `mempal_knowledge_distill` — create candidate `dao_ren` / `qi` knowledge from existing evidence refs; deterministic and never auto-promotes
 - `mempal_knowledge_policy` — read-only Stage-1 promotion policy table for `dao_tian`, `dao_ren`, `shu`, and `qi`
 - `mempal_knowledge_gate` — read-only promotion readiness check for knowledge drawers; returns the same deterministic gate report as `mempal knowledge gate --format json`
@@ -569,7 +585,7 @@ The MCP server exposes seventeen tools:
 - `mempal_cowork_push` — send a short handoff message (≤ 8 KB) to the partner agent's inbox; delivered at the partner's next UserPromptSubmit via a drain hook
 - `mempal_fact_check` — offline contradiction detection against KG triples and known entities
 
-The server also embeds MEMORY_PROTOCOL (behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration. The protocol treats `mempal_context` as guidance for choosing an approach, workflow, skill, or tool; `trigger_hints` are bias metadata only and never override system, user, repo, or client-native skill rules.
+The server also embeds MEMORY_PROTOCOL (behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration. The protocol treats `mempal_context` as guidance for choosing an approach, workflow, skill, or tool; `mempal_field_taxonomy` as guidance for choosing typed-memory `field` values; and `trigger_hints` as bias metadata only. These hints never override system, user, repo, or client-native skill rules.
 
 Example request shapes:
 

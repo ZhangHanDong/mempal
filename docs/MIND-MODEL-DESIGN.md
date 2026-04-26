@@ -813,6 +813,10 @@ Implemented Phase-1 runtime surface:
 - `mempal context <query>` assembles a runtime context pack from typed drawers
 - `mempal_context` exposes the same pack to MCP-connected agents
 - knowledge sections are ordered as `dao_tian -> dao_ren -> shu -> qi`
+- Stage-1 field taxonomy is guidance-only and read-only: `mempal field-taxonomy`
+  and `mempal_field_taxonomy` expose recommended fields such as `general`,
+  `epistemics`, `software-engineering`, `debugging`, `tooling`, `research`,
+  `writing`, and `diary`, while custom field strings remain valid
 - `dao_tian` is sparse by default in runtime context: `mempal context` and
   `mempal_context` inject at most 1 `dao_tian` item unless the caller explicitly
   sets `--dao-tian-limit` / `dao_tian_limit`; `0` disables `dao_tian`
@@ -907,9 +911,8 @@ This design does not assume:
 
 The following remain open and should be resolved in later design work:
 
-1. How should `field` taxonomy be managed?
-2. Should `wake-up` eventually consume typed `dao_tian` / `dao_ren`, or should that remain exclusive to `mempal context`?
-3. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
+1. Should `wake-up` eventually consume typed `dao_tian` / `dao_ren`, or should that remain exclusive to `mempal context`?
+2. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
 
 ## Current Recommendation
 
