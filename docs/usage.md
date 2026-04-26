@@ -288,6 +288,11 @@ mempal knowledge demote drawer_knowledge \
 
 Lifecycle commands only update existing `memory_kind=knowledge` drawers. They validate that `--verification-ref` / `--evidence-ref` values start with `drawer_`, exist, and point to `memory_kind=evidence`. They do not change content, re-embed vectors, bump schema, or add Phase-2 `knowledge_cards`. Successful distill and lifecycle changes append JSONL audit entries.
 
+Phase-2 knowledge cards are not implemented yet. The design target is a future
+same SQLite palace.db table split: `drawers` remain the evidence/citation root,
+while `knowledge_cards`, `knowledge_evidence_links`, and `knowledge_events`
+become separate tables in the same database.
+
 ### 4. Search
 
 ```bash

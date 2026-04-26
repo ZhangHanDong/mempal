@@ -864,6 +864,25 @@ This yields a cleaner separation:
 - knowledge says what is believed
 - events say how that belief evolved
 
+Storage decision:
+
+- Phase-2 `knowledge_cards` should live in the same SQLite `palace.db`
+- they should be separate tables from `drawers`, not overloaded drawer rows
+- `drawers` remain the raw evidence and citation root
+- `knowledge_evidence_links` should reference evidence drawers by `drawer_id`
+- `knowledge_events` should be transactional with knowledge-card lifecycle
+  changes and evidence-link mutations
+- a separate persistence layer is out of scope unless future measured needs
+  prove the single-file SQLite boundary insufficient
+
+Rationale:
+
+- mempal's product invariant is a local single-binary, single-file memory palace
+- knowledge promotion/demotion must stay transactionally tied to evidence refs
+- citations remain simpler and safer when evidence drawer ids are the durable root
+- using a second database or service would add operational complexity before the
+  Phase-2 model has proven it needs independent scaling
+
 ## Decision on Bootstrap vs Final Architecture
 
 Current recommendation:
@@ -910,12 +929,6 @@ This design does not assume:
 - replacing raw evidence with compressed knowledge
 - collapsing evidence, knowledge, and workflow into one storage object forever
 
-## Open Questions
-
-The following remain open and should be resolved in later design work:
-
-1. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
-
 ## Current Recommendation
 
 Proceed with the following assumptions unless future evidence rejects them:
@@ -925,7 +938,8 @@ Proceed with the following assumptions unless future evidence rejects them:
 - evidence memory and knowledge memory should be explicitly separated
 - runtime typed context should assemble `dao` before `shu`, and `shu` before
   `qi`; wake-up remains a refresh surface, not the typed assembler
-- the implementation should begin with drawer bootstrap and evolve into a dedicated knowledge model
+- the implementation should begin with drawer bootstrap and evolve into a
+  dedicated knowledge model inside the same SQLite `palace.db`
 
 ## Closing Summary
 
