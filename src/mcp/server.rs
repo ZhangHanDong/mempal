@@ -680,6 +680,7 @@ impl MempalMcpServer {
                 None,
             ));
         }
+        let dao_tian_limit = request.dao_tian_limit.unwrap_or(1);
 
         let domain = parse_domain(request.domain.as_deref())?.unwrap_or(MemoryDomain::Project);
         let cwd = match request.cwd.as_deref() {
@@ -721,6 +722,7 @@ impl MempalMcpServer {
                 cwd,
                 include_evidence: request.include_evidence.unwrap_or(false),
                 max_items,
+                dao_tian_limit,
             },
             &query_vector,
         )
@@ -2234,6 +2236,42 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["qi", "evidence"]);
         assert_eq!(response.sections[1].items[0].drawer_id, "drawer_evidence");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_dao_tian_limit_zero_omits_section() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_dao_tian",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Evidence precedes assertion.",
+            "debug universal principle",
+        );
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_shu",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Reproduce before patching.",
+            "debug workflow rule",
+        );
+
+        let response = server
+            .context_json_for_test(serde_json::json!({
+                "query": "debug",
+                "dao_tian_limit": 0
+            }))
+            .await
+            .expect("context should succeed");
+        let names = response
+            .sections
+            .iter()
+            .map(|section| section.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(!names.contains(&"dao_tian"));
+        assert!(names.contains(&"shu"));
     }
 
     #[tokio::test]

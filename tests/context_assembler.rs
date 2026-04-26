@@ -70,6 +70,7 @@ fn default_request(query: &str, cwd: &Path) -> ContextRequest {
         cwd: cwd.to_path_buf(),
         include_evidence: false,
         max_items: 12,
+        dao_tian_limit: 1,
     }
 }
 
@@ -314,6 +315,87 @@ async fn test_context_groups_knowledge_by_tier_order() {
 }
 
 #[tokio::test]
+async fn test_context_default_caps_dao_tian_to_one() {
+    let (tmp, db) = new_db();
+    for item in [
+        knowledge_drawer(
+            "drawer_dao_tian_one",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Evidence precedes assertion.",
+            "debug universal principle one",
+        ),
+        knowledge_drawer(
+            "drawer_dao_tian_two",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Claims need source-backed verification.",
+            "debug universal principle two",
+        ),
+        knowledge_drawer(
+            "drawer_dao_ren",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Promoted,
+            "Software changes need executable feedback.",
+            "debug domain principle",
+        ),
+    ] {
+        insert_fixture(&db, &item);
+    }
+
+    let pack = assemble_context(&db, &embedder(), default_request("debug", tmp.path()))
+        .await
+        .expect("assemble context");
+    let dao_tian = pack
+        .sections
+        .iter()
+        .find(|section| section.name == "dao_tian")
+        .expect("dao_tian section");
+    assert_eq!(dao_tian.items.len(), 1);
+    assert!(
+        pack.sections
+            .iter()
+            .any(|section| section.name == "dao_ren")
+    );
+}
+
+#[tokio::test]
+async fn test_context_max_items_still_caps_raised_dao_tian_limit() {
+    let (tmp, db) = new_db();
+    for item in [
+        knowledge_drawer(
+            "drawer_dao_tian_one",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Evidence precedes assertion.",
+            "debug universal principle one",
+        ),
+        knowledge_drawer(
+            "drawer_dao_tian_two",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Claims need source-backed verification.",
+            "debug universal principle two",
+        ),
+    ] {
+        insert_fixture(&db, &item);
+    }
+
+    let mut request = default_request("debug", tmp.path());
+    request.max_items = 1;
+    request.dao_tian_limit = 2;
+    let pack = assemble_context(&db, &embedder(), request)
+        .await
+        .expect("assemble context");
+    let item_count: usize = pack
+        .sections
+        .iter()
+        .map(|section| section.items.len())
+        .sum();
+    assert_eq!(item_count, 1);
+}
+
+#[tokio::test]
 async fn test_context_prefers_worktree_anchor_before_repo_and_global() {
     let (tmp, db) = new_db();
     let repo_path = tmp.path().join("repo");
@@ -515,6 +597,71 @@ fn test_context_json_output_exposes_stable_pack_shape() {
     assert_eq!(item["anchor_kind"], "repo");
     assert!(item["anchor_id"].is_string());
     assert_eq!(item["trigger_hints"]["intent_tags"][0], "debugging");
+}
+
+#[test]
+fn test_cli_context_dao_tian_limit_zero_omits_section() {
+    let (tmp, db) = setup_cli_home();
+    for item in [
+        knowledge_drawer(
+            "drawer_dao_tian",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Evidence precedes assertion.",
+            "debug universal principle",
+        ),
+        knowledge_drawer(
+            "drawer_dao_ren",
+            KnowledgeTier::DaoRen,
+            KnowledgeStatus::Promoted,
+            "Software changes need executable feedback.",
+            "debug domain principle",
+        ),
+    ] {
+        insert_fixture(&db, &item);
+    }
+
+    let value = run_context_json(tmp.path(), "debug", &["--dao-tian-limit", "0"]);
+    let names: Vec<_> = value["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .map(|section| section["name"].as_str().expect("section name"))
+        .collect();
+    assert!(!names.contains(&"dao_tian"));
+    assert!(names.contains(&"dao_ren"));
+}
+
+#[test]
+fn test_cli_context_dao_tian_limit_two_allows_two_items() {
+    let (tmp, db) = setup_cli_home();
+    for item in [
+        knowledge_drawer(
+            "drawer_dao_tian_one",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Evidence precedes assertion.",
+            "debug universal principle one",
+        ),
+        knowledge_drawer(
+            "drawer_dao_tian_two",
+            KnowledgeTier::DaoTian,
+            KnowledgeStatus::Canonical,
+            "Claims need source-backed verification.",
+            "debug universal principle two",
+        ),
+    ] {
+        insert_fixture(&db, &item);
+    }
+
+    let value = run_context_json(tmp.path(), "debug", &["--dao-tian-limit", "2"]);
+    let dao_tian = value["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .find(|section| section["name"] == "dao_tian")
+        .expect("dao_tian section");
+    assert_eq!(dao_tian["items"].as_array().expect("items").len(), 2);
 }
 
 #[tokio::test]

@@ -47,6 +47,10 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    before choosing a workflow or skill when the user asks "how should we
    approach this?" or when a task benefits from high-level principles plus
    concrete tool bindings.
+   dao_tian is intentionally sparse in runtime context: by default at most one
+   dao_tian item is injected. Set dao_tian_limit=0 when universal principles
+   are not needed, or raise it only when explicitly reasoning about
+   cross-domain fundamentals. max_items remains the total output budget.
 
    Skill-selection discipline:
    - Read dao_tian first for cross-domain principles.
@@ -344,6 +348,20 @@ mod tests {
             MEMORY_PROTOCOL.contains("Use\n   mempal_search to verify project facts"),
             "MEMORY_PROTOCOL must keep fact verification and citations on mempal_search"
         );
+    }
+
+    #[test]
+    fn contains_dao_tian_runtime_budget_guidance() {
+        for phrase in [
+            "by default at most one\n   dao_tian item",
+            "Set dao_tian_limit=0",
+            "max_items remains the total output budget",
+        ] {
+            assert!(
+                MEMORY_PROTOCOL.contains(phrase),
+                "MEMORY_PROTOCOL must include dao_tian budget phrase: {phrase}"
+            );
+        }
     }
 
     #[test]

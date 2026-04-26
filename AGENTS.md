@@ -30,7 +30,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
-### 已完成的 Spec（P0-P25）
+### 已完成的 Spec（P0-P26）
 
 | Spec | 状态 | 范围 |
 |------|------|------|
@@ -72,6 +72,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p23-mcp-knowledge-lifecycle.spec.md` | 完成 | `mempal_knowledge_promote` / `mempal_knowledge_demote` MCP 工具：gate-enforced promotion + evidence-backed demotion |
 | `specs/p24-anchor-publication.spec.md` | 完成 | `mempal knowledge publish-anchor` CLI：显式 outward anchor publication（worktree -> repo -> global） |
 | `specs/p25-mcp-anchor-publication.spec.md` | 完成 | `mempal_knowledge_publish_anchor` MCP 工具：显式 outward anchor publication |
+| `specs/p26-dao-tian-runtime-budget.spec.md` | 完成 | `mempal context` / `mempal_context` 默认最多注入 1 条 `dao_tian`，支持显式禁用或提高预算 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -106,6 +107,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-26-p23-mcp-knowledge-lifecycle-implementation.md` — P23 MCP knowledge lifecycle（已完成）
 - `docs/plans/2026-04-26-p24-anchor-publication-implementation.md` — P24 anchor publication CLI（已完成）
 - `docs/plans/2026-04-26-p25-mcp-anchor-publication-implementation.md` — P25 MCP anchor publication（已完成）
+- `docs/plans/2026-04-26-p26-dao-tian-runtime-budget-implementation.md` — P26 dao_tian runtime budget（已完成）
 
 ### Spec 使用方式
 
@@ -124,7 +126,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **搜索结果强制带引用**：`SearchResult` 包含 `source_file`、`drawer_id`、`tunnel_hints`
 - **知识图谱**：triples 表已激活（手动 CRUD），支持时态验证
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
-- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，14 条规则
+- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，15 条规则
 
 ## MCP 工具（16 个）
 
@@ -132,7 +134,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 |------|------|
 | `mempal_status` | 状态 + 协议 + AAAK spec |
 | `mempal_search` | 混合检索（BM25 + 向量 + RRF + tunnel hints）+ AAAK 结构化 signals（P7） |
-| `mempal_context` | mind-model runtime context：按 `dao_tian -> dao_ren -> shu -> qi` 组装指导性 context pack；用于辅助 workflow/skill/tool 选择但不自动执行（P15/P16） |
+| `mempal_context` | mind-model runtime context：按 `dao_tian -> dao_ren -> shu -> qi` 组装指导性 context pack；`dao_tian_limit` 默认 1；用于辅助 workflow/skill/tool 选择但不自动执行（P15/P16/P26） |
 | `mempal_knowledge_distill` | 从 existing evidence drawer refs 创建 candidate `dao_ren` / `qi` knowledge drawer（P22） |
 | `mempal_knowledge_gate` | read-only promotion readiness check：评估 knowledge drawer 是否满足提升门槛（P21） |
 | `mempal_knowledge_promote` | gate-enforced knowledge lifecycle promotion（P23） |

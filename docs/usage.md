@@ -95,7 +95,7 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal init <DIR> [--dry-run]` | infer a `wing` and seed initial taxonomy rooms from a project tree |
 | `mempal ingest --wing <WING> <DIR> [--dry-run]` | chunk, embed, and store a project tree |
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
-| `mempal context <QUERY> [--format json] [--include-evidence]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`) |
+| `mempal context <QUERY> [--format json] [--include-evidence] [--dao-tian-limit N]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`); default `dao_tian` budget is 1 |
 | `mempal knowledge distill --statement ... --content ... --tier dao_ren --supporting-ref <ID>` | create candidate knowledge from evidence refs |
 | `mempal knowledge gate <ID> [--format json]` | evaluate whether knowledge satisfies promotion gate policy without mutating it |
 | `mempal knowledge promote <ID> --status promoted --verification-ref <ID> --reason ...` | promote bootstrap knowledge into active runtime use |
@@ -544,7 +544,7 @@ The MCP server exposes sixteen tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
-- `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in); guides workflow / skill / tool choice but never executes skills
+- `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in, `dao_tian_limit` default 1); guides workflow / skill / tool choice but never executes skills
 - `mempal_knowledge_distill` — create candidate `dao_ren` / `qi` knowledge from existing evidence refs; deterministic and never auto-promotes
 - `mempal_knowledge_gate` — read-only promotion readiness check for knowledge drawers; returns the same deterministic gate report as `mempal knowledge gate --format json`
 - `mempal_knowledge_promote` — gate-enforced lifecycle promotion with supplied verification refs

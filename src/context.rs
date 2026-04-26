@@ -42,6 +42,7 @@ pub struct ContextRequest {
     pub cwd: PathBuf,
     pub include_evidence: bool,
     pub max_items: usize,
+    pub dao_tian_limit: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -138,13 +139,21 @@ pub fn assemble_context_with_vector(
         if remaining == 0 {
             break;
         }
+        let mut tier_remaining = if matches!(tier, KnowledgeTier::DaoTian) {
+            request.dao_tian_limit.min(remaining)
+        } else {
+            remaining
+        };
+        if tier_remaining == 0 {
+            continue;
+        }
         let mut items = Vec::new();
         for anchor in &anchors {
-            if remaining == 0 {
+            if remaining == 0 || tier_remaining == 0 {
                 break;
             }
             for status in active_statuses() {
-                if remaining == 0 {
+                if remaining == 0 || tier_remaining == 0 {
                     break;
                 }
                 let mut results = search_context_candidates(
@@ -157,12 +166,12 @@ pub fn assemble_context_with_vector(
                         memory_kind: MemoryKind::Knowledge,
                         tier: Some(tier.clone()),
                         status: Some(status.clone()),
-                        top_k: remaining,
+                        top_k: tier_remaining,
                     },
                 )?;
                 results.retain(|result| result.anchor_id == anchor.anchor_id);
                 for result in results {
-                    if remaining == 0 {
+                    if remaining == 0 || tier_remaining == 0 {
                         break;
                     }
                     if !seen.insert(result.drawer_id.clone()) {
@@ -170,6 +179,7 @@ pub fn assemble_context_with_vector(
                     }
                     items.push(context_item_from_result(db, result)?);
                     remaining -= 1;
+                    tier_remaining -= 1;
                 }
             }
         }

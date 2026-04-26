@@ -67,6 +67,9 @@ pub struct ContextRequest {
     pub cwd: Option<String>,
     pub include_evidence: Option<bool>,
     pub max_items: Option<usize>,
+    /// Maximum number of `dao_tian` items to include. Defaults to 1; 0 disables
+    /// the `dao_tian` section while preserving lower-tier context.
+    pub dao_tian_limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

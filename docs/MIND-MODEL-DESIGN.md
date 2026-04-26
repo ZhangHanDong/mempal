@@ -813,6 +813,9 @@ Implemented Phase-1 runtime surface:
 - `mempal context <query>` assembles a runtime context pack from typed drawers
 - `mempal_context` exposes the same pack to MCP-connected agents
 - knowledge sections are ordered as `dao_tian -> dao_ren -> shu -> qi`
+- `dao_tian` is sparse by default in runtime context: `mempal context` and
+  `mempal_context` inject at most 1 `dao_tian` item unless the caller explicitly
+  sets `--dao-tian-limit` / `dao_tian_limit`; `0` disables `dao_tian`
 - evidence remains opt-in via `--include-evidence`
 - same-tier items prefer `worktree`, then current `repo`, then `repo://legacy`, then `global`
 - `global` anchor candidates use `domain=global`, preserving the invariant that global anchors do not hold project-local domain memory
@@ -897,12 +900,11 @@ This design does not assume:
 
 The following remain open and should be resolved in later design work:
 
-1. How many `dao_tian` items should be allowed in default runtime context?
-2. What exact promotion thresholds should be used for `dao_ren` and `dao_tian`?
-3. Should `dao_tian` always require human review, or can a high-grade evaluator canonize it?
-4. How should `field` taxonomy be managed?
-5. How should wake-up assembly decide when to inject `dao_tian` versus only `dao_ren`?
-6. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
+1. What exact promotion thresholds should be used for `dao_ren` and `dao_tian`?
+2. Should `dao_tian` always require human review, or can a high-grade evaluator canonize it?
+3. How should `field` taxonomy be managed?
+4. Should `wake-up` eventually consume typed `dao_tian` / `dao_ren`, or should that remain exclusive to `mempal context`?
+5. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
 
 ## Current Recommendation
 

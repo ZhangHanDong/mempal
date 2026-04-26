@@ -109,6 +109,8 @@ enum Commands {
         include_evidence: bool,
         #[arg(long, default_value_t = 12)]
         max_items: usize,
+        #[arg(long = "dao-tian-limit", default_value_t = 1)]
+        dao_tian_limit: usize,
     },
     WakeUp {
         #[arg(long)]
@@ -493,6 +495,7 @@ async fn run() -> Result<()> {
             format,
             include_evidence,
             max_items,
+            dao_tian_limit,
         } => {
             context_command(
                 &db,
@@ -505,6 +508,7 @@ async fn run() -> Result<()> {
                     format,
                     include_evidence,
                     max_items,
+                    dao_tian_limit,
                 },
             )
             .await
@@ -556,6 +560,7 @@ struct ContextCommandArgs {
     format: String,
     include_evidence: bool,
     max_items: usize,
+    dao_tian_limit: usize,
 }
 
 async fn bench_command(config: &Config, command: BenchCommands) -> Result<()> {
@@ -773,6 +778,7 @@ async fn context_command(db: &Database, config: &Config, args: ContextCommandArg
             cwd,
             include_evidence: args.include_evidence,
             max_items: args.max_items,
+            dao_tian_limit: args.dao_tian_limit,
         },
     )
     .await?;
