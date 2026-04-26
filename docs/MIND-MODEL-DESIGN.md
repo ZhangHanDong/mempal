@@ -820,6 +820,9 @@ Implemented Phase-1 runtime surface:
 - `dao_tian` is sparse by default in runtime context: `mempal context` and
   `mempal_context` inject at most 1 `dao_tian` item unless the caller explicitly
   sets `--dao-tian-limit` / `dao_tian_limit`; `0` disables `dao_tian`
+- `wake-up` remains an L0/L1 memory refresh surface and does not assemble typed
+  `dao_tian -> dao_ren -> shu -> qi` sections; typed operating guidance belongs
+  to `mempal context` / `mempal_context`
 - evidence remains opt-in via `--include-evidence`
 - same-tier items prefer `worktree`, then current `repo`, then `repo://legacy`, then `global`
 - `global` anchor candidates use `domain=global`, preserving the invariant that global anchors do not hold project-local domain memory
@@ -911,8 +914,7 @@ This design does not assume:
 
 The following remain open and should be resolved in later design work:
 
-1. Should `wake-up` eventually consume typed `dao_tian` / `dao_ren`, or should that remain exclusive to `mempal context`?
-2. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
+1. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
 
 ## Current Recommendation
 
@@ -921,7 +923,8 @@ Proceed with the following assumptions unless future evidence rejects them:
 - `dao` belongs to the memory layer
 - `research-rs` is an external `qi` tool, not a `dao` container
 - evidence memory and knowledge memory should be explicitly separated
-- runtime should wake `dao` before `shu`, and `shu` before `qi`
+- runtime typed context should assemble `dao` before `shu`, and `shu` before
+  `qi`; wake-up remains a refresh surface, not the typed assembler
 - the implementation should begin with drawer bootstrap and evolve into a dedicated knowledge model
 
 ## Closing Summary

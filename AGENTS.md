@@ -75,6 +75,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p26-dao-tian-runtime-budget.spec.md` | 完成 | `mempal context` / `mempal_context` 默认最多注入 1 条 `dao_tian`，支持显式禁用或提高预算 |
 | `specs/p27-knowledge-policy-surface.spec.md` | 完成 | `mempal knowledge policy` / `mempal_knowledge_policy`：只读 Stage-1 promotion policy 阈值表 |
 | `specs/p28-field-taxonomy-surface.spec.md` | 完成 | `mempal field-taxonomy` / `mempal_field_taxonomy`：只读 Stage-1 field taxonomy guidance |
+| `specs/p29-wake-up-context-boundary.spec.md` | 完成 | 固化 wake-up 与 mind-model context 边界：wake-up 保持 L0/L1 refresh，typed `dao/shu/qi` 组装只属于 `mempal context` / `mempal_context` |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -112,6 +113,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-26-p26-dao-tian-runtime-budget-implementation.md` — P26 dao_tian runtime budget（已完成）
 - `docs/plans/2026-04-26-p27-knowledge-policy-surface-implementation.md` — P27 knowledge policy surface（已完成）
 - `docs/plans/2026-04-26-p28-field-taxonomy-surface-implementation.md` — P28 field taxonomy surface（已完成）
+- `docs/plans/2026-04-26-p29-wake-up-context-boundary-implementation.md` — P29 wake-up/context boundary（已完成）
 
 ### Spec 使用方式
 

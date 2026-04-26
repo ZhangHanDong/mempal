@@ -102,7 +102,7 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal knowledge gate <ID> [--format json]` | evaluate whether knowledge satisfies promotion gate policy without mutating it |
 | `mempal knowledge promote <ID> --status promoted --verification-ref <ID> --reason ...` | promote bootstrap knowledge into active runtime use |
 | `mempal knowledge demote <ID> --status demoted --evidence-ref <ID> --reason ... --reason-type contradicted` | demote or retire contradicted / obsolete bootstrap knowledge |
-| `mempal wake-up [--format aaak]` | context refresh sorted by importance (not just recency) |
+| `mempal wake-up [--format aaak]` | L0/L1 refresh sorted by importance; not a typed mind-model context pack |
 | `mempal compress <TEXT>` | format arbitrary text as AAAK |
 | `mempal kg add <S> <P> <O> [--source-drawer ID]` | add a knowledge graph triple |
 | `mempal kg query [--subject S] [--predicate P] [--object O]` | query triples |
@@ -323,6 +323,11 @@ Compact AAAK-formatted refresh:
 ```bash
 mempal wake-up --format aaak
 ```
+
+Use `mempal context` when the agent needs typed operating guidance such as
+`dao_tian -> dao_ren -> shu -> qi`. `wake-up` may show selected knowledge
+statements, but it keeps the L0/L1 refresh shape and does not assemble typed
+tier sections or apply `dao_tian_limit`.
 
 ## Core Workflows
 
@@ -585,7 +590,7 @@ The MCP server exposes eighteen tools:
 - `mempal_cowork_push` — send a short handoff message (≤ 8 KB) to the partner agent's inbox; delivered at the partner's next UserPromptSubmit via a drain hook
 - `mempal_fact_check` — offline contradiction detection against KG triples and known entities
 
-The server also embeds MEMORY_PROTOCOL (behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration. The protocol treats `mempal_context` as guidance for choosing an approach, workflow, skill, or tool; `mempal_field_taxonomy` as guidance for choosing typed-memory `field` values; and `trigger_hints` as bias metadata only. These hints never override system, user, repo, or client-native skill rules.
+The server also embeds MEMORY_PROTOCOL (behavioral rules) in the MCP `initialize.instructions` field so any MCP client learns the workflow on connect — zero configuration. The protocol treats `wake-up` as an L0/L1 refresh surface, `mempal_context` as typed guidance for choosing an approach, workflow, skill, or tool, `mempal_field_taxonomy` as guidance for choosing typed-memory `field` values, and `trigger_hints` as bias metadata only. These hints never override system, user, repo, or client-native skill rules.
 
 Example request shapes:
 

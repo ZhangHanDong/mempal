@@ -27,6 +27,10 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    context above. Others (Codex, Cursor, raw MCP clients) do NOT — for those,
    step 0 is how you wake up. Trust drawer_ids and source_file citations in
    any results you receive; they reference real files on disk.
+   Wake-up is an L0/L1 refresh surface, not the typed dao/shu/qi assembler.
+   It may show important knowledge drawers, but it does not assemble tiered
+   sections or apply dao_tian budgets. For typed operating guidance, use
+   mempal_context.
 
 2. VERIFY BEFORE ASSERTING
    Before stating project facts ("we chose X", "we use Y", "the auth flow is Z"),
@@ -67,6 +71,8 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 
    Use mempal_context to choose an approach, workflow, or skill. Use
    mempal_search to verify project facts, past decisions, and citations.
+   Do not use wake-up as a substitute for mempal_context when you need typed
+   dao/shu/qi guidance; wake-up preserves a refresh-oriented L0/L1 shape.
    Use mempal_field_taxonomy when choosing a `field` value for typed evidence,
    knowledge, search, or context. Field taxonomy is guidance only; custom
    field strings remain valid when the recommended fields are too coarse.
@@ -356,6 +362,22 @@ mod tests {
             MEMORY_PROTOCOL.contains("Use\n   mempal_search to verify project facts"),
             "MEMORY_PROTOCOL must keep fact verification and citations on mempal_search"
         );
+    }
+
+    #[test]
+    fn contains_wake_up_context_boundary_guidance() {
+        for phrase in [
+            "Wake-up is an L0/L1 refresh surface",
+            "not the typed dao/shu/qi assembler",
+            "does not assemble tiered\n   sections or apply dao_tian budgets",
+            "For typed operating guidance, use\n   mempal_context",
+            "Do not use wake-up as a substitute for mempal_context",
+        ] {
+            assert!(
+                MEMORY_PROTOCOL.contains(phrase),
+                "MEMORY_PROTOCOL must include wake-up/context boundary phrase: {phrase}"
+            );
+        }
     }
 
     #[test]

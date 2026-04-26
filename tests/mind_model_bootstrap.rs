@@ -2492,6 +2492,94 @@ fn test_wake_up_aaak_prefers_knowledge_statement() {
 }
 
 #[test]
+fn test_wake_up_does_not_assemble_mind_model_sections() {
+    let (tmp, db) = setup_cli_home();
+    let dao_tian = Drawer {
+        importance: 5,
+        added_at: "1710011002".to_string(),
+        ..bootstrap_drawer(
+            "drawer_kn_wake_boundary_dao_tian",
+            "Universal principle rationale should not create a dao_tian section.",
+            MemoryKind::Knowledge,
+            Some(KnowledgeTier::DaoTian),
+            Some(KnowledgeStatus::Canonical),
+            Some("Evidence precedes assertion."),
+        )
+    };
+    let dao_ren = Drawer {
+        importance: 4,
+        added_at: "1710011001".to_string(),
+        ..bootstrap_drawer(
+            "drawer_kn_wake_boundary_dao_ren",
+            "Domain rule rationale should not create a dao_ren section.",
+            MemoryKind::Knowledge,
+            Some(KnowledgeTier::DaoRen),
+            Some(KnowledgeStatus::Promoted),
+            Some("Rust changes must submit to cargo check."),
+        )
+    };
+    insert_cli_wake_up_drawer(&db, &dao_tian);
+    insert_cli_wake_up_drawer(&db, &dao_ren);
+
+    let output = run_cli_wake_up(tmp.path(), None);
+
+    assert!(output.contains("## L0"));
+    assert!(output.contains("## L1"));
+    assert!(output.contains("Evidence precedes assertion."));
+    assert!(output.contains("Rust changes must submit to cargo check."));
+    for heading in ["## dao_tian", "## dao_ren", "## shu", "## qi"] {
+        assert!(
+            !output.contains(heading),
+            "wake-up must not assemble typed context section {heading}"
+        );
+    }
+}
+
+#[test]
+fn test_wake_up_aaak_does_not_assemble_mind_model_sections() {
+    let (tmp, db) = setup_cli_home();
+    let dao_tian = Drawer {
+        importance: 5,
+        added_at: "1710012002".to_string(),
+        ..bootstrap_drawer(
+            "drawer_kn_wake_aaak_boundary_dao_tian",
+            "Universal principle rationale should not create an AAAK dao_tian section.",
+            MemoryKind::Knowledge,
+            Some(KnowledgeTier::DaoTian),
+            Some(KnowledgeStatus::Canonical),
+            Some("Keep universal principles sparse."),
+        )
+    };
+    let qi = Drawer {
+        importance: 4,
+        added_at: "1710012001".to_string(),
+        ..bootstrap_drawer(
+            "drawer_kn_wake_aaak_boundary_qi",
+            "Tool usage rationale should not create an AAAK qi section.",
+            MemoryKind::Knowledge,
+            Some(KnowledgeTier::Qi),
+            Some(KnowledgeStatus::Promoted),
+            Some("Use cargo check as the Rust ground truth."),
+        )
+    };
+    insert_cli_wake_up_drawer(&db, &dao_tian);
+    insert_cli_wake_up_drawer(&db, &qi);
+
+    let output = run_cli_wake_up(tmp.path(), Some("aaak"));
+    let document = AaakDocument::parse(output.trim()).expect("parse aaak wake-up output");
+    let decoded = AaakCodec::default().decode(&document);
+
+    assert!(decoded.contains("Keep universal principles sparse."));
+    assert!(decoded.contains("Use cargo check as the Rust ground truth."));
+    for heading in ["## dao_tian", "## dao_ren", "## shu", "## qi"] {
+        assert!(
+            !decoded.contains(heading),
+            "AAAK wake-up must not assemble typed context section {heading}"
+        );
+    }
+}
+
+#[test]
 fn test_wake_up_preserves_existing_top_drawer_order() {
     let (tmp, db) = setup_cli_home();
     let highest = Drawer {
