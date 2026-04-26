@@ -97,6 +97,7 @@ Use this when you already know the concepts and just need the right command quic
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
 | `mempal context <QUERY> [--format json] [--include-evidence] [--dao-tian-limit N]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`); default `dao_tian` budget is 1 |
 | `mempal knowledge distill --statement ... --content ... --tier dao_ren --supporting-ref <ID>` | create candidate knowledge from evidence refs |
+| `mempal knowledge policy [--format json]` | inspect read-only Stage-1 promotion policy thresholds |
 | `mempal knowledge gate <ID> [--format json]` | evaluate whether knowledge satisfies promotion gate policy without mutating it |
 | `mempal knowledge promote <ID> --status promoted --verification-ref <ID> --reason ...` | promote bootstrap knowledge into active runtime use |
 | `mempal knowledge demote <ID> --status demoted --evidence-ref <ID> --reason ... --reason-type contradicted` | demote or retire contradicted / obsolete bootstrap knowledge |
@@ -217,10 +218,18 @@ Equivalent MCP distill request:
 }
 ```
 
-P20 adds a read-only promotion gate report. Use it before `promote` to check the
-minimum deterministic policy without changing status, refs, vectors, schema, or
-the audit log. P21 exposes the same policy to MCP agents as
-`mempal_knowledge_gate`.
+P20 adds a read-only promotion gate report. P27 exposes the current Stage-1
+policy table directly:
+
+```bash
+mempal knowledge policy --format json
+```
+
+Use `gate` before `promote` to check the minimum deterministic policy against a
+specific drawer without changing status, refs, vectors, schema, or the audit
+log. P21 exposes the same drawer-specific gate to MCP agents as
+`mempal_knowledge_gate`, while P27 exposes the policy table as
+`mempal_knowledge_policy`.
 
 ```bash
 mempal knowledge gate drawer_knowledge --format json
@@ -540,12 +549,13 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes sixteen tools:
+The MCP server exposes seventeen tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
 - `mempal_context` — mind-model runtime context pack (`dao_tian -> dao_ren -> shu -> qi`, evidence opt-in, `dao_tian_limit` default 1); guides workflow / skill / tool choice but never executes skills
 - `mempal_knowledge_distill` — create candidate `dao_ren` / `qi` knowledge from existing evidence refs; deterministic and never auto-promotes
+- `mempal_knowledge_policy` — read-only Stage-1 promotion policy table for `dao_tian`, `dao_ren`, `shu`, and `qi`
 - `mempal_knowledge_gate` — read-only promotion readiness check for knowledge drawers; returns the same deterministic gate report as `mempal knowledge gate --format json`
 - `mempal_knowledge_promote` — gate-enforced lifecycle promotion with supplied verification refs
 - `mempal_knowledge_demote` — demote or retire knowledge with counterexample evidence refs

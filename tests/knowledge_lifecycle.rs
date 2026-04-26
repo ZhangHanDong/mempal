@@ -313,6 +313,15 @@ fn gate_json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("gate json")
 }
 
+fn policy_entry<'a>(value: &'a Value, tier: &str, target_status: &str) -> &'a Value {
+    value
+        .as_array()
+        .expect("policy array")
+        .iter()
+        .find(|entry| entry["tier"] == tier && entry["target_status"] == target_status)
+        .expect("policy entry")
+}
+
 #[test]
 fn test_cli_knowledge_publish_anchor_worktree_to_repo() {
     let (home, db) = setup_home();
@@ -963,6 +972,64 @@ fn test_cli_knowledge_gate_requires_reviewer_for_dao_tian() {
     assert!(reviewed.status.success());
     let value = gate_json(&reviewed);
     assert_eq!(value["allowed"], true);
+}
+
+#[test]
+fn test_cli_knowledge_policy_json_lists_stage1_thresholds() {
+    let (home, _db) = setup_home();
+    let output = run_mempal(home.path(), &["knowledge", "policy", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).expect("policy json");
+    let dao_tian = policy_entry(&value, "dao_tian", "canonical");
+    assert_eq!(
+        dao_tian["requirements"]["min_supporting_refs"],
+        serde_json::json!(3)
+    );
+    assert_eq!(
+        dao_tian["requirements"]["min_verification_refs"],
+        serde_json::json!(2)
+    );
+    assert_eq!(
+        dao_tian["requirements"]["min_teaching_refs"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        dao_tian["requirements"]["reviewer_required"],
+        serde_json::json!(true)
+    );
+
+    let dao_ren = policy_entry(&value, "dao_ren", "promoted");
+    assert_eq!(
+        dao_ren["requirements"]["min_supporting_refs"],
+        serde_json::json!(2)
+    );
+    assert_eq!(
+        dao_ren["requirements"]["min_verification_refs"],
+        serde_json::json!(1)
+    );
+}
+
+#[test]
+fn test_cli_knowledge_policy_plain_lists_reviewer_rule() {
+    let (home, _db) = setup_home();
+    let output = run_mempal(home.path(), &["knowledge", "policy"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("dao_tian -> canonical"));
+    assert!(stdout.contains("reviewer_required=true"));
+}
+
+#[test]
+fn test_cli_knowledge_policy_rejects_invalid_format() {
+    let (home, _db) = setup_home();
+    let output = run_mempal(home.path(), &["knowledge", "policy", "--format", "yaml"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported policy format"));
 }
 
 #[test]

@@ -28,7 +28,7 @@ use crate::knowledge_anchor::{PublishAnchorRequest as CorePublishAnchorRequest, 
 use crate::knowledge_distill::{
     DistillPlan, DistillRequest as CoreDistillRequest, commit_distill, prepare_distill,
 };
-use crate::knowledge_gate::evaluate_gate_by_id;
+use crate::knowledge_gate::{evaluate_gate_by_id, promotion_policy};
 use crate::knowledge_lifecycle::{
     DemoteRequest as CoreDemoteRequest, PromoteRequest as CorePromoteRequest, demote_knowledge,
     promote_knowledge,
@@ -48,11 +48,12 @@ use super::tools::{
     DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, IngestRequest,
     IngestResponse, KgRequest, KgResponse, KgStatsDto, KnowledgeDemoteRequest,
     KnowledgeDemoteResponse, KnowledgeDistillRequest, KnowledgeDistillResponse,
-    KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePromoteRequest, KnowledgePromoteResponse,
-    KnowledgePublishAnchorRequest, KnowledgePublishAnchorResponse, PeekMessageDto,
-    PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest, SearchResponse,
-    SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse,
-    TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
+    KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePolicyResponse, KnowledgePromoteRequest,
+    KnowledgePromoteResponse, KnowledgePublishAnchorRequest, KnowledgePublishAnchorResponse,
+    PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse, ScopeCount, SearchRequest,
+    SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest,
+    TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest,
+    TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -197,6 +198,14 @@ impl MempalMcpServer {
 
     pub async fn status_json_for_test(&self) -> std::result::Result<StatusResponse, ErrorData> {
         self.mempal_status().await.map(|response| response.0)
+    }
+
+    pub async fn knowledge_policy_json_for_test(
+        &self,
+    ) -> std::result::Result<KnowledgePolicyResponse, ErrorData> {
+        self.mempal_knowledge_policy()
+            .await
+            .map(|response| response.0)
     }
 }
 
@@ -802,6 +811,16 @@ impl MempalMcpServer {
         .map_err(knowledge_gate_error)?;
 
         Ok(Json(KnowledgeGateResponse::from(report)))
+    }
+
+    #[tool(
+        name = "mempal_knowledge_policy",
+        description = "Read-only Stage-1 knowledge promotion policy table. Lists deterministic gate thresholds for dao_tian -> canonical, dao_ren -> promoted, shu -> promoted, and qi -> promoted without requiring a drawer and without mutating storage."
+    )]
+    async fn mempal_knowledge_policy(
+        &self,
+    ) -> std::result::Result<Json<KnowledgePolicyResponse>, ErrorData> {
+        Ok(Json(KnowledgePolicyResponse::from(promotion_policy())))
     }
 
     #[tool(
@@ -2353,6 +2372,82 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("dao_tian -> dao_ren -> shu -> qi")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_policy_lists_stage1_thresholds() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let response = server
+            .knowledge_policy_json_for_test()
+            .await
+            .expect("policy should succeed");
+        let dao_tian = response
+            .entries
+            .iter()
+            .find(|entry| entry.tier == "dao_tian" && entry.target_status == "canonical")
+            .expect("dao_tian policy");
+        assert_eq!(dao_tian.requirements.min_supporting_refs, 3);
+        assert_eq!(dao_tian.requirements.min_verification_refs, 2);
+        assert_eq!(dao_tian.requirements.min_teaching_refs, 1);
+        assert!(dao_tian.requirements.reviewer_required);
+
+        let dao_ren = response
+            .entries
+            .iter()
+            .find(|entry| entry.tier == "dao_ren" && entry.target_status == "promoted")
+            .expect("dao_ren policy");
+        assert_eq!(dao_ren.requirements.min_supporting_refs, 2);
+        assert_eq!(dao_ren.requirements.min_verification_refs, 1);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_policy_has_no_db_side_effects() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_evidence",
+            "policy side-effect evidence",
+            "mempal",
+            Some("policy"),
+            "/tmp/policy.md",
+            2,
+        );
+        let db = Database::open(&db_path).expect("open db");
+        let baseline_schema = db.schema_version().expect("schema");
+        let baseline_drawers = db.drawer_count().expect("drawers");
+        let baseline_triples = db.triple_count().expect("triples");
+        let baseline_taxonomy = db.taxonomy_count().expect("taxonomy");
+
+        for _ in 0..3 {
+            let response = server
+                .knowledge_policy_json_for_test()
+                .await
+                .expect("policy should succeed");
+            assert!(!response.entries.is_empty());
+        }
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(db.schema_version().expect("schema"), baseline_schema);
+        assert_eq!(db.drawer_count().expect("drawers"), baseline_drawers);
+        assert_eq!(db.triple_count().expect("triples"), baseline_triples);
+        assert_eq!(db.taxonomy_count().expect("taxonomy"), baseline_taxonomy);
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_includes_mempal_knowledge_policy() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let policy_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_knowledge_policy")
+            .expect("mempal_knowledge_policy tool exists");
+        assert!(
+            policy_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Stage-1 knowledge promotion policy")
         );
     }
 

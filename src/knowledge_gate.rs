@@ -35,6 +35,29 @@ pub struct GateEvidenceCounts {
     pub verification: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PromotionPolicyEntry {
+    pub tier: String,
+    pub target_status: String,
+    pub requirements: GateRequirements,
+}
+
+pub fn promotion_policy() -> Vec<PromotionPolicyEntry> {
+    [
+        (KnowledgeTier::DaoTian, KnowledgeStatus::Canonical),
+        (KnowledgeTier::DaoRen, KnowledgeStatus::Promoted),
+        (KnowledgeTier::Shu, KnowledgeStatus::Promoted),
+        (KnowledgeTier::Qi, KnowledgeStatus::Promoted),
+    ]
+    .into_iter()
+    .map(|(tier, target_status)| PromotionPolicyEntry {
+        tier: tier_slug(&tier).to_string(),
+        target_status: status_slug(&target_status).to_string(),
+        requirements: gate_requirements_for_policy(&tier, &target_status),
+    })
+    .collect()
+}
+
 pub fn evaluate_gate_by_id(
     db: &Database,
     drawer_id: &str,
@@ -139,6 +162,25 @@ fn validate_tier_status(tier: &KnowledgeTier, status: &KnowledgeStatus) -> Resul
 }
 
 fn gate_requirements(tier: &KnowledgeTier, target_status: &KnowledgeStatus) -> GateRequirements {
+    promotion_policy()
+        .into_iter()
+        .find(|entry| {
+            entry.tier == tier_slug(tier) && entry.target_status == status_slug(target_status)
+        })
+        .map(|entry| entry.requirements)
+        .unwrap_or_else(|| GateRequirements {
+            min_supporting_refs: 0,
+            min_verification_refs: 0,
+            min_teaching_refs: 0,
+            reviewer_required: false,
+            counterexamples_block: true,
+        })
+}
+
+fn gate_requirements_for_policy(
+    tier: &KnowledgeTier,
+    target_status: &KnowledgeStatus,
+) -> GateRequirements {
     match (tier, target_status) {
         (KnowledgeTier::DaoTian, KnowledgeStatus::Canonical) => GateRequirements {
             min_supporting_refs: 3,
@@ -161,13 +203,7 @@ fn gate_requirements(tier: &KnowledgeTier, target_status: &KnowledgeStatus) -> G
             reviewer_required: false,
             counterexamples_block: true,
         },
-        _ => GateRequirements {
-            min_supporting_refs: 0,
-            min_verification_refs: 0,
-            min_teaching_refs: 0,
-            reviewer_required: false,
-            counterexamples_block: true,
-        },
+        _ => unreachable!("promotion_policy only requests defined gate policy entries"),
     }
 }
 

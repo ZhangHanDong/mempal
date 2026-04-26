@@ -29,7 +29,9 @@ use mempal::ingest::{
 };
 use mempal::knowledge_anchor::{PublishAnchorRequest, publish_anchor};
 use mempal::knowledge_distill::{DistillPlan, DistillRequest, commit_distill, prepare_distill};
-use mempal::knowledge_gate::{GateReport, evaluate_gate_by_id};
+use mempal::knowledge_gate::{
+    GateReport, PromotionPolicyEntry, evaluate_gate_by_id, promotion_policy,
+};
 use mempal::knowledge_lifecycle::{
     DemoteRequest, PromoteRequest, demote_knowledge, promote_knowledge,
 };
@@ -321,6 +323,10 @@ enum KnowledgeCommands {
         reviewer: Option<String>,
         #[arg(long = "allow-counterexamples")]
         allow_counterexamples: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Policy {
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -1353,6 +1359,20 @@ async fn knowledge_command(
                 other => bail!("unsupported gate format: {other}"),
             }
         }
+        KnowledgeCommands::Policy { format } => {
+            let policy = promotion_policy();
+            match format.as_str() {
+                "plain" => print_promotion_policy(&policy),
+                "json" => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&policy)
+                            .context("failed to serialize knowledge policy")?
+                    );
+                }
+                other => bail!("unsupported policy format: {other}"),
+            }
+        }
         KnowledgeCommands::PublishAnchor {
             drawer_id,
             to,
@@ -1437,6 +1457,21 @@ fn print_gate_report(report: &GateReport) {
     );
     for reason in &report.reasons {
         println!("reason={reason}");
+    }
+}
+
+fn print_promotion_policy(policy: &[PromotionPolicyEntry]) {
+    for entry in policy {
+        println!(
+            "{} -> {} supporting>={} verification>={} teaching>={} reviewer_required={} counterexamples_block={}",
+            entry.tier,
+            entry.target_status,
+            entry.requirements.min_supporting_refs,
+            entry.requirements.min_verification_refs,
+            entry.requirements.min_teaching_refs,
+            entry.requirements.reviewer_required,
+            entry.requirements.counterexamples_block
+        );
     }
 }
 

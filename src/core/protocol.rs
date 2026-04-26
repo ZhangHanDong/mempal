@@ -163,10 +163,13 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 
 12. CHECK KNOWLEDGE PROMOTION READINESS
    Before proposing that a knowledge drawer should be promoted or treated as
-   canonical, call mempal_knowledge_gate with its drawer_id. The tool is a
-   read-only policy check over existing evidence refs. If allowed=false, use
-   the reasons to gather more evidence or keep the drawer at its current
-   lifecycle status. A passing gate is advisory; it does not auto-promote.
+   canonical, call mempal_knowledge_policy to inspect the current Stage-1
+   thresholds, then call mempal_knowledge_gate with the drawer_id. The policy
+   and gate tools are read-only checks over deterministic evidence-ref rules.
+   dao_tian -> canonical requires a human reviewer in Stage 1; evaluator-only
+   canonization is not allowed. If allowed=false, use the reasons to gather
+   more evidence or keep the drawer at its current lifecycle status. A passing
+   gate is advisory; it does not auto-promote.
 
 13. DISTILL KNOWLEDGE FROM EVIDENCE
    When repeated evidence suggests a reusable rule, call
@@ -195,6 +198,7 @@ TOOLS:
   mempal_search        — semantic search with wing/room filters, citation-bearing
   mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi)
   mempal_knowledge_distill — create candidate knowledge from evidence refs
+  mempal_knowledge_policy — read-only Stage-1 promotion policy thresholds
   mempal_knowledge_gate — read-only knowledge promotion readiness check
   mempal_knowledge_promote — gate-enforced knowledge lifecycle promotion
   mempal_knowledge_demote — evidence-backed knowledge demotion or retirement
@@ -371,11 +375,21 @@ mod tests {
             "MEMORY_PROTOCOL must include Rule 12 knowledge gate guidance"
         );
         assert!(
+            MEMORY_PROTOCOL.contains("mempal_knowledge_policy"),
+            "MEMORY_PROTOCOL must mention mempal_knowledge_policy"
+        );
+        assert!(
             MEMORY_PROTOCOL.contains("mempal_knowledge_gate"),
             "MEMORY_PROTOCOL must mention mempal_knowledge_gate in TOOLS list"
         );
         assert!(
-            MEMORY_PROTOCOL.contains("A passing gate is advisory; it does not auto-promote"),
+            MEMORY_PROTOCOL.contains("dao_tian -> canonical requires a human reviewer"),
+            "MEMORY_PROTOCOL must keep dao_tian human review policy explicit"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("A passing")
+                && MEMORY_PROTOCOL.contains("gate is advisory")
+                && MEMORY_PROTOCOL.contains("does not auto-promote"),
             "MEMORY_PROTOCOL must state that the gate is advisory"
         );
     }

@@ -5,7 +5,7 @@ use crate::core::types::{
 };
 use crate::knowledge_anchor::PublishAnchorOutcome;
 use crate::knowledge_distill::DistillOutcome;
-use crate::knowledge_gate::GateReport;
+use crate::knowledge_gate::{GateReport, PromotionPolicyEntry};
 use crate::knowledge_lifecycle::{DemoteOutcome, PromoteOutcome};
 use rmcp::schemars::{self, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -246,6 +246,39 @@ pub struct KnowledgeGateEvidenceCountsDto {
     pub counterexample: usize,
     pub teaching: usize,
     pub verification: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgePolicyResponse {
+    pub entries: Vec<KnowledgePolicyEntryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgePolicyEntryDto {
+    pub tier: String,
+    pub target_status: String,
+    pub requirements: KnowledgeGateRequirementsDto,
+}
+
+impl From<Vec<PromotionPolicyEntry>> for KnowledgePolicyResponse {
+    fn from(entries: Vec<PromotionPolicyEntry>) -> Self {
+        Self {
+            entries: entries
+                .into_iter()
+                .map(|entry| KnowledgePolicyEntryDto {
+                    tier: entry.tier,
+                    target_status: entry.target_status,
+                    requirements: KnowledgeGateRequirementsDto {
+                        min_supporting_refs: entry.requirements.min_supporting_refs,
+                        min_verification_refs: entry.requirements.min_verification_refs,
+                        min_teaching_refs: entry.requirements.min_teaching_refs,
+                        reviewer_required: entry.requirements.reviewer_required,
+                        counterexamples_block: entry.requirements.counterexamples_block,
+                    },
+                })
+                .collect(),
+        }
+    }
 }
 
 impl From<GateReport> for KnowledgeGateResponse {

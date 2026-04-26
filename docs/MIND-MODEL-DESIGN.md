@@ -828,6 +828,13 @@ Implemented Phase-1 runtime surface:
 - lifecycle verification / counterexample refs are hardened to require existing evidence drawers, preserving the rule that promotion and demotion are justified by evidence rather than arbitrary ids or other knowledge claims
 - promotion gate CLI provides a read-only advisory report before promotion, using deterministic evidence-count policy without mutating status, refs, vectors, schema, or audit history
 - `mempal_knowledge_gate` exposes the same read-only promotion gate to MCP-connected agents, so runtime agents can check readiness without shelling out or mutating lifecycle state
+- Stage-1 promotion policy is inspectable without a concrete drawer through `mempal knowledge policy` and `mempal_knowledge_policy`
+- current Stage-1 thresholds are:
+  - `dao_tian -> canonical`: 3 supporting refs, 2 verification refs, 1 teaching ref, human reviewer required, counterexamples block
+  - `dao_ren -> promoted`: 2 supporting refs, 1 verification ref, counterexamples block
+  - `shu -> promoted`: 1 supporting ref, 1 verification ref, counterexamples block
+  - `qi -> promoted`: 1 supporting ref, 1 verification ref, counterexamples block
+- `dao_tian -> canonical` always requires a human reviewer in Stage 1; evaluator-only canonization is intentionally out of scope
 - `mempal_knowledge_promote` and `mempal_knowledge_demote` expose lifecycle mutation to MCP-connected agents; promotion is gate-enforced after appending supplied verification refs, while demotion requires counterexample evidence
 - `mempal knowledge publish-anchor` implements explicit outward anchor publication for active knowledge (`worktree -> repo -> global`) as a metadata-only operation separate from tier/status promotion
 - `mempal_knowledge_publish_anchor` exposes the same outward anchor publication operation to MCP-connected agents without changing content, vectors, tier, or status
@@ -900,11 +907,9 @@ This design does not assume:
 
 The following remain open and should be resolved in later design work:
 
-1. What exact promotion thresholds should be used for `dao_ren` and `dao_tian`?
-2. Should `dao_tian` always require human review, or can a high-grade evaluator canonize it?
-3. How should `field` taxonomy be managed?
-4. Should `wake-up` eventually consume typed `dao_tian` / `dao_ren`, or should that remain exclusive to `mempal context`?
-5. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
+1. How should `field` taxonomy be managed?
+2. Should `wake-up` eventually consume typed `dao_tian` / `dao_ren`, or should that remain exclusive to `mempal context`?
+3. When Phase 2 begins, should knowledge cards live in the same DB or a separate persistence layer?
 
 ## Current Recommendation
 
