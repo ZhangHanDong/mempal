@@ -87,6 +87,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p40-mcp-knowledge-card-lifecycle.spec.md` | 完成 | `mempal_knowledge_cards` 扩展 gate/promote/demote actions |
 | `specs/p41-knowledge-card-runtime-boundary.spec.md` | 完成 | 固化 Phase-2 card runtime boundary：cards 已治理，但尚非默认 context/search source |
 | `specs/p42-mind-model-completion-audit.spec.md` | 完成 | MIND-MODEL P42 baseline completion audit + future work 明确化 |
+| `specs/p43-knowledge-card-retrieval-contract.spec.md` | 完成 | Phase-2 card retrieval contract：定义 card result + evidence citation 形状，不改默认 runtime 行为 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -134,6 +135,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-27-p36-knowledge-card-backfill-report-implementation.md` — P36 knowledge card backfill report（已完成）
 - `docs/plans/2026-04-27-p37-knowledge-card-backfill-apply-implementation.md` — P37 knowledge card backfill apply（已完成）
 - `docs/plans/2026-04-27-p38-p42-knowledge-card-runtime-implementation.md` — P38-P42 knowledge card runtime baseline（已完成）
+- `docs/plans/2026-04-28-p43-knowledge-card-retrieval-contract.md` — P43 knowledge card retrieval contract（已完成）
 
 ### Spec 使用方式
 

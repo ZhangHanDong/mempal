@@ -979,6 +979,36 @@ context/search source. At P42, `mempal context`, `mempal_context`, and
 `mempal_search` remain drawer/citation based because cards do not yet have a
 dedicated retrieval strategy or vector indexing policy.
 
+### Phase-2 Card Retrieval Contract
+
+P43 defines the contract for future card-aware runtime consumption without
+implementing retrieval behavior yet.
+
+A card retrieval item is a governed knowledge result, not a raw drawer result.
+The minimum returned card fields are: `card_id`, `statement`, `content`, `tier`,
+`status`, `domain`, `field`, `anchor_kind`, and `anchor_id`.
+
+Each card retrieval item must expose role-separated evidence citations derived
+from `knowledge_evidence_links`. The minimum evidence citation fields are:
+`evidence_drawer_id`, `role`, and `source_file`.
+
+Default runtime eligibility is status-gated:
+
+- `promoted` and `canonical` cards are runtime-eligible by default
+- `candidate`, `demoted`, and `retired` cards are excluded by default
+
+This preserves the governance boundary:
+
+- card records carry distilled belief
+- linked evidence drawers remain the citation root
+- inactive card states remain inspectable but are not injected into ordinary
+  runtime context
+
+P43 does not change `mempal context` or `mempal_context` behavior.
+P43 does not change `mempal_search` behavior.
+Card embeddings, ranking strategy, and card-aware context/search surfaces are
+deferred to later specs.
+
 ## Decision on Bootstrap vs Final Architecture
 
 Current recommendation:
