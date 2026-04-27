@@ -6,8 +6,9 @@ use crate::core::{
     anchor::{self, DerivedAnchor},
     db::Database,
     types::{
-        AnchorKind, BootstrapIdentityParts, Drawer, ExplicitTunnel, KnowledgeStatus, KnowledgeTier,
-        MemoryDomain, MemoryKind, Provenance, SourceType, TriggerHints, Triple,
+        AnchorKind, BootstrapIdentityParts, Drawer, ExplicitTunnel, KnowledgeCardFilter,
+        KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, SourceType,
+        TriggerHints, Triple,
     },
     utils::{
         build_bootstrap_drawer_id_from_parts, build_triple_id, current_timestamp,
@@ -48,6 +49,7 @@ use super::tools::{
     ContextRequest, ContextResponse, CoworkPushRequest, CoworkPushResponse, DeleteRequest,
     DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, FieldTaxonomyEntryDto,
     FieldTaxonomyResponse, IngestRequest, IngestResponse, KgRequest, KgResponse, KgStatsDto,
+    KnowledgeCardDto, KnowledgeCardEventDto, KnowledgeCardsRequest, KnowledgeCardsResponse,
     KnowledgeDemoteRequest, KnowledgeDemoteResponse, KnowledgeDistillRequest,
     KnowledgeDistillResponse, KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePolicyResponse,
     KnowledgePromoteRequest, KnowledgePromoteResponse, KnowledgePublishAnchorRequest,
@@ -205,6 +207,17 @@ impl MempalMcpServer {
         &self,
     ) -> std::result::Result<KnowledgePolicyResponse, ErrorData> {
         self.mempal_knowledge_policy()
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn knowledge_cards_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<KnowledgeCardsResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_knowledge_cards(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -583,6 +596,14 @@ fn trim_to_owned(value: Option<&str>) -> Option<String> {
     trim_to_option(value).map(ToOwned::to_owned)
 }
 
+fn required_string<'a>(
+    value: Option<&'a str>,
+    field: &'static str,
+) -> std::result::Result<&'a str, ErrorData> {
+    trim_to_option(value)
+        .ok_or_else(|| ErrorData::invalid_params(format!("{field} is required"), None))
+}
+
 fn anchor_error(error: anchor::AnchorError) -> ErrorData {
     ErrorData::invalid_params(error.to_string(), None)
 }
@@ -830,6 +851,85 @@ impl MempalMcpServer {
         &self,
     ) -> std::result::Result<Json<KnowledgePolicyResponse>, ErrorData> {
         Ok(Json(KnowledgePolicyResponse::from(promotion_policy())))
+    }
+
+    #[tool(
+        name = "mempal_knowledge_cards",
+        description = "Read-only Phase-2 knowledge card inspection. Actions: list/get/events. Reads schema v8 knowledge_cards and knowledge_events only; does not create cards, link evidence, append events, mutate lifecycle, search, assemble context, or backfill."
+    )]
+    async fn mempal_knowledge_cards(
+        &self,
+        Parameters(request): Parameters<KnowledgeCardsRequest>,
+    ) -> std::result::Result<Json<KnowledgeCardsResponse>, ErrorData> {
+        let action = trim_to_option(Some(request.action.as_str()))
+            .ok_or_else(|| ErrorData::invalid_params("action must not be empty", None))?;
+        let db = self.open_db()?;
+
+        match action {
+            "list" => {
+                let filter = KnowledgeCardFilter {
+                    tier: parse_tier(request.tier.as_deref())?,
+                    status: parse_status(request.status.as_deref())?,
+                    domain: parse_domain(request.domain.as_deref())?,
+                    field: trim_to_owned(request.field.as_deref()),
+                    anchor_kind: parse_anchor_kind(request.anchor_kind.as_deref())?,
+                    anchor_id: trim_to_owned(request.anchor_id.as_deref()),
+                };
+                let cards = db.list_knowledge_cards(&filter).map_err(|error| {
+                    ErrorData::internal_error(
+                        format!("failed to list knowledge cards: {error}"),
+                        None,
+                    )
+                })?;
+                Ok(Json(KnowledgeCardsResponse {
+                    cards: cards.into_iter().map(KnowledgeCardDto::from).collect(),
+                    events: Vec::new(),
+                }))
+            }
+            "get" => {
+                let card_id = required_string(request.card_id.as_deref(), "card_id")?;
+                let card = db
+                    .get_knowledge_card(card_id)
+                    .map_err(|error| {
+                        ErrorData::internal_error(
+                            format!("failed to get knowledge card: {error}"),
+                            None,
+                        )
+                    })?
+                    .ok_or_else(|| {
+                        ErrorData::invalid_params(
+                            format!("knowledge card not found: {card_id}"),
+                            None,
+                        )
+                    })?;
+                Ok(Json(KnowledgeCardsResponse {
+                    cards: vec![KnowledgeCardDto::from(card)],
+                    events: Vec::new(),
+                }))
+            }
+            "events" => {
+                let card_id = required_string(request.card_id.as_deref(), "card_id")?;
+                let events = db.knowledge_events(card_id).map_err(|error| {
+                    ErrorData::internal_error(
+                        format!("failed to list knowledge card events: {error}"),
+                        None,
+                    )
+                })?;
+                Ok(Json(KnowledgeCardsResponse {
+                    cards: Vec::new(),
+                    events: events
+                        .into_iter()
+                        .map(KnowledgeCardEventDto::from)
+                        .collect(),
+                }))
+            }
+            other => Err(ErrorData::invalid_params(
+                format!(
+                    "unsupported knowledge cards action: {other}; read-only actions are list, get, events"
+                ),
+                None,
+            )),
+        }
     }
 
     #[tool(
@@ -1783,7 +1883,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::core::types::BootstrapEvidenceArgs;
+    use crate::core::types::{
+        BootstrapEvidenceArgs, KnowledgeCard, KnowledgeCardEvent, KnowledgeEventType,
+    };
     use crate::embed::Embedder;
 
     #[derive(Clone)]
@@ -1844,6 +1946,62 @@ mod tests {
             }),
         );
         (tempdir, db_path, server)
+    }
+
+    fn knowledge_card(
+        id: &str,
+        tier: KnowledgeTier,
+        status: KnowledgeStatus,
+        field: &str,
+    ) -> KnowledgeCard {
+        KnowledgeCard {
+            id: id.to_string(),
+            statement: format!("Statement for {id}."),
+            content: format!("Content for {id}."),
+            tier,
+            status,
+            domain: MemoryDomain::Project,
+            field: field.to_string(),
+            anchor_kind: AnchorKind::Repo,
+            anchor_id: "repo://mempal".to_string(),
+            parent_anchor_id: None,
+            scope_constraints: Some("Only for MCP read tests.".to_string()),
+            trigger_hints: Some(TriggerHints {
+                intent_tags: vec!["memory".to_string()],
+                workflow_bias: vec!["inspect-first".to_string()],
+                tool_needs: vec!["mcp".to_string()],
+            }),
+            created_at: "1713000000".to_string(),
+            updated_at: "1713000000".to_string(),
+        }
+    }
+
+    fn insert_knowledge_card(db_path: &Path, card: KnowledgeCard) {
+        let db = Database::open(db_path).expect("open db");
+        db.insert_knowledge_card(&card)
+            .expect("insert knowledge card");
+    }
+
+    fn insert_knowledge_card_event(
+        db_path: &Path,
+        id: &str,
+        card_id: &str,
+        event_type: KnowledgeEventType,
+        created_at: &str,
+    ) {
+        let db = Database::open(db_path).expect("open db");
+        db.append_knowledge_event(&KnowledgeCardEvent {
+            id: id.to_string(),
+            card_id: card_id.to_string(),
+            event_type,
+            from_status: Some(KnowledgeStatus::Candidate),
+            to_status: Some(KnowledgeStatus::Promoted),
+            reason: format!("reason for {id}"),
+            actor: Some("codex".to_string()),
+            metadata: Some(serde_json::json!({ "source": "test" })),
+            created_at: created_at.to_string(),
+        })
+        .expect("append knowledge card event");
     }
 
     fn insert_drawer(
@@ -2516,6 +2674,187 @@ mod tests {
                 .as_deref()
                 .unwrap_or_default()
                 .contains("Stage-1 knowledge promotion policy")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_cards_list_filters() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_card(
+            &db_path,
+            knowledge_card(
+                "card_match",
+                KnowledgeTier::DaoRen,
+                KnowledgeStatus::Promoted,
+                "rust",
+            ),
+        );
+        insert_knowledge_card(
+            &db_path,
+            knowledge_card(
+                "card_wrong_tier",
+                KnowledgeTier::Shu,
+                KnowledgeStatus::Promoted,
+                "rust",
+            ),
+        );
+        insert_knowledge_card(
+            &db_path,
+            knowledge_card(
+                "card_wrong_field",
+                KnowledgeTier::DaoRen,
+                KnowledgeStatus::Promoted,
+                "docs",
+            ),
+        );
+
+        let response = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "list",
+                "tier": "dao_ren",
+                "status": "promoted",
+                "field": "rust"
+            }))
+            .await
+            .expect("list cards");
+
+        assert_eq!(response.cards.len(), 1);
+        assert_eq!(response.cards[0].id, "card_match");
+        assert!(response.events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_cards_get_and_missing() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_card(
+            &db_path,
+            knowledge_card(
+                "card_get",
+                KnowledgeTier::Shu,
+                KnowledgeStatus::Promoted,
+                "rust",
+            ),
+        );
+
+        let response = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "get",
+                "card_id": "card_get"
+            }))
+            .await
+            .expect("get card");
+        let card = response.cards.first().expect("card");
+        assert_eq!(card.id, "card_get");
+        assert_eq!(card.statement, "Statement for card_get.");
+        assert_eq!(card.content, "Content for card_get.");
+        assert_eq!(card.tier, "shu");
+        assert_eq!(card.status, "promoted");
+        assert_eq!(card.domain, "project");
+        assert_eq!(card.field, "rust");
+        assert_eq!(card.anchor_kind, "repo");
+        assert_eq!(card.anchor_id, "repo://mempal");
+        assert_eq!(
+            card.trigger_hints
+                .as_ref()
+                .expect("trigger hints")
+                .tool_needs,
+            vec!["mcp"]
+        );
+
+        let missing = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "get",
+                "card_id": "card_missing"
+            }))
+            .await
+            .expect_err("missing card should fail");
+        assert!(missing.to_string().contains("knowledge card not found"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_cards_events() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_card(
+            &db_path,
+            knowledge_card(
+                "card_events",
+                KnowledgeTier::Shu,
+                KnowledgeStatus::Promoted,
+                "rust",
+            ),
+        );
+        insert_knowledge_card_event(
+            &db_path,
+            "event_b",
+            "card_events",
+            KnowledgeEventType::Promoted,
+            "1713000002",
+        );
+        insert_knowledge_card_event(
+            &db_path,
+            "event_a",
+            "card_events",
+            KnowledgeEventType::Created,
+            "1713000001",
+        );
+
+        let response = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "events",
+                "card_id": "card_events"
+            }))
+            .await
+            .expect("list events");
+
+        assert!(response.cards.is_empty());
+        assert_eq!(response.events.len(), 2);
+        assert_eq!(response.events[0].id, "event_a");
+        assert_eq!(response.events[0].event_type, "created");
+        assert_eq!(response.events[1].id, "event_b");
+        assert_eq!(response.events[1].event_type, "promoted");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_knowledge_cards_rejects_write_actions() {
+        let (_tempdir, db_path, server) = setup_server();
+        let before = {
+            let db = Database::open(&db_path).expect("open db");
+            db.list_knowledge_cards(&KnowledgeCardFilter::default())
+                .expect("list cards")
+                .len()
+        };
+
+        let error = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "create"
+            }))
+            .await
+            .expect_err("write action should be rejected");
+        assert!(error.to_string().contains("read-only actions"));
+
+        let after = {
+            let db = Database::open(&db_path).expect("open db");
+            db.list_knowledge_cards(&KnowledgeCardFilter::default())
+                .expect("list cards")
+                .len()
+        };
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_knowledge_cards_readonly() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_knowledge_cards")
+            .expect("mempal_knowledge_cards tool exists");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(description.contains("Read-only Phase-2 knowledge card inspection"));
+        assert!(description.contains("Actions: list/get/events"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_cards"));
+        assert!(
+            crate::core::protocol::MEMORY_PROTOCOL.contains("read-only Phase-2 knowledge card")
         );
     }
 

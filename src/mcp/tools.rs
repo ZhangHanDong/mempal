@@ -1,7 +1,8 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::types::{
-    AnchorKind, ChunkNeighbors, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
-    NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry, TunnelEndpoint,
+    AnchorKind, ChunkNeighbors, KnowledgeCard, KnowledgeCardEvent, KnowledgeStatus, KnowledgeTier,
+    MemoryDomain, MemoryKind, NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry,
+    TunnelEndpoint,
 };
 use crate::field_taxonomy::FieldTaxonomyEntry;
 use crate::knowledge_anchor::PublishAnchorOutcome;
@@ -259,6 +260,55 @@ pub struct KnowledgePolicyEntryDto {
     pub tier: String,
     pub target_status: String,
     pub requirements: KnowledgeGateRequirementsDto,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct KnowledgeCardsRequest {
+    pub action: String,
+    pub card_id: Option<String>,
+    pub tier: Option<String>,
+    pub status: Option<String>,
+    pub domain: Option<String>,
+    pub field: Option<String>,
+    pub anchor_kind: Option<String>,
+    pub anchor_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeCardsResponse {
+    pub cards: Vec<KnowledgeCardDto>,
+    pub events: Vec<KnowledgeCardEventDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeCardDto {
+    pub id: String,
+    pub statement: String,
+    pub content: String,
+    pub tier: String,
+    pub status: String,
+    pub domain: String,
+    pub field: String,
+    pub anchor_kind: String,
+    pub anchor_id: String,
+    pub parent_anchor_id: Option<String>,
+    pub scope_constraints: Option<String>,
+    pub trigger_hints: Option<TriggerHintsDto>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeCardEventDto {
+    pub id: String,
+    pub card_id: String,
+    pub event_type: String,
+    pub from_status: Option<String>,
+    pub to_status: Option<String>,
+    pub reason: String,
+    pub actor: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: String,
 }
 
 impl From<Vec<PromotionPolicyEntry>> for KnowledgePolicyResponse {
@@ -869,6 +919,51 @@ impl From<crate::core::types::TriggerHints> for TriggerHintsDto {
     }
 }
 
+impl From<KnowledgeCard> for KnowledgeCardDto {
+    fn from(value: KnowledgeCard) -> Self {
+        Self {
+            id: value.id,
+            statement: value.statement,
+            content: value.content,
+            tier: knowledge_tier_slug(&value.tier).to_string(),
+            status: knowledge_status_slug(&value.status).to_string(),
+            domain: domain_slug(&value.domain).to_string(),
+            field: value.field,
+            anchor_kind: anchor_kind_slug(&value.anchor_kind).to_string(),
+            anchor_id: value.anchor_id,
+            parent_anchor_id: value.parent_anchor_id,
+            scope_constraints: value.scope_constraints,
+            trigger_hints: value.trigger_hints.map(TriggerHintsDto::from),
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<KnowledgeCardEvent> for KnowledgeCardEventDto {
+    fn from(value: KnowledgeCardEvent) -> Self {
+        Self {
+            id: value.id,
+            card_id: value.card_id,
+            event_type: knowledge_event_type_slug(&value.event_type).to_string(),
+            from_status: value
+                .from_status
+                .as_ref()
+                .map(knowledge_status_slug)
+                .map(str::to_string),
+            to_status: value
+                .to_status
+                .as_ref()
+                .map(knowledge_status_slug)
+                .map(str::to_string),
+            reason: value.reason,
+            actor: value.actor,
+            metadata: value.metadata,
+            created_at: value.created_at,
+        }
+    }
+}
+
 impl From<ChunkNeighbors> for ChunkNeighborsDto {
     fn from(value: ChunkNeighbors) -> Self {
         Self {
@@ -928,6 +1023,19 @@ fn anchor_kind_slug(value: &AnchorKind) -> &'static str {
         AnchorKind::Global => "global",
         AnchorKind::Repo => "repo",
         AnchorKind::Worktree => "worktree",
+    }
+}
+
+fn knowledge_event_type_slug(value: &crate::core::types::KnowledgeEventType) -> &'static str {
+    match value {
+        crate::core::types::KnowledgeEventType::Created => "created",
+        crate::core::types::KnowledgeEventType::Promoted => "promoted",
+        crate::core::types::KnowledgeEventType::Demoted => "demoted",
+        crate::core::types::KnowledgeEventType::Retired => "retired",
+        crate::core::types::KnowledgeEventType::Linked => "linked",
+        crate::core::types::KnowledgeEventType::Unlinked => "unlinked",
+        crate::core::types::KnowledgeEventType::Updated => "updated",
+        crate::core::types::KnowledgeEventType::PublishedAnchor => "published_anchor",
     }
 }
 

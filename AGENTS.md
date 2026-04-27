@@ -81,6 +81,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p32-knowledge-card-schema-v8.spec.md` | 完成 | schema v8 migration：新增 Phase-2 knowledge card 三表、约束、索引、append-only events |
 | `specs/p33-knowledge-card-core-api.spec.md` | 完成 | Phase-2 knowledge card DB core API：Rust types + card/link/event create/read/update/list，不暴露 CLI/MCP/REST |
 | `specs/p34-knowledge-card-cli.spec.md` | 完成 | Phase-2 knowledge card 最小 CLI 管理入口：create/get/list/link/event/events，不接入 MCP/REST/search/context |
+| `specs/p35-knowledge-card-mcp-read.spec.md` | 完成 | Phase-2 knowledge card MCP 只读入口：`mempal_knowledge_cards` list/get/events，不开放写操作 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -124,6 +125,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-27-p32-knowledge-card-schema-v8-implementation.md` — P32 knowledge card schema v8（已完成）
 - `docs/plans/2026-04-27-p33-knowledge-card-core-api-implementation.md` — P33 knowledge card core API（已完成）
 - `docs/plans/2026-04-27-p34-knowledge-card-cli-implementation.md` — P34 knowledge card CLI（已完成）
+- `docs/plans/2026-04-27-p35-knowledge-card-mcp-read-implementation.md` — P35 knowledge card MCP read（已完成）
 
 ### Spec 使用方式
 
