@@ -67,6 +67,79 @@ pub struct TriggerHints {
     pub tool_needs: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeEvidenceRole {
+    Supporting,
+    Verification,
+    Counterexample,
+    Teaching,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeEventType {
+    Created,
+    Promoted,
+    Demoted,
+    Retired,
+    Linked,
+    Unlinked,
+    Updated,
+    PublishedAnchor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeCard {
+    pub id: String,
+    pub statement: String,
+    pub content: String,
+    pub tier: KnowledgeTier,
+    pub status: KnowledgeStatus,
+    pub domain: MemoryDomain,
+    pub field: String,
+    pub anchor_kind: AnchorKind,
+    pub anchor_id: String,
+    pub parent_anchor_id: Option<String>,
+    pub scope_constraints: Option<String>,
+    pub trigger_hints: Option<TriggerHints>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct KnowledgeCardFilter {
+    pub tier: Option<KnowledgeTier>,
+    pub status: Option<KnowledgeStatus>,
+    pub domain: Option<MemoryDomain>,
+    pub field: Option<String>,
+    pub anchor_kind: Option<AnchorKind>,
+    pub anchor_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeEvidenceLink {
+    pub id: String,
+    pub card_id: String,
+    pub evidence_drawer_id: String,
+    pub role: KnowledgeEvidenceRole,
+    pub note: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KnowledgeCardEvent {
+    pub id: String,
+    pub card_id: String,
+    pub event_type: KnowledgeEventType,
+    pub from_status: Option<KnowledgeStatus>,
+    pub to_status: Option<KnowledgeStatus>,
+    pub reason: String,
+    pub actor: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BootstrapIdentityParts<'a> {
     pub memory_kind: &'a MemoryKind,

@@ -77,6 +77,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p30-knowledge-card-storage-boundary.spec.md` | 完成 | 固化 Phase-2 knowledge card 存储边界：未来 `knowledge_cards` 使用同一个 SQLite `palace.db` 的独立表，不拆外部 persistence layer |
 | `specs/p31-knowledge-card-schema.spec.md` | 完成 | schema v8 Phase-2 `knowledge_cards` / `knowledge_evidence_links` / `knowledge_events` 最小 schema contract |
 | `specs/p32-knowledge-card-schema-v8.spec.md` | 完成 | schema v8 migration：新增 Phase-2 knowledge card 三表、约束、索引、append-only events |
+| `specs/p33-knowledge-card-core-api.spec.md` | 完成 | Phase-2 knowledge card DB core API：Rust types + card/link/event create/read/update/list，不暴露 CLI/MCP/REST |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -118,6 +119,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-27-p30-knowledge-card-storage-boundary-implementation.md` — P30 knowledge card storage boundary（已完成）
 - `docs/plans/2026-04-27-p31-knowledge-card-schema-spec.md` — P31 knowledge card schema spec（已完成）
 - `docs/plans/2026-04-27-p32-knowledge-card-schema-v8-implementation.md` — P32 knowledge card schema v8（已完成）
+- `docs/plans/2026-04-27-p33-knowledge-card-core-api-implementation.md` — P33 knowledge card core API（已完成）
 
 ### Spec 使用方式
 

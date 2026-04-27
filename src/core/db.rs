@@ -9,9 +9,11 @@ use thiserror::Error;
 
 use super::anchor;
 use super::types::{
-    AnchorKind, ChunkNeighbors, Drawer, ExplicitTunnel, KnowledgeStatus, KnowledgeTier,
-    MemoryDomain, MemoryKind, NeighborChunk, Provenance, ReindexSource, SourceType, TaxonomyEntry,
-    Triple, TripleStats, TunnelEndpoint, TunnelFollowResult,
+    AnchorKind, ChunkNeighbors, Drawer, ExplicitTunnel, KnowledgeCard, KnowledgeCardEvent,
+    KnowledgeCardFilter, KnowledgeEventType, KnowledgeEvidenceLink, KnowledgeEvidenceRole,
+    KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, NeighborChunk, Provenance,
+    ReindexSource, SourceType, TaxonomyEntry, Triple, TripleStats, TunnelEndpoint,
+    TunnelFollowResult,
 };
 use super::utils::{build_tunnel_id, current_timestamp, format_tunnel_endpoint};
 
@@ -726,6 +728,292 @@ impl Database {
             ],
         )?;
         Ok(affected > 0)
+    }
+
+    pub fn insert_knowledge_card(&self, card: &KnowledgeCard) -> Result<(), DbError> {
+        anchor::validate_anchor_domain(&card.domain, &card.anchor_kind)
+            .map_err(|message| DbError::InvalidDrawerMetadata(message.to_string()))?;
+
+        self.conn.execute(
+            r#"
+            INSERT INTO knowledge_cards (
+                id,
+                statement,
+                content,
+                tier,
+                status,
+                domain,
+                field,
+                anchor_kind,
+                anchor_id,
+                parent_anchor_id,
+                scope_constraints,
+                trigger_hints,
+                created_at,
+                updated_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            "#,
+            params![
+                card.id.as_str(),
+                card.statement.as_str(),
+                card.content.as_str(),
+                knowledge_tier_as_str(&card.tier),
+                knowledge_status_as_str(&card.status),
+                memory_domain_as_str(&card.domain),
+                card.field.as_str(),
+                anchor_kind_as_str(&card.anchor_kind),
+                card.anchor_id.as_str(),
+                card.parent_anchor_id.as_deref(),
+                card.scope_constraints.as_deref(),
+                encode_optional_json(card.trigger_hints.as_ref())?,
+                card.created_at.as_str(),
+                card.updated_at.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_knowledge_card(&self, card_id: &str) -> Result<Option<KnowledgeCard>, DbError> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT
+                id,
+                statement,
+                content,
+                tier,
+                status,
+                domain,
+                field,
+                anchor_kind,
+                anchor_id,
+                parent_anchor_id,
+                scope_constraints,
+                trigger_hints,
+                created_at,
+                updated_at
+            FROM knowledge_cards
+            WHERE id = ?1
+            "#,
+        )?;
+        let mut rows = statement.query_map([card_id], |row| {
+            knowledge_card_from_row(row).map_err(row_decode_error)
+        })?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_knowledge_cards(
+        &self,
+        filter: &KnowledgeCardFilter,
+    ) -> Result<Vec<KnowledgeCard>, DbError> {
+        let tier = filter.tier.as_ref().map(knowledge_tier_as_str);
+        let status = filter.status.as_ref().map(knowledge_status_as_str);
+        let domain = filter.domain.as_ref().map(memory_domain_as_str);
+        let anchor_kind = filter.anchor_kind.as_ref().map(anchor_kind_as_str);
+
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT
+                id,
+                statement,
+                content,
+                tier,
+                status,
+                domain,
+                field,
+                anchor_kind,
+                anchor_id,
+                parent_anchor_id,
+                scope_constraints,
+                trigger_hints,
+                created_at,
+                updated_at
+            FROM knowledge_cards
+            WHERE (?1 IS NULL OR tier = ?1)
+              AND (?2 IS NULL OR status = ?2)
+              AND (?3 IS NULL OR domain = ?3)
+              AND (?4 IS NULL OR field = ?4)
+              AND (?5 IS NULL OR anchor_kind = ?5)
+              AND (?6 IS NULL OR anchor_id = ?6)
+            ORDER BY tier, status, id
+            "#,
+        )?;
+        let rows = statement
+            .query_map(
+                params![
+                    tier,
+                    status,
+                    domain,
+                    filter.field.as_deref(),
+                    anchor_kind,
+                    filter.anchor_id.as_deref(),
+                ],
+                |row| knowledge_card_from_row(row).map_err(row_decode_error),
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn update_knowledge_card(&self, card: &KnowledgeCard) -> Result<bool, DbError> {
+        anchor::validate_anchor_domain(&card.domain, &card.anchor_kind)
+            .map_err(|message| DbError::InvalidDrawerMetadata(message.to_string()))?;
+
+        let affected = self.conn.execute(
+            r#"
+            UPDATE knowledge_cards
+            SET statement = ?2,
+                content = ?3,
+                tier = ?4,
+                status = ?5,
+                domain = ?6,
+                field = ?7,
+                anchor_kind = ?8,
+                anchor_id = ?9,
+                parent_anchor_id = ?10,
+                scope_constraints = ?11,
+                trigger_hints = ?12,
+                updated_at = ?13
+            WHERE id = ?1
+            "#,
+            params![
+                card.id.as_str(),
+                card.statement.as_str(),
+                card.content.as_str(),
+                knowledge_tier_as_str(&card.tier),
+                knowledge_status_as_str(&card.status),
+                memory_domain_as_str(&card.domain),
+                card.field.as_str(),
+                anchor_kind_as_str(&card.anchor_kind),
+                card.anchor_id.as_str(),
+                card.parent_anchor_id.as_deref(),
+                card.scope_constraints.as_deref(),
+                encode_optional_json(card.trigger_hints.as_ref())?,
+                card.updated_at.as_str(),
+            ],
+        )?;
+        Ok(affected > 0)
+    }
+
+    pub fn insert_knowledge_evidence_link(
+        &self,
+        link: &KnowledgeEvidenceLink,
+    ) -> Result<(), DbError> {
+        let evidence = self.get_drawer(&link.evidence_drawer_id)?.ok_or_else(|| {
+            DbError::InvalidDrawerMetadata(format!(
+                "evidence drawer {} does not exist",
+                link.evidence_drawer_id
+            ))
+        })?;
+        if evidence.memory_kind != MemoryKind::Evidence {
+            return Err(DbError::InvalidDrawerMetadata(format!(
+                "evidence link target {} must be an evidence drawer",
+                link.evidence_drawer_id
+            )));
+        }
+
+        self.conn.execute(
+            r#"
+            INSERT INTO knowledge_evidence_links (
+                id,
+                card_id,
+                evidence_drawer_id,
+                role,
+                note,
+                created_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                link.id.as_str(),
+                link.card_id.as_str(),
+                link.evidence_drawer_id.as_str(),
+                knowledge_evidence_role_as_str(&link.role),
+                link.note.as_deref(),
+                link.created_at.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn knowledge_evidence_links(
+        &self,
+        card_id: &str,
+    ) -> Result<Vec<KnowledgeEvidenceLink>, DbError> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, card_id, evidence_drawer_id, role, note, created_at
+            FROM knowledge_evidence_links
+            WHERE card_id = ?1
+            ORDER BY created_at, id
+            "#,
+        )?;
+        let rows = statement
+            .query_map([card_id], |row| {
+                knowledge_evidence_link_from_row(row).map_err(row_decode_error)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn append_knowledge_event(&self, event: &KnowledgeCardEvent) -> Result<(), DbError> {
+        self.conn.execute(
+            r#"
+            INSERT INTO knowledge_events (
+                id,
+                card_id,
+                event_type,
+                from_status,
+                to_status,
+                reason,
+                actor,
+                metadata,
+                created_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            "#,
+            params![
+                event.id.as_str(),
+                event.card_id.as_str(),
+                knowledge_event_type_as_str(&event.event_type),
+                event.from_status.as_ref().map(knowledge_status_as_str),
+                event.to_status.as_ref().map(knowledge_status_as_str),
+                event.reason.as_str(),
+                event.actor.as_deref(),
+                encode_optional_json(event.metadata.as_ref())?,
+                event.created_at.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn knowledge_events(&self, card_id: &str) -> Result<Vec<KnowledgeCardEvent>, DbError> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT
+                id,
+                card_id,
+                event_type,
+                from_status,
+                to_status,
+                reason,
+                actor,
+                metadata,
+                created_at
+            FROM knowledge_events
+            WHERE card_id = ?1
+            ORDER BY created_at, id
+            "#,
+        )?;
+        let rows = statement
+            .query_map([card_id], |row| {
+                knowledge_event_from_row(row).map_err(row_decode_error)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn neighbor_chunks(
@@ -1744,6 +2032,58 @@ fn knowledge_status_from_str(status: &str) -> Result<KnowledgeStatus, DbError> {
     }
 }
 
+fn knowledge_evidence_role_as_str(role: &KnowledgeEvidenceRole) -> &'static str {
+    match role {
+        KnowledgeEvidenceRole::Supporting => "supporting",
+        KnowledgeEvidenceRole::Verification => "verification",
+        KnowledgeEvidenceRole::Counterexample => "counterexample",
+        KnowledgeEvidenceRole::Teaching => "teaching",
+    }
+}
+
+fn knowledge_evidence_role_from_str(role: &str) -> Result<KnowledgeEvidenceRole, DbError> {
+    match role {
+        "supporting" => Ok(KnowledgeEvidenceRole::Supporting),
+        "verification" => Ok(KnowledgeEvidenceRole::Verification),
+        "counterexample" => Ok(KnowledgeEvidenceRole::Counterexample),
+        "teaching" => Ok(KnowledgeEvidenceRole::Teaching),
+        other => Err(DbError::InvalidEnumValue {
+            kind: "knowledge_evidence_role",
+            value: other.to_string(),
+        }),
+    }
+}
+
+fn knowledge_event_type_as_str(event_type: &KnowledgeEventType) -> &'static str {
+    match event_type {
+        KnowledgeEventType::Created => "created",
+        KnowledgeEventType::Promoted => "promoted",
+        KnowledgeEventType::Demoted => "demoted",
+        KnowledgeEventType::Retired => "retired",
+        KnowledgeEventType::Linked => "linked",
+        KnowledgeEventType::Unlinked => "unlinked",
+        KnowledgeEventType::Updated => "updated",
+        KnowledgeEventType::PublishedAnchor => "published_anchor",
+    }
+}
+
+fn knowledge_event_type_from_str(event_type: &str) -> Result<KnowledgeEventType, DbError> {
+    match event_type {
+        "created" => Ok(KnowledgeEventType::Created),
+        "promoted" => Ok(KnowledgeEventType::Promoted),
+        "demoted" => Ok(KnowledgeEventType::Demoted),
+        "retired" => Ok(KnowledgeEventType::Retired),
+        "linked" => Ok(KnowledgeEventType::Linked),
+        "unlinked" => Ok(KnowledgeEventType::Unlinked),
+        "updated" => Ok(KnowledgeEventType::Updated),
+        "published_anchor" => Ok(KnowledgeEventType::PublishedAnchor),
+        other => Err(DbError::InvalidEnumValue {
+            kind: "knowledge_event_type",
+            value: other.to_string(),
+        }),
+    }
+}
+
 fn encode_json<T: serde::Serialize + ?Sized>(value: &T) -> Result<String, DbError> {
     Ok(serde_json::to_string(value)?)
 }
@@ -1770,6 +2110,71 @@ where
 
 fn row_decode_error(error: DbError) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+}
+
+fn knowledge_card_from_row(row: &Row<'_>) -> Result<KnowledgeCard, DbError> {
+    let tier = knowledge_tier_from_str(&row.get::<_, String>(3)?)?;
+    let status = knowledge_status_from_str(&row.get::<_, String>(4)?)?;
+    let domain = memory_domain_from_str(&row.get::<_, String>(5)?)?;
+    let anchor_kind = anchor_kind_from_str(&row.get::<_, String>(7)?)?;
+    let trigger_hints = parse_optional_json(row.get::<_, Option<String>>(11)?.as_deref())?;
+
+    anchor::validate_anchor_domain(&domain, &anchor_kind)
+        .map_err(|message| DbError::InvalidDrawerMetadata(message.to_string()))?;
+
+    Ok(KnowledgeCard {
+        id: row.get(0)?,
+        statement: row.get(1)?,
+        content: row.get(2)?,
+        tier,
+        status,
+        domain,
+        field: row.get(6)?,
+        anchor_kind,
+        anchor_id: row.get(8)?,
+        parent_anchor_id: row.get(9)?,
+        scope_constraints: row.get(10)?,
+        trigger_hints,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+    })
+}
+
+fn knowledge_evidence_link_from_row(row: &Row<'_>) -> Result<KnowledgeEvidenceLink, DbError> {
+    Ok(KnowledgeEvidenceLink {
+        id: row.get(0)?,
+        card_id: row.get(1)?,
+        evidence_drawer_id: row.get(2)?,
+        role: knowledge_evidence_role_from_str(&row.get::<_, String>(3)?)?,
+        note: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+fn knowledge_event_from_row(row: &Row<'_>) -> Result<KnowledgeCardEvent, DbError> {
+    let from_status = row
+        .get::<_, Option<String>>(3)?
+        .as_deref()
+        .map(knowledge_status_from_str)
+        .transpose()?;
+    let to_status = row
+        .get::<_, Option<String>>(4)?
+        .as_deref()
+        .map(knowledge_status_from_str)
+        .transpose()?;
+    let metadata = parse_optional_json(row.get::<_, Option<String>>(7)?.as_deref())?;
+
+    Ok(KnowledgeCardEvent {
+        id: row.get(0)?,
+        card_id: row.get(1)?,
+        event_type: knowledge_event_type_from_str(&row.get::<_, String>(2)?)?,
+        from_status,
+        to_status,
+        reason: row.get(5)?,
+        actor: row.get(6)?,
+        metadata,
+        created_at: row.get(8)?,
+    })
 }
 
 fn drawer_from_row(row: &Row<'_>) -> Result<Drawer, DbError> {
