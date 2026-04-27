@@ -34,6 +34,10 @@ use mempal::knowledge_card_backfill::{
     KnowledgeCardBackfillApplyOptions, KnowledgeCardBackfillApplyResult,
     KnowledgeCardBackfillReport, apply_backfill, build_backfill_report,
 };
+use mempal::knowledge_card_lifecycle::{
+    DemoteCardOutcome, DemoteCardRequest, KnowledgeCardGateReport, PromoteCardOutcome,
+    PromoteCardRequest, demote_card, evaluate_card_gate_by_id, promote_card,
+};
 use mempal::knowledge_distill::{DistillPlan, DistillRequest, commit_distill, prepare_distill};
 use mempal::knowledge_gate::{
     GateReport, PromotionPolicyEntry, evaluate_gate_by_id, promotion_policy,
@@ -444,6 +448,47 @@ enum KnowledgeCardCommands {
     },
     Events {
         card_id: String,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Gate {
+        card_id: String,
+        #[arg(long = "target-status")]
+        target_status: Option<String>,
+        #[arg(long)]
+        reviewer: Option<String>,
+        #[arg(long, default_value_t = false)]
+        allow_counterexamples: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Promote {
+        card_id: String,
+        #[arg(long)]
+        status: String,
+        #[arg(long = "verification-ref")]
+        verification_refs: Vec<String>,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        reviewer: Option<String>,
+        #[arg(long, default_value_t = false)]
+        allow_counterexamples: bool,
+        #[arg(long, default_value_t = true)]
+        enforce_gate: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Demote {
+        card_id: String,
+        #[arg(long)]
+        status: String,
+        #[arg(long = "evidence-ref")]
+        evidence_refs: Vec<String>,
+        #[arg(long)]
+        reason: String,
+        #[arg(long = "reason-type")]
+        reason_type: String,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -1817,6 +1862,69 @@ fn knowledge_card_command(db: &Database, command: KnowledgeCardCommands) -> Resu
                 .context("failed to list knowledge card events")?;
             print_knowledge_card_events(&events, &format)?;
         }
+        KnowledgeCardCommands::Gate {
+            card_id,
+            target_status,
+            reviewer,
+            allow_counterexamples,
+            format,
+        } => {
+            let report = evaluate_card_gate_by_id(
+                db,
+                &card_id,
+                target_status.as_deref(),
+                reviewer.as_deref(),
+                allow_counterexamples,
+            )
+            .context("failed to evaluate knowledge card gate")?;
+            print_knowledge_card_gate_report(&report, &format)?;
+        }
+        KnowledgeCardCommands::Promote {
+            card_id,
+            status,
+            verification_refs,
+            reason,
+            reviewer,
+            allow_counterexamples,
+            enforce_gate,
+            format,
+        } => {
+            let outcome = promote_card(
+                db,
+                PromoteCardRequest {
+                    card_id,
+                    status,
+                    verification_refs,
+                    reason,
+                    reviewer,
+                    allow_counterexamples,
+                    enforce_gate,
+                },
+            )
+            .context("failed to promote knowledge card")?;
+            print_knowledge_card_promote_outcome(&outcome, &format)?;
+        }
+        KnowledgeCardCommands::Demote {
+            card_id,
+            status,
+            evidence_refs,
+            reason,
+            reason_type,
+            format,
+        } => {
+            let outcome = demote_card(
+                db,
+                DemoteCardRequest {
+                    card_id,
+                    status,
+                    evidence_refs,
+                    reason,
+                    reason_type,
+                },
+            )
+            .context("failed to demote knowledge card")?;
+            print_knowledge_card_demote_outcome(&outcome, &format)?;
+        }
         KnowledgeCardCommands::BackfillPlan {
             tier,
             status,
@@ -1968,6 +2076,94 @@ fn print_knowledge_card_events(events: &[KnowledgeCardEvent], format: &str) -> R
             Ok(())
         }
         other => bail!("unsupported knowledge-card format: {other}"),
+    }
+}
+
+fn print_knowledge_card_gate_report(report: &KnowledgeCardGateReport, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("card_id={}", report.card_id);
+            println!("tier={}", report.tier);
+            println!("status={}", report.status);
+            println!("target_status={}", report.target_status);
+            println!("allowed={}", report.allowed);
+            println!(
+                "evidence_counts supporting={} verification={} teaching={} counterexample={}",
+                report.evidence_counts.supporting,
+                report.evidence_counts.verification,
+                report.evidence_counts.teaching,
+                report.evidence_counts.counterexample
+            );
+            println!(
+                "requirements supporting>={} verification>={} teaching>={} reviewer_required={} counterexamples_block={}",
+                report.requirements.min_supporting_refs,
+                report.requirements.min_verification_refs,
+                report.requirements.min_teaching_refs,
+                report.requirements.reviewer_required,
+                report.requirements.counterexamples_block
+            );
+            if !report.reasons.is_empty() {
+                println!("reasons={}", report.reasons.join("; "));
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize knowledge card gate report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card gate format: {other}"),
+    }
+}
+
+fn print_knowledge_card_promote_outcome(outcome: &PromoteCardOutcome, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!(
+                "card_id={} old_status={} new_status={} verification_refs={}",
+                outcome.card_id,
+                outcome.old_status,
+                outcome.new_status,
+                outcome.verification_refs.join(",")
+            );
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(outcome)
+                    .context("failed to serialize knowledge card promote outcome")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card promote format: {other}"),
+    }
+}
+
+fn print_knowledge_card_demote_outcome(outcome: &DemoteCardOutcome, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!(
+                "card_id={} old_status={} new_status={} counterexample_refs={}",
+                outcome.card_id,
+                outcome.old_status,
+                outcome.new_status,
+                outcome.counterexample_refs.join(",")
+            );
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(outcome)
+                    .context("failed to serialize knowledge card demote outcome")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card demote format: {other}"),
     }
 }
 

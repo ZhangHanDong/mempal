@@ -6,6 +6,9 @@ use crate::core::types::{
 };
 use crate::field_taxonomy::FieldTaxonomyEntry;
 use crate::knowledge_anchor::PublishAnchorOutcome;
+use crate::knowledge_card_lifecycle::{
+    DemoteCardOutcome, KnowledgeCardGateReport, PromoteCardOutcome,
+};
 use crate::knowledge_distill::DistillOutcome;
 use crate::knowledge_gate::{GateReport, PromotionPolicyEntry};
 use crate::knowledge_lifecycle::{DemoteOutcome, PromoteOutcome};
@@ -266,6 +269,14 @@ pub struct KnowledgePolicyEntryDto {
 pub struct KnowledgeCardsRequest {
     pub action: String,
     pub card_id: Option<String>,
+    pub target_status: Option<String>,
+    pub reviewer: Option<String>,
+    pub allow_counterexamples: Option<bool>,
+    pub verification_refs: Option<Vec<String>>,
+    pub evidence_refs: Option<Vec<String>>,
+    pub reason: Option<String>,
+    pub reason_type: Option<String>,
+    pub enforce_gate: Option<bool>,
     pub tier: Option<String>,
     pub status: Option<String>,
     pub domain: Option<String>,
@@ -278,6 +289,12 @@ pub struct KnowledgeCardsRequest {
 pub struct KnowledgeCardsResponse {
     pub cards: Vec<KnowledgeCardDto>,
     pub events: Vec<KnowledgeCardEventDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate: Option<KnowledgeCardGateDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promote: Option<KnowledgeCardPromoteDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub demote: Option<KnowledgeCardDemoteDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -309,6 +326,35 @@ pub struct KnowledgeCardEventDto {
     pub actor: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeCardGateDto {
+    pub card_id: String,
+    pub tier: String,
+    pub status: String,
+    pub target_status: String,
+    pub allowed: bool,
+    pub reasons: Vec<String>,
+    pub requirements: KnowledgeGateRequirementsDto,
+    pub evidence_counts: KnowledgeGateEvidenceCountsDto,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeCardPromoteDto {
+    pub card_id: String,
+    pub old_status: String,
+    pub new_status: String,
+    pub verification_refs: Vec<String>,
+    pub gate: Option<KnowledgeCardGateDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct KnowledgeCardDemoteDto {
+    pub card_id: String,
+    pub old_status: String,
+    pub new_status: String,
+    pub counterexample_refs: Vec<String>,
 }
 
 impl From<Vec<PromotionPolicyEntry>> for KnowledgePolicyResponse {
@@ -960,6 +1006,55 @@ impl From<KnowledgeCardEvent> for KnowledgeCardEventDto {
             actor: value.actor,
             metadata: value.metadata,
             created_at: value.created_at,
+        }
+    }
+}
+
+impl From<KnowledgeCardGateReport> for KnowledgeCardGateDto {
+    fn from(value: KnowledgeCardGateReport) -> Self {
+        Self {
+            card_id: value.card_id,
+            tier: value.tier,
+            status: value.status,
+            target_status: value.target_status,
+            allowed: value.allowed,
+            reasons: value.reasons,
+            requirements: KnowledgeGateRequirementsDto {
+                min_supporting_refs: value.requirements.min_supporting_refs,
+                min_verification_refs: value.requirements.min_verification_refs,
+                min_teaching_refs: value.requirements.min_teaching_refs,
+                reviewer_required: value.requirements.reviewer_required,
+                counterexamples_block: value.requirements.counterexamples_block,
+            },
+            evidence_counts: KnowledgeGateEvidenceCountsDto {
+                supporting: value.evidence_counts.supporting,
+                counterexample: value.evidence_counts.counterexample,
+                teaching: value.evidence_counts.teaching,
+                verification: value.evidence_counts.verification,
+            },
+        }
+    }
+}
+
+impl From<PromoteCardOutcome> for KnowledgeCardPromoteDto {
+    fn from(value: PromoteCardOutcome) -> Self {
+        Self {
+            card_id: value.card_id,
+            old_status: value.old_status,
+            new_status: value.new_status,
+            verification_refs: value.verification_refs,
+            gate: value.gate.map(KnowledgeCardGateDto::from),
+        }
+    }
+}
+
+impl From<DemoteCardOutcome> for KnowledgeCardDemoteDto {
+    fn from(value: DemoteCardOutcome) -> Self {
+        Self {
+            card_id: value.card_id,
+            old_status: value.old_status,
+            new_status: value.new_status,
+            counterexample_refs: value.counterexample_refs,
         }
     }
 }

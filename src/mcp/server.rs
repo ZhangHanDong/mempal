@@ -27,6 +27,10 @@ use crate::ingest::{
     normalize::CURRENT_NORMALIZE_VERSION,
 };
 use crate::knowledge_anchor::{PublishAnchorRequest as CorePublishAnchorRequest, publish_anchor};
+use crate::knowledge_card_lifecycle::{
+    DemoteCardRequest as CoreDemoteCardRequest, PromoteCardRequest as CorePromoteCardRequest,
+    demote_card, evaluate_card_gate_by_id, promote_card,
+};
 use crate::knowledge_distill::{
     DistillPlan, DistillRequest as CoreDistillRequest, commit_distill, prepare_distill,
 };
@@ -855,7 +859,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_knowledge_cards",
-        description = "Read-only Phase-2 knowledge card inspection. Actions: list/get/events. Reads schema v8 knowledge_cards and knowledge_events only; does not create cards, link evidence, append events, mutate lifecycle, search, assemble context, or backfill."
+        description = "Phase-2 knowledge card inspection and governed lifecycle. Actions: list/get/events/gate/promote/demote. Gate is read-only; promote/demote require evidence refs and append knowledge_events transactionally."
     )]
     async fn mempal_knowledge_cards(
         &self,
@@ -884,6 +888,9 @@ impl MempalMcpServer {
                 Ok(Json(KnowledgeCardsResponse {
                     cards: cards.into_iter().map(KnowledgeCardDto::from).collect(),
                     events: Vec::new(),
+                    gate: None,
+                    promote: None,
+                    demote: None,
                 }))
             }
             "get" => {
@@ -905,6 +912,9 @@ impl MempalMcpServer {
                 Ok(Json(KnowledgeCardsResponse {
                     cards: vec![KnowledgeCardDto::from(card)],
                     events: Vec::new(),
+                    gate: None,
+                    promote: None,
+                    demote: None,
                 }))
             }
             "events" => {
@@ -921,11 +931,84 @@ impl MempalMcpServer {
                         .into_iter()
                         .map(KnowledgeCardEventDto::from)
                         .collect(),
+                    gate: None,
+                    promote: None,
+                    demote: None,
+                }))
+            }
+            "gate" => {
+                let card_id = required_string(request.card_id.as_deref(), "card_id")?;
+                let report = evaluate_card_gate_by_id(
+                    &db,
+                    card_id,
+                    request.target_status.as_deref(),
+                    request.reviewer.as_deref(),
+                    request.allow_counterexamples.unwrap_or(false),
+                )
+                .map_err(knowledge_card_lifecycle_error)?;
+                Ok(Json(KnowledgeCardsResponse {
+                    cards: Vec::new(),
+                    events: Vec::new(),
+                    gate: Some(report.into()),
+                    promote: None,
+                    demote: None,
+                }))
+            }
+            "promote" => {
+                let card_id = required_string(request.card_id.as_deref(), "card_id")?;
+                let status = required_string(request.status.as_deref(), "status")?.to_string();
+                let reason = required_string(request.reason.as_deref(), "reason")?.to_string();
+                let verification_refs = request.verification_refs.unwrap_or_default();
+                let outcome = promote_card(
+                    &db,
+                    CorePromoteCardRequest {
+                        card_id: card_id.to_string(),
+                        status,
+                        verification_refs,
+                        reason,
+                        reviewer: request.reviewer,
+                        allow_counterexamples: request.allow_counterexamples.unwrap_or(false),
+                        enforce_gate: request.enforce_gate.unwrap_or(true),
+                    },
+                )
+                .map_err(knowledge_card_lifecycle_error)?;
+                Ok(Json(KnowledgeCardsResponse {
+                    cards: Vec::new(),
+                    events: Vec::new(),
+                    gate: None,
+                    promote: Some(outcome.into()),
+                    demote: None,
+                }))
+            }
+            "demote" => {
+                let card_id = required_string(request.card_id.as_deref(), "card_id")?;
+                let status = required_string(request.status.as_deref(), "status")?.to_string();
+                let reason = required_string(request.reason.as_deref(), "reason")?.to_string();
+                let reason_type =
+                    required_string(request.reason_type.as_deref(), "reason_type")?.to_string();
+                let evidence_refs = request.evidence_refs.unwrap_or_default();
+                let outcome = demote_card(
+                    &db,
+                    CoreDemoteCardRequest {
+                        card_id: card_id.to_string(),
+                        status,
+                        evidence_refs,
+                        reason,
+                        reason_type,
+                    },
+                )
+                .map_err(knowledge_card_lifecycle_error)?;
+                Ok(Json(KnowledgeCardsResponse {
+                    cards: Vec::new(),
+                    events: Vec::new(),
+                    gate: None,
+                    promote: None,
+                    demote: Some(outcome.into()),
                 }))
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported knowledge cards action: {other}; read-only actions are list, get, events"
+                    "unsupported knowledge cards action: {other}; actions are list, get, events, gate, promote, demote"
                 ),
                 None,
             )),
@@ -1748,6 +1831,18 @@ fn knowledge_lifecycle_error(error: anyhow::Error) -> ErrorData {
     ErrorData::invalid_params(message, None)
 }
 
+fn knowledge_card_lifecycle_error(error: anyhow::Error) -> ErrorData {
+    let message = error.to_string();
+    if message.contains("failed to update")
+        || message.contains("failed to insert")
+        || message.contains("failed to append")
+        || message.contains("failed to list")
+    {
+        return ErrorData::internal_error(message, None);
+    }
+    ErrorData::invalid_params(message, None)
+}
+
 fn knowledge_anchor_error(error: anyhow::Error) -> ErrorData {
     let message = error.to_string();
     if message.contains("failed to update")
@@ -1885,6 +1980,7 @@ mod tests {
     use super::*;
     use crate::core::types::{
         BootstrapEvidenceArgs, KnowledgeCard, KnowledgeCardEvent, KnowledgeEventType,
+        KnowledgeEvidenceLink, KnowledgeEvidenceRole,
     };
     use crate::embed::Embedder;
 
@@ -2002,6 +2098,25 @@ mod tests {
             created_at: created_at.to_string(),
         })
         .expect("append knowledge card event");
+    }
+
+    fn insert_knowledge_card_link(
+        db_path: &Path,
+        id: &str,
+        card_id: &str,
+        evidence_drawer_id: &str,
+        role: KnowledgeEvidenceRole,
+    ) {
+        let db = Database::open(db_path).expect("open db");
+        db.insert_knowledge_evidence_link(&KnowledgeEvidenceLink {
+            id: id.to_string(),
+            card_id: card_id.to_string(),
+            evidence_drawer_id: evidence_drawer_id.to_string(),
+            role,
+            note: None,
+            created_at: "1713000000".to_string(),
+        })
+        .expect("insert knowledge card link");
     }
 
     fn insert_drawer(
@@ -2815,7 +2930,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mcp_knowledge_cards_rejects_write_actions() {
+    async fn test_mcp_knowledge_cards_rejects_unknown_actions_without_mutation() {
         let (_tempdir, db_path, server) = setup_server();
         let before = {
             let db = Database::open(&db_path).expect("open db");
@@ -2829,8 +2944,12 @@ mod tests {
                 "action": "create"
             }))
             .await
-            .expect_err("write action should be rejected");
-        assert!(error.to_string().contains("read-only actions"));
+            .expect_err("unknown action should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("actions are list, get, events, gate, promote, demote")
+        );
 
         let after = {
             let db = Database::open(&db_path).expect("open db");
@@ -2841,8 +2960,103 @@ mod tests {
         assert_eq!(before, after);
     }
 
+    #[tokio::test]
+    async fn test_mcp_knowledge_cards_gate_and_lifecycle_actions() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_knowledge_card(
+            &db_path,
+            knowledge_card(
+                "card_lifecycle",
+                KnowledgeTier::Qi,
+                KnowledgeStatus::Candidate,
+                "rust",
+            ),
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_supporting",
+            "supporting evidence",
+            "mempal",
+            Some("phase2"),
+            "/tmp/supporting.md",
+            2,
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_verification",
+            "verification evidence",
+            "mempal",
+            Some("phase2"),
+            "/tmp/verification.md",
+            2,
+        );
+        insert_drawer(
+            &db_path,
+            "drawer_counterexample",
+            "counterexample evidence",
+            "mempal",
+            Some("phase2"),
+            "/tmp/counterexample.md",
+            2,
+        );
+        insert_knowledge_card_link(
+            &db_path,
+            "link_supporting",
+            "card_lifecycle",
+            "drawer_supporting",
+            KnowledgeEvidenceRole::Supporting,
+        );
+
+        let gate = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "gate",
+                "card_id": "card_lifecycle",
+                "target_status": "promoted"
+            }))
+            .await
+            .expect("gate card");
+        assert!(!gate.gate.expect("gate").allowed);
+
+        let promoted = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "promote",
+                "card_id": "card_lifecycle",
+                "status": "promoted",
+                "verification_refs": ["drawer_verification"],
+                "reason": "verified through MCP"
+            }))
+            .await
+            .expect("promote card");
+        assert_eq!(promoted.promote.expect("promote").new_status, "promoted");
+
+        let demoted = server
+            .knowledge_cards_json_for_test(serde_json::json!({
+                "action": "demote",
+                "card_id": "card_lifecycle",
+                "status": "demoted",
+                "evidence_refs": ["drawer_counterexample"],
+                "reason": "contradicted through MCP",
+                "reason_type": "contradicted"
+            }))
+            .await
+            .expect("demote card");
+        assert_eq!(demoted.demote.expect("demote").new_status, "demoted");
+        let db = Database::open(&db_path).expect("open db");
+        assert_eq!(
+            db.get_knowledge_card("card_lifecycle")
+                .expect("get card")
+                .expect("card exists")
+                .status,
+            KnowledgeStatus::Demoted
+        );
+        assert_eq!(
+            db.knowledge_events("card_lifecycle").expect("events").len(),
+            2
+        );
+    }
+
     #[test]
-    fn test_mcp_tool_registry_and_protocol_include_knowledge_cards_readonly() {
+    fn test_mcp_tool_registry_and_protocol_include_knowledge_cards_lifecycle() {
         let (_tempdir, _db_path, server) = setup_server();
         let tools = server.tool_router.list_all();
         let tool = tools
@@ -2850,12 +3064,10 @@ mod tests {
             .find(|tool| tool.name == "mempal_knowledge_cards")
             .expect("mempal_knowledge_cards tool exists");
         let description = tool.description.as_deref().unwrap_or_default();
-        assert!(description.contains("Read-only Phase-2 knowledge card inspection"));
-        assert!(description.contains("Actions: list/get/events"));
+        assert!(description.contains("Phase-2 knowledge card inspection and governed lifecycle"));
+        assert!(description.contains("Actions: list/get/events/gate/promote/demote"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_cards"));
-        assert!(
-            crate::core::protocol::MEMORY_PROTOCOL.contains("read-only Phase-2 knowledge card")
-        );
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("Phase-2 knowledge card"));
     }
 
     #[tokio::test]

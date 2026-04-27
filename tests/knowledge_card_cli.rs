@@ -4,8 +4,8 @@ use std::process::{Command, Output};
 
 use mempal::core::db::Database;
 use mempal::core::types::{
-    AnchorKind, BootstrapEvidenceArgs, Drawer, KnowledgeCard, KnowledgeStatus, KnowledgeTier,
-    MemoryDomain, MemoryKind, SourceType,
+    AnchorKind, BootstrapEvidenceArgs, Drawer, KnowledgeCard, KnowledgeEvidenceLink,
+    KnowledgeEvidenceRole, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, SourceType,
 };
 use serde_json::Value;
 use tempfile::TempDir;
@@ -66,6 +66,24 @@ fn insert_evidence_drawer(db: &Database, id: &str) {
         importance: 0,
     }))
     .expect("insert evidence drawer");
+}
+
+fn insert_link(
+    db: &Database,
+    id: &str,
+    card_id: &str,
+    evidence_drawer_id: &str,
+    role: KnowledgeEvidenceRole,
+) {
+    db.insert_knowledge_evidence_link(&KnowledgeEvidenceLink {
+        id: id.to_string(),
+        card_id: card_id.to_string(),
+        evidence_drawer_id: evidence_drawer_id.to_string(),
+        role,
+        note: None,
+        created_at: "1710000000".to_string(),
+    })
+    .expect("insert link");
 }
 
 fn insert_knowledge_drawer(db: &Database, id: &str) {
@@ -326,6 +344,214 @@ fn test_cli_knowledge_card_event_append_and_list_json() {
     assert_eq!(array[0]["event_type"], "created");
     assert_eq!(array[0]["reason"], "seeded");
     assert_eq!(array[0]["actor"], "codex");
+}
+
+#[test]
+fn test_cli_knowledge_card_gate_counts_links() {
+    let (home, db) = setup_home();
+    insert_card(
+        &db,
+        card(
+            "card_gate",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "rust",
+        ),
+    );
+    insert_evidence_drawer(&db, "drawer_supporting");
+    insert_evidence_drawer(&db, "drawer_verification");
+    insert_link(
+        &db,
+        "link_supporting",
+        "card_gate",
+        "drawer_supporting",
+        KnowledgeEvidenceRole::Supporting,
+    );
+    insert_link(
+        &db,
+        "link_verification",
+        "card_gate",
+        "drawer_verification",
+        KnowledgeEvidenceRole::Verification,
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge-card",
+            "gate",
+            "card_gate",
+            "--target-status",
+            "promoted",
+            "--format",
+            "json",
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr_text(&output));
+    let value: Value = serde_json::from_slice(&output.stdout).expect("parse gate json");
+    assert_eq!(value["card_id"], "card_gate");
+    assert_eq!(value["allowed"], true);
+    assert_eq!(value["evidence_counts"]["supporting"], 1);
+    assert_eq!(value["evidence_counts"]["verification"], 1);
+}
+
+#[test]
+fn test_cli_knowledge_card_promote_gate_enforced_and_appends_event() {
+    let (home, db) = setup_home();
+    insert_card(
+        &db,
+        card(
+            "card_promote",
+            KnowledgeTier::Qi,
+            KnowledgeStatus::Candidate,
+            "rust",
+        ),
+    );
+    insert_evidence_drawer(&db, "drawer_supporting");
+    insert_evidence_drawer(&db, "drawer_verification");
+    insert_link(
+        &db,
+        "link_supporting",
+        "card_promote",
+        "drawer_supporting",
+        KnowledgeEvidenceRole::Supporting,
+    );
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge-card",
+            "promote",
+            "card_promote",
+            "--status",
+            "promoted",
+            "--verification-ref",
+            "drawer_verification",
+            "--reason",
+            "verified in CLI test",
+            "--format",
+            "json",
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr_text(&output));
+    let value: Value = serde_json::from_slice(&output.stdout).expect("parse promote json");
+    assert_eq!(value["old_status"], "candidate");
+    assert_eq!(value["new_status"], "promoted");
+    let db_card = db
+        .get_knowledge_card("card_promote")
+        .expect("get card")
+        .expect("card exists");
+    assert_eq!(db_card.status, KnowledgeStatus::Promoted);
+    let events = db.knowledge_events("card_promote").expect("events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].event_type,
+        mempal::core::types::KnowledgeEventType::Promoted
+    );
+}
+
+#[test]
+fn test_cli_knowledge_card_promote_gate_failure_does_not_mutate() {
+    let (home, db) = setup_home();
+    insert_card(
+        &db,
+        card(
+            "card_blocked",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "rust",
+        ),
+    );
+    insert_evidence_drawer(&db, "drawer_verification");
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge-card",
+            "promote",
+            "card_blocked",
+            "--status",
+            "promoted",
+            "--verification-ref",
+            "drawer_verification",
+            "--reason",
+            "missing supporting evidence",
+        ],
+    );
+
+    assert!(!output.status.success());
+    assert!(stderr_text(&output).contains("promotion gate failed"));
+    let db_card = db
+        .get_knowledge_card("card_blocked")
+        .expect("get card")
+        .expect("card exists");
+    assert_eq!(db_card.status, KnowledgeStatus::Promoted);
+    assert_eq!(
+        db.knowledge_evidence_links("card_blocked")
+            .expect("links")
+            .len(),
+        0
+    );
+    assert_eq!(
+        db.knowledge_events("card_blocked").expect("events").len(),
+        0
+    );
+}
+
+#[test]
+fn test_cli_knowledge_card_demote_links_counterexample_and_appends_event() {
+    let (home, db) = setup_home();
+    insert_card(
+        &db,
+        card(
+            "card_demote",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "rust",
+        ),
+    );
+    insert_evidence_drawer(&db, "drawer_counterexample");
+
+    let output = run_mempal(
+        home.path(),
+        &[
+            "knowledge-card",
+            "demote",
+            "card_demote",
+            "--status",
+            "demoted",
+            "--evidence-ref",
+            "drawer_counterexample",
+            "--reason",
+            "contradicted by runtime evidence",
+            "--reason-type",
+            "contradicted",
+            "--format",
+            "json",
+        ],
+    );
+
+    assert!(output.status.success(), "{}", stderr_text(&output));
+    let value: Value = serde_json::from_slice(&output.stdout).expect("parse demote json");
+    assert_eq!(value["old_status"], "promoted");
+    assert_eq!(value["new_status"], "demoted");
+    let db_card = db
+        .get_knowledge_card("card_demote")
+        .expect("get card")
+        .expect("card exists");
+    assert_eq!(db_card.status, KnowledgeStatus::Demoted);
+    assert_eq!(
+        db.knowledge_evidence_links("card_demote").expect("links")[0].role,
+        KnowledgeEvidenceRole::Counterexample
+    );
+    let events = db.knowledge_events("card_demote").expect("events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].event_type,
+        mempal::core::types::KnowledgeEventType::Demoted
+    );
 }
 
 #[test]

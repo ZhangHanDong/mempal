@@ -1,8 +1,29 @@
 # MIND MODEL DESIGN
 
 **Date**: 2026-04-21
-**Status**: Draft - discussion capture for review
+**Status**: P42 baseline implemented - future work remains explicit
 **Scope**: Capture the mind-model decisions discussed in this conversation and map them to a practical system design.
+
+## Implementation Checkpoint
+
+P42 baseline means the core mind-model architecture is implemented enough to
+operate as a governed memory system:
+
+- Stage 1 typed drawers separate raw evidence from governed knowledge.
+- `dao_tian -> dao_ren -> shu -> qi` runtime context assembly exists through
+  `mempal context` and `mempal_context`.
+- Stage 1 knowledge supports distill, gate, promote, demote, and outward anchor
+  publication through CLI and MCP surfaces.
+- Phase-2 `knowledge_cards`, `knowledge_evidence_links`, and
+  `knowledge_events` exist in the same SQLite `palace.db`.
+- Stage-1 knowledge drawers can be backfilled into Phase-2 cards through an
+  explicit dry-run-first apply command.
+- Phase-2 cards now have governed gate, promote, and demote lifecycle surfaces
+  in CLI and MCP.
+
+P42 baseline is not a claim that every future runtime integration is complete.
+It marks the point where the design is no longer only a discussion capture: the
+main storage, governance, and lifecycle surfaces exist and are test-backed.
 
 ## One-Sentence Thesis
 
@@ -933,6 +954,31 @@ Rationale:
 - using a second database or service would add operational complexity before the
   Phase-2 model has proven it needs independent scaling
 
+Implemented Phase-2 surface at P42 baseline:
+
+- `knowledge_cards`, `knowledge_evidence_links`, and `knowledge_events` are
+  schema v8 tables in `palace.db`
+- Rust core APIs can create/read/update/list cards, link evidence, and append
+  events
+- `mempal knowledge-card` exposes create/get/list/link/event/events
+- `mempal_knowledge_cards` exposes list/get/events to MCP-connected agents
+- `mempal knowledge-card backfill-plan` reports Stage-1 knowledge drawers that
+  are ready to become cards without writing
+- `mempal knowledge-card backfill-apply` defaults to dry-run and only writes
+  cards, links, and created events with `--execute`
+- `mempal knowledge-card gate` evaluates card readiness from role-separated
+  evidence links
+- `mempal knowledge-card promote` and `mempal knowledge-card demote` mutate
+  card status transactionally with role-specific evidence links and append-only
+  events
+- `mempal_knowledge_cards` also exposes `gate`, `promote`, and `demote` actions
+  over the same core lifecycle logic
+
+Phase-2 cards are governed objects, but they are not yet the default
+context/search source. At P42, `mempal context`, `mempal_context`, and
+`mempal_search` remain drawer/citation based because cards do not yet have a
+dedicated retrieval strategy or vector indexing policy.
+
 ## Decision on Bootstrap vs Final Architecture
 
 Current recommendation:
@@ -990,6 +1036,20 @@ Proceed with the following assumptions unless future evidence rejects them:
   `qi`; wake-up remains a refresh surface, not the typed assembler
 - the implementation should begin with drawer bootstrap and evolve into a
   dedicated knowledge model inside the same SQLite `palace.db`
+
+## Future Work After P42
+
+The remaining work is intentionally explicit:
+
+- define whether card retrieval uses card-level embeddings, linked evidence
+  retrieval, or a hybrid of both
+- add a card-aware context source only after the retrieval strategy is specified
+- decide whether Phase-2 card lifecycle should write JSONL audit entries in
+  addition to append-only `knowledge_events`
+- integrate external `research-rs` outputs as evidence/candidate insights
+  without letting research directly define `dao`
+- add evaluator-assisted promotion only behind deterministic gates and human
+  review rules for high-level knowledge
 
 ## Closing Summary
 
