@@ -17,8 +17,9 @@ use mempal::core::{
     db::Database,
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
-        AnchorKind, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, TaxonomyEntry,
-        TriggerHints, TunnelEndpoint,
+        AnchorKind, KnowledgeCard, KnowledgeCardEvent, KnowledgeCardFilter, KnowledgeEventType,
+        KnowledgeEvidenceLink, KnowledgeEvidenceRole, KnowledgeStatus, KnowledgeTier, MemoryDomain,
+        MemoryKind, TaxonomyEntry, TriggerHints, TunnelEndpoint,
     },
     utils::{build_triple_id, current_timestamp, format_tunnel_endpoint},
 };
@@ -39,6 +40,7 @@ use mempal::knowledge_lifecycle::{
 use mempal::mcp::MempalMcpServer;
 use mempal::search::{SearchFilters, SearchOptions, search_with_options};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 mod longmemeval;
 
@@ -149,6 +151,10 @@ enum Commands {
     Knowledge {
         #[command(subcommand)]
         command: KnowledgeCommands,
+    },
+    KnowledgeCard {
+        #[command(subcommand)]
+        command: KnowledgeCardCommands,
     },
     Tunnels {
         #[command(subcommand)]
@@ -351,6 +357,95 @@ enum KnowledgeCommands {
 }
 
 #[derive(Subcommand)]
+enum KnowledgeCardCommands {
+    Create {
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        statement: String,
+        #[arg(long)]
+        content: String,
+        #[arg(long)]
+        tier: String,
+        #[arg(long)]
+        status: String,
+        #[arg(long, default_value = "project")]
+        domain: String,
+        #[arg(long, default_value = "general")]
+        field: String,
+        #[arg(long = "anchor-kind", default_value = "repo")]
+        anchor_kind: String,
+        #[arg(long = "anchor-id")]
+        anchor_id: String,
+        #[arg(long = "parent-anchor-id")]
+        parent_anchor_id: Option<String>,
+        #[arg(long = "scope-constraints")]
+        scope_constraints: Option<String>,
+        #[arg(long = "intent-tag")]
+        intent_tags: Vec<String>,
+        #[arg(long = "workflow-bias")]
+        workflow_bias: Vec<String>,
+        #[arg(long = "tool-need")]
+        tool_needs: Vec<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Get {
+        card_id: String,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    List {
+        #[arg(long)]
+        tier: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long)]
+        field: Option<String>,
+        #[arg(long = "anchor-kind")]
+        anchor_kind: Option<String>,
+        #[arg(long = "anchor-id")]
+        anchor_id: Option<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Link {
+        card_id: String,
+        evidence_drawer_id: String,
+        #[arg(long)]
+        role: String,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+    },
+    Event {
+        card_id: String,
+        #[arg(long = "type")]
+        event_type: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long = "from-status")]
+        from_status: Option<String>,
+        #[arg(long = "to-status")]
+        to_status: Option<String>,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long = "metadata-json")]
+        metadata_json: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+    },
+    Events {
+        card_id: String,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum TunnelCommands {
     Add {
         #[arg(long)]
@@ -536,6 +631,7 @@ async fn run() -> Result<()> {
         } => reindex_command(&db, &config, stale, force, dry_run).await,
         Commands::Kg { command } => kg_command(&db, command),
         Commands::Knowledge { command } => knowledge_command(&db, &config, command).await,
+        Commands::KnowledgeCard { command } => knowledge_card_command(&db, command),
         Commands::Tunnels { command } => tunnels_command(&db, command),
         Commands::Taxonomy { command } => taxonomy_command(&db, command),
         Commands::FieldTaxonomy { format } => field_taxonomy_command(&format),
@@ -1013,6 +1109,16 @@ fn knowledge_tier_slug(value: &KnowledgeTier) -> &'static str {
     }
 }
 
+fn parse_knowledge_tier(value: &str) -> Result<KnowledgeTier> {
+    match value {
+        "qi" => Ok(KnowledgeTier::Qi),
+        "shu" => Ok(KnowledgeTier::Shu),
+        "dao_ren" => Ok(KnowledgeTier::DaoRen),
+        "dao_tian" => Ok(KnowledgeTier::DaoTian),
+        other => bail!("unsupported knowledge tier: {other}"),
+    }
+}
+
 fn knowledge_status_slug(value: &KnowledgeStatus) -> &'static str {
     match value {
         KnowledgeStatus::Candidate => "candidate",
@@ -1023,12 +1129,88 @@ fn knowledge_status_slug(value: &KnowledgeStatus) -> &'static str {
     }
 }
 
+fn parse_knowledge_status(value: &str) -> Result<KnowledgeStatus> {
+    match value {
+        "candidate" => Ok(KnowledgeStatus::Candidate),
+        "promoted" => Ok(KnowledgeStatus::Promoted),
+        "canonical" => Ok(KnowledgeStatus::Canonical),
+        "demoted" => Ok(KnowledgeStatus::Demoted),
+        "retired" => Ok(KnowledgeStatus::Retired),
+        other => bail!("unsupported knowledge status: {other}"),
+    }
+}
+
 fn anchor_kind_slug(value: &AnchorKind) -> &'static str {
     match value {
         AnchorKind::Global => "global",
         AnchorKind::Repo => "repo",
         AnchorKind::Worktree => "worktree",
     }
+}
+
+fn parse_anchor_kind(value: &str) -> Result<AnchorKind> {
+    match value {
+        "global" => Ok(AnchorKind::Global),
+        "repo" => Ok(AnchorKind::Repo),
+        "worktree" => Ok(AnchorKind::Worktree),
+        other => bail!("unsupported anchor kind: {other}"),
+    }
+}
+
+fn knowledge_evidence_role_slug(value: &KnowledgeEvidenceRole) -> &'static str {
+    match value {
+        KnowledgeEvidenceRole::Supporting => "supporting",
+        KnowledgeEvidenceRole::Verification => "verification",
+        KnowledgeEvidenceRole::Counterexample => "counterexample",
+        KnowledgeEvidenceRole::Teaching => "teaching",
+    }
+}
+
+fn parse_knowledge_evidence_role(value: &str) -> Result<KnowledgeEvidenceRole> {
+    match value {
+        "supporting" => Ok(KnowledgeEvidenceRole::Supporting),
+        "verification" => Ok(KnowledgeEvidenceRole::Verification),
+        "counterexample" => Ok(KnowledgeEvidenceRole::Counterexample),
+        "teaching" => Ok(KnowledgeEvidenceRole::Teaching),
+        other => bail!("unsupported knowledge evidence role: {other}"),
+    }
+}
+
+fn knowledge_event_type_slug(value: &KnowledgeEventType) -> &'static str {
+    match value {
+        KnowledgeEventType::Created => "created",
+        KnowledgeEventType::Promoted => "promoted",
+        KnowledgeEventType::Demoted => "demoted",
+        KnowledgeEventType::Retired => "retired",
+        KnowledgeEventType::Linked => "linked",
+        KnowledgeEventType::Unlinked => "unlinked",
+        KnowledgeEventType::Updated => "updated",
+        KnowledgeEventType::PublishedAnchor => "published_anchor",
+    }
+}
+
+fn parse_knowledge_event_type(value: &str) -> Result<KnowledgeEventType> {
+    match value {
+        "created" => Ok(KnowledgeEventType::Created),
+        "promoted" => Ok(KnowledgeEventType::Promoted),
+        "demoted" => Ok(KnowledgeEventType::Demoted),
+        "retired" => Ok(KnowledgeEventType::Retired),
+        "linked" => Ok(KnowledgeEventType::Linked),
+        "unlinked" => Ok(KnowledgeEventType::Unlinked),
+        "updated" => Ok(KnowledgeEventType::Updated),
+        "published_anchor" => Ok(KnowledgeEventType::PublishedAnchor),
+        other => bail!("unsupported knowledge event type: {other}"),
+    }
+}
+
+fn stable_cli_id(prefix: &str, parts: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update([0]);
+        hasher.update(part.trim().as_bytes());
+    }
+    let digest = format!("{:x}", hasher.finalize());
+    format!("{prefix}_{}", &digest[..16])
 }
 
 fn effective_wake_up_text(drawer: &mempal::core::types::Drawer) -> &str {
@@ -1412,6 +1594,196 @@ async fn knowledge_command(
     Ok(())
 }
 
+fn knowledge_card_command(db: &Database, command: KnowledgeCardCommands) -> Result<()> {
+    match command {
+        KnowledgeCardCommands::Create {
+            id,
+            statement,
+            content,
+            tier,
+            status,
+            domain,
+            field,
+            anchor_kind,
+            anchor_id,
+            parent_anchor_id,
+            scope_constraints,
+            intent_tags,
+            workflow_bias,
+            tool_needs,
+            format,
+        } => {
+            let tier = parse_knowledge_tier(&tier)?;
+            let status = parse_knowledge_status(&status)?;
+            let domain = parse_domain(&domain)?;
+            let anchor_kind = parse_anchor_kind(&anchor_kind)?;
+            let trigger_hints = build_trigger_hints(intent_tags, workflow_bias, tool_needs);
+            let id = id.unwrap_or_else(|| {
+                stable_cli_id(
+                    "card",
+                    &[
+                        statement.as_str(),
+                        content.as_str(),
+                        knowledge_tier_slug(&tier),
+                        knowledge_status_slug(&status),
+                        domain_slug(&domain),
+                        field.as_str(),
+                        anchor_kind_slug(&anchor_kind),
+                        anchor_id.as_str(),
+                    ],
+                )
+            });
+            let now = current_timestamp();
+            let card = KnowledgeCard {
+                id: id.clone(),
+                statement,
+                content,
+                tier,
+                status,
+                domain,
+                field,
+                anchor_kind,
+                anchor_id,
+                parent_anchor_id,
+                scope_constraints,
+                trigger_hints,
+                created_at: now.clone(),
+                updated_at: now,
+            };
+            db.insert_knowledge_card(&card)
+                .context("failed to insert knowledge card")?;
+            match format.as_str() {
+                "plain" => println!("card_id={id} created=true"),
+                "json" => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&card)
+                        .context("failed to serialize knowledge card")?
+                ),
+                other => bail!("unsupported knowledge-card format: {other}"),
+            }
+        }
+        KnowledgeCardCommands::Get { card_id, format } => {
+            let card = db
+                .get_knowledge_card(&card_id)
+                .context("failed to get knowledge card")?
+                .with_context(|| format!("knowledge card not found: {card_id}"))?;
+            print_knowledge_card(&card, &format)?;
+        }
+        KnowledgeCardCommands::List {
+            tier,
+            status,
+            domain,
+            field,
+            anchor_kind,
+            anchor_id,
+            format,
+        } => {
+            let filter = KnowledgeCardFilter {
+                tier: tier.as_deref().map(parse_knowledge_tier).transpose()?,
+                status: status.as_deref().map(parse_knowledge_status).transpose()?,
+                domain: domain.as_deref().map(parse_domain).transpose()?,
+                field,
+                anchor_kind: anchor_kind.as_deref().map(parse_anchor_kind).transpose()?,
+                anchor_id,
+            };
+            let cards = db
+                .list_knowledge_cards(&filter)
+                .context("failed to list knowledge cards")?;
+            print_knowledge_cards(&cards, &format)?;
+        }
+        KnowledgeCardCommands::Link {
+            card_id,
+            evidence_drawer_id,
+            role,
+            note,
+            id,
+        } => {
+            let role = parse_knowledge_evidence_role(&role)?;
+            let id = id.unwrap_or_else(|| {
+                stable_cli_id(
+                    "link",
+                    &[
+                        card_id.as_str(),
+                        evidence_drawer_id.as_str(),
+                        knowledge_evidence_role_slug(&role),
+                        note.as_deref().unwrap_or(""),
+                    ],
+                )
+            });
+            let link = KnowledgeEvidenceLink {
+                id: id.clone(),
+                card_id,
+                evidence_drawer_id,
+                role,
+                note,
+                created_at: current_timestamp(),
+            };
+            db.insert_knowledge_evidence_link(&link)
+                .context("failed to insert knowledge evidence link")?;
+            println!("link_id={id} created=true");
+        }
+        KnowledgeCardCommands::Event {
+            card_id,
+            event_type,
+            reason,
+            from_status,
+            to_status,
+            actor,
+            metadata_json,
+            id,
+        } => {
+            let event_type = parse_knowledge_event_type(&event_type)?;
+            let from_status = from_status
+                .as_deref()
+                .map(parse_knowledge_status)
+                .transpose()?;
+            let to_status = to_status
+                .as_deref()
+                .map(parse_knowledge_status)
+                .transpose()?;
+            let metadata = metadata_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .context("failed to parse --metadata-json")?;
+            let created_at = current_timestamp();
+            let id = id.unwrap_or_else(|| {
+                stable_cli_id(
+                    "event",
+                    &[
+                        card_id.as_str(),
+                        knowledge_event_type_slug(&event_type),
+                        reason.as_str(),
+                        created_at.as_str(),
+                    ],
+                )
+            });
+            let event = KnowledgeCardEvent {
+                id: id.clone(),
+                card_id,
+                event_type,
+                from_status,
+                to_status,
+                reason,
+                actor,
+                metadata,
+                created_at,
+            };
+            db.append_knowledge_event(&event)
+                .context("failed to append knowledge card event")?;
+            println!("event_id={id} created=true");
+        }
+        KnowledgeCardCommands::Events { card_id, format } => {
+            let events = db
+                .knowledge_events(&card_id)
+                .context("failed to list knowledge card events")?;
+            print_knowledge_card_events(&events, &format)?;
+        }
+    }
+
+    Ok(())
+}
+
 fn normalized_nonempty_strings(values: &[String]) -> Vec<String> {
     values
         .iter()
@@ -1438,6 +1810,84 @@ fn build_trigger_hints(
         workflow_bias,
         tool_needs,
     })
+}
+
+fn print_knowledge_cards(cards: &[KnowledgeCard], format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            if cards.is_empty() {
+                println!("no knowledge cards");
+                return Ok(());
+            }
+            for card in cards {
+                println!(
+                    "{} tier={} status={} domain={} field={} anchor={} {}",
+                    card.id,
+                    knowledge_tier_slug(&card.tier),
+                    knowledge_status_slug(&card.status),
+                    domain_slug(&card.domain),
+                    card.field,
+                    anchor_kind_slug(&card.anchor_kind),
+                    card.anchor_id
+                );
+                println!("statement: {}", card.statement);
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(cards)
+                    .context("failed to serialize knowledge cards")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card format: {other}"),
+    }
+}
+
+fn print_knowledge_card(card: &KnowledgeCard, format: &str) -> Result<()> {
+    match format {
+        "plain" => print_knowledge_cards(std::slice::from_ref(card), format),
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(card).context("failed to serialize knowledge card")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card format: {other}"),
+    }
+}
+
+fn print_knowledge_card_events(events: &[KnowledgeCardEvent], format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            if events.is_empty() {
+                println!("no knowledge card events");
+                return Ok(());
+            }
+            for event in events {
+                println!(
+                    "{} card_id={} type={} reason={}",
+                    event.id,
+                    event.card_id,
+                    knowledge_event_type_slug(&event.event_type),
+                    event.reason
+                );
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(events)
+                    .context("failed to serialize knowledge card events")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card format: {other}"),
+    }
 }
 
 fn print_gate_report(report: &GateReport) {
