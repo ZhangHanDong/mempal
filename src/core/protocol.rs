@@ -488,6 +488,6 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("create temp dir");
         let db_path = tempdir.path().join("palace.db");
         let db = Database::open(&db_path).expect("open db");
-        assert_eq!(db.schema_version().expect("schema version"), 7);
+        assert_eq!(db.schema_version().expect("schema version"), 8);
     }
 }

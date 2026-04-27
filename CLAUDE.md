@@ -75,12 +75,12 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p28-field-taxonomy-surface.spec.md` | 完成 | `mempal field-taxonomy` / `mempal_field_taxonomy`：只读 Stage-1 field taxonomy guidance |
 | `specs/p29-wake-up-context-boundary.spec.md` | 完成 | 固化 wake-up 与 mind-model context 边界：wake-up 保持 L0/L1 refresh，typed `dao/shu/qi` 组装只属于 `mempal context` / `mempal_context` |
 | `specs/p30-knowledge-card-storage-boundary.spec.md` | 完成 | 固化 Phase-2 knowledge card 存储边界：未来 `knowledge_cards` 使用同一个 SQLite `palace.db` 的独立表，不拆外部 persistence layer |
+| `specs/p31-knowledge-card-schema.spec.md` | 完成 | schema v8 Phase-2 `knowledge_cards` / `knowledge_evidence_links` / `knowledge_events` 最小 schema contract |
+| `specs/p32-knowledge-card-schema-v8.spec.md` | 完成 | schema v8 migration：新增 Phase-2 knowledge card 三表、约束、索引、append-only events |
 
 ### 当前 Spec（草稿，未实现）
 
-| Spec | 范围 |
-|------|------|
-| `specs/p31-knowledge-card-schema.spec.md` | schema v8 Phase-2 `knowledge_cards` / `knowledge_evidence_links` / `knowledge_events` 最小 schema contract；当前仅 spec，未实现 migration |
+暂无。
 
 ### 实现计划
 
@@ -116,7 +116,8 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-26-p28-field-taxonomy-surface-implementation.md` — P28 field taxonomy surface（已完成）
 - `docs/plans/2026-04-26-p29-wake-up-context-boundary-implementation.md` — P29 wake-up/context boundary（已完成）
 - `docs/plans/2026-04-27-p30-knowledge-card-storage-boundary-implementation.md` — P30 knowledge card storage boundary（已完成）
-- `docs/plans/2026-04-27-p31-knowledge-card-schema-spec.md` — P31 knowledge card schema spec（草稿，未实现）
+- `docs/plans/2026-04-27-p31-knowledge-card-schema-spec.md` — P31 knowledge card schema spec（已完成）
+- `docs/plans/2026-04-27-p32-knowledge-card-schema-v8-implementation.md` — P32 knowledge card schema v8（已完成）
 
 ### Spec 使用方式
 
@@ -127,7 +128,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 
 ## 关键架构约束
 
-- **存储**：SQLite + sqlite-vec，单文件 `~/.mempal/palace.db`，schema v4
+- **存储**：SQLite + sqlite-vec，单文件 `~/.mempal/palace.db`，schema v8
 - **嵌入**：model2vec-rs 默认（potion-multilingual-128M, 256d），可选 ort (ONNX) 通过 `onnx` feature flag
 - **搜索**：BM25 (FTS5) + 向量 + RRF 融合混合检索
 - **AAAK 是输出格式化器**：不被 ingest 或 search 依赖
@@ -182,7 +183,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 
 ```
 crates/
-├── mempal-core/      # 数据模型 + SQLite schema v4 + taxonomy + triples
+├── mempal-core/      # 数据模型 + SQLite schema v8 + taxonomy + triples
 ├── mempal-ingest/    # 导入管道
 ├── mempal-search/    # 混合搜索（BM25+向量+RRF）+ 路由 + tunnel hints
 ├── mempal-embed/     # 嵌入层（model2vec 默认, ort 可选）

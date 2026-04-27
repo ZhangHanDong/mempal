@@ -545,7 +545,7 @@ fn test_migration_backfills_legacy_drawers_with_bootstrap_defaults() {
     }
 
     let db = Database::open(&db_path).expect("migrate db to latest");
-    assert_eq!(db.schema_version().expect("schema version"), 7);
+    assert_eq!(db.schema_version().expect("schema version"), 8);
 
     let drawer = db
         .get_drawer("drawer_legacy_001")

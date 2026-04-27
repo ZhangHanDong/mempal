@@ -245,7 +245,7 @@ fn test_migration_v6_to_v7_stamps_normalize_version_1() {
 
     let db = Database::open(&db_path).expect("migrate v6 db");
 
-    assert_eq!(db.schema_version().expect("schema version"), 7);
+    assert_eq!(db.schema_version().expect("schema version"), 8);
     assert_eq!(db.drawer_count().expect("drawer count"), 20);
     assert_eq!(count_normalize_version(&db, 1), 20);
 }

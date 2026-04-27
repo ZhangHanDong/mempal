@@ -203,7 +203,7 @@ fn test_schema_v5_to_v6_migration_preserves_data() {
 
     let db = Database::open(&db_path).expect("migrate v5 db");
 
-    assert_eq!(db.schema_version().expect("schema version"), 7);
+    assert_eq!(db.schema_version().expect("schema version"), 8);
     assert_eq!(db.drawer_count().expect("drawer count"), 2);
     assert_eq!(db.triple_count().expect("triple count"), 1);
     let tunnels_count: i64 = db

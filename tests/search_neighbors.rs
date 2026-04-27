@@ -291,7 +291,7 @@ async fn test_neighbors_limited_to_same_wing() {
 fn test_current_schema_has_chunk_index() {
     let (_tmp, db) = new_db();
 
-    assert_eq!(db.schema_version().expect("schema version"), 7);
+    assert_eq!(db.schema_version().expect("schema version"), 8);
     let exists: bool = db
         .conn()
         .query_row(

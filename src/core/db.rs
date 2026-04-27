@@ -15,7 +15,7 @@ use super::types::{
 };
 use super::utils::{build_tunnel_id, current_timestamp, format_tunnel_endpoint};
 
-const CURRENT_SCHEMA_VERSION: u32 = 7;
+const CURRENT_SCHEMA_VERSION: u32 = 8;
 const DRAWER_SELECT_COLUMNS: &str = r#"
     id,
     content,
@@ -142,6 +142,7 @@ impl Database {
         register_sqlite_vec()?;
 
         let conn = Connection::open(path)?;
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         apply_migrations(&conn)?;
 
         Ok(Self {
@@ -1465,6 +1466,80 @@ CREATE INDEX IF NOT EXISTS idx_drawers_normalize_version
     WHERE deleted_at IS NULL;
 "#;
 
+const V8_MIGRATION_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS knowledge_cards (
+    id TEXT PRIMARY KEY,
+    statement TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tier TEXT NOT NULL CHECK(tier IN ('qi', 'shu', 'dao_ren', 'dao_tian')),
+    status TEXT NOT NULL CHECK(status IN ('candidate', 'promoted', 'canonical', 'demoted', 'retired')),
+    domain TEXT NOT NULL CHECK(domain IN ('project', 'agent', 'skill', 'global')),
+    field TEXT NOT NULL DEFAULT 'general',
+    anchor_kind TEXT NOT NULL CHECK(anchor_kind IN ('global', 'repo', 'worktree')),
+    anchor_id TEXT NOT NULL,
+    parent_anchor_id TEXT,
+    scope_constraints TEXT,
+    trigger_hints TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_evidence_links (
+    id TEXT PRIMARY KEY,
+    card_id TEXT NOT NULL,
+    evidence_drawer_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK(role IN ('supporting', 'verification', 'counterexample', 'teaching')),
+    note TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(card_id, evidence_drawer_id, role),
+    FOREIGN KEY(card_id) REFERENCES knowledge_cards(id) ON DELETE RESTRICT,
+    FOREIGN KEY(evidence_drawer_id) REFERENCES drawers(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_events (
+    id TEXT PRIMARY KEY,
+    card_id TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK(event_type IN ('created', 'promoted', 'demoted', 'retired', 'linked', 'unlinked', 'updated', 'published_anchor')),
+    from_status TEXT,
+    to_status TEXT,
+    reason TEXT NOT NULL,
+    actor TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(card_id) REFERENCES knowledge_cards(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_tier_status
+    ON knowledge_cards(tier, status);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_domain_field
+    ON knowledge_cards(domain, field);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_anchor
+    ON knowledge_cards(anchor_kind, anchor_id);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_links_card
+    ON knowledge_evidence_links(card_id);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_links_evidence
+    ON knowledge_evidence_links(evidence_drawer_id);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_events_card_created_at
+    ON knowledge_events(card_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_events_no_update
+BEFORE UPDATE ON knowledge_events
+BEGIN
+    SELECT RAISE(ABORT, 'knowledge_events are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_events_no_delete
+BEFORE DELETE ON knowledge_events
+BEGIN
+    SELECT RAISE(ABORT, 'knowledge_events are append-only');
+END;
+"#;
+
 fn migrations() -> &'static [Migration] {
     static MIGRATIONS: &[Migration] = &[
         Migration {
@@ -1494,6 +1569,10 @@ fn migrations() -> &'static [Migration] {
         Migration {
             version: 7,
             sql: V7_MIGRATION_SQL,
+        },
+        Migration {
+            version: 8,
+            sql: V8_MIGRATION_SQL,
         },
     ];
     MIGRATIONS
