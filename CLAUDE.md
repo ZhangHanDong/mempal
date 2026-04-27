@@ -78,7 +78,9 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 
 ### 当前 Spec（草稿，未实现）
 
-暂无。
+| Spec | 范围 |
+|------|------|
+| `specs/p31-knowledge-card-schema.spec.md` | schema v8 Phase-2 `knowledge_cards` / `knowledge_evidence_links` / `knowledge_events` 最小 schema contract；当前仅 spec，未实现 migration |
 
 ### 实现计划
 
@@ -114,6 +116,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-26-p28-field-taxonomy-surface-implementation.md` — P28 field taxonomy surface（已完成）
 - `docs/plans/2026-04-26-p29-wake-up-context-boundary-implementation.md` — P29 wake-up/context boundary（已完成）
 - `docs/plans/2026-04-27-p30-knowledge-card-storage-boundary-implementation.md` — P30 knowledge card storage boundary（已完成）
+- `docs/plans/2026-04-27-p31-knowledge-card-schema-spec.md` — P31 knowledge card schema spec（草稿，未实现）
 
 ### Spec 使用方式
 

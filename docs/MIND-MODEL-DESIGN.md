@@ -858,6 +858,56 @@ Recommended objects:
 - `knowledge_evidence_links`
 - `knowledge_events`
 
+Minimum schema v8 draft:
+
+`knowledge_cards`:
+
+- `id TEXT PRIMARY KEY`
+- `statement TEXT NOT NULL`
+- `content TEXT NOT NULL`
+- `tier TEXT NOT NULL CHECK ('qi','shu','dao_ren','dao_tian')`
+- `status TEXT NOT NULL CHECK ('candidate','promoted','canonical','demoted','retired')`
+- `domain TEXT NOT NULL CHECK ('project','agent','skill','global')`
+- `field TEXT NOT NULL DEFAULT 'general'`
+- `anchor_kind TEXT NOT NULL CHECK ('global','repo','worktree')`
+- `anchor_id TEXT NOT NULL`
+- `parent_anchor_id TEXT`
+- `scope_constraints TEXT`
+- `trigger_hints TEXT`
+- `created_at TEXT NOT NULL`
+- `updated_at TEXT NOT NULL`
+
+`knowledge_evidence_links`:
+
+- `id TEXT PRIMARY KEY`
+- `card_id TEXT NOT NULL`
+- `evidence_drawer_id TEXT NOT NULL`
+- `role TEXT NOT NULL CHECK ('supporting','verification','counterexample','teaching')`
+- `note TEXT`
+- `created_at TEXT NOT NULL`
+- unique key: `(card_id, evidence_drawer_id, role)`
+
+`knowledge_events`:
+
+- `id TEXT PRIMARY KEY`
+- `card_id TEXT NOT NULL`
+- `event_type TEXT NOT NULL CHECK ('created','promoted','demoted','retired','linked','unlinked','updated','published_anchor')`
+- `from_status TEXT`
+- `to_status TEXT`
+- `reason TEXT NOT NULL`
+- `actor TEXT`
+- `metadata TEXT`
+- `created_at TEXT NOT NULL`
+
+Minimum indexes:
+
+- `knowledge_cards(tier, status)`
+- `knowledge_cards(domain, field)`
+- `knowledge_cards(anchor_kind, anchor_id)`
+- `knowledge_evidence_links(card_id)`
+- `knowledge_evidence_links(evidence_drawer_id)`
+- `knowledge_events(card_id, created_at)`
+
 This yields a cleaner separation:
 
 - evidence says what happened
