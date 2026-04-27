@@ -83,6 +83,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p34-knowledge-card-cli.spec.md` | 完成 | Phase-2 knowledge card 最小 CLI 管理入口：create/get/list/link/event/events，不接入 MCP/REST/search/context |
 | `specs/p35-knowledge-card-mcp-read.spec.md` | 完成 | Phase-2 knowledge card MCP 只读入口：`mempal_knowledge_cards` list/get/events，不开放写操作 |
 | `specs/p36-knowledge-card-backfill-report.spec.md` | 完成 | Stage-1 knowledge drawer -> Phase-2 card 只读 backfill-plan report；dry-run，不迁移 |
+| `specs/p37-knowledge-card-backfill-apply.spec.md` | 完成 | Stage-1 knowledge drawer -> Phase-2 card 显式 backfill apply：默认 dry-run，`--execute` 创建 cards/links/events |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -128,6 +129,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-27-p34-knowledge-card-cli-implementation.md` — P34 knowledge card CLI（已完成）
 - `docs/plans/2026-04-27-p35-knowledge-card-mcp-read-implementation.md` — P35 knowledge card MCP read（已完成）
 - `docs/plans/2026-04-27-p36-knowledge-card-backfill-report-implementation.md` — P36 knowledge card backfill report（已完成）
+- `docs/plans/2026-04-27-p37-knowledge-card-backfill-apply-implementation.md` — P37 knowledge card backfill apply（已完成）
 
 ### Spec 使用方式
 
