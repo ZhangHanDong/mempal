@@ -858,6 +858,52 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn knowledge_card_count(&self) -> Result<i64, DbError> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM knowledge_cards", [], |row| row.get(0))
+            .map_err(Into::into)
+    }
+
+    pub fn list_knowledge_drawers_for_card_backfill(
+        &self,
+        filter: &KnowledgeCardFilter,
+    ) -> Result<Vec<Drawer>, DbError> {
+        let tier = filter.tier.as_ref().map(knowledge_tier_as_str);
+        let status = filter.status.as_ref().map(knowledge_status_as_str);
+        let domain = filter.domain.as_ref().map(memory_domain_as_str);
+        let anchor_kind = filter.anchor_kind.as_ref().map(anchor_kind_as_str);
+
+        let mut statement = self.conn.prepare(&format!(
+            r#"
+            SELECT {DRAWER_SELECT_COLUMNS}
+            FROM drawers
+            WHERE deleted_at IS NULL
+              AND memory_kind = 'knowledge'
+              AND (?1 IS NULL OR tier = ?1)
+              AND (?2 IS NULL OR status = ?2)
+              AND (?3 IS NULL OR domain = ?3)
+              AND (?4 IS NULL OR field = ?4)
+              AND (?5 IS NULL OR anchor_kind = ?5)
+              AND (?6 IS NULL OR anchor_id = ?6)
+            ORDER BY id
+            "#,
+        ))?;
+        let rows = statement
+            .query_map(
+                params![
+                    tier,
+                    status,
+                    domain,
+                    filter.field.as_deref(),
+                    anchor_kind,
+                    filter.anchor_id.as_deref(),
+                ],
+                |row| drawer_from_row(row).map_err(row_decode_error),
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn update_knowledge_card(&self, card: &KnowledgeCard) -> Result<bool, DbError> {
         anchor::validate_anchor_domain(&card.domain, &card.anchor_kind)
             .map_err(|message| DbError::InvalidDrawerMetadata(message.to_string()))?;

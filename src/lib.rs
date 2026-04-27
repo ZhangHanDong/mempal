@@ -11,6 +11,7 @@ pub mod factcheck;
 pub mod field_taxonomy;
 pub mod ingest;
 pub mod knowledge_anchor;
+pub mod knowledge_card_backfill;
 pub mod knowledge_distill;
 pub mod knowledge_gate;
 pub mod knowledge_lifecycle;

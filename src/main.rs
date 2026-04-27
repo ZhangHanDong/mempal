@@ -30,6 +30,7 @@ use mempal::ingest::{
     reindex::{ReindexMode, ReindexOptions, ReindexReport, reindex_sources},
 };
 use mempal::knowledge_anchor::{PublishAnchorRequest, publish_anchor};
+use mempal::knowledge_card_backfill::{KnowledgeCardBackfillReport, build_backfill_report};
 use mempal::knowledge_distill::{DistillPlan, DistillRequest, commit_distill, prepare_distill};
 use mempal::knowledge_gate::{
     GateReport, PromotionPolicyEntry, evaluate_gate_by_id, promotion_policy,
@@ -440,6 +441,22 @@ enum KnowledgeCardCommands {
     },
     Events {
         card_id: String,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    BackfillPlan {
+        #[arg(long)]
+        tier: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long)]
+        field: Option<String>,
+        #[arg(long = "anchor-kind")]
+        anchor_kind: Option<String>,
+        #[arg(long = "anchor-id")]
+        anchor_id: Option<String>,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -1779,6 +1796,27 @@ fn knowledge_card_command(db: &Database, command: KnowledgeCardCommands) -> Resu
                 .context("failed to list knowledge card events")?;
             print_knowledge_card_events(&events, &format)?;
         }
+        KnowledgeCardCommands::BackfillPlan {
+            tier,
+            status,
+            domain,
+            field,
+            anchor_kind,
+            anchor_id,
+            format,
+        } => {
+            let filter = KnowledgeCardFilter {
+                tier: tier.as_deref().map(parse_knowledge_tier).transpose()?,
+                status: status.as_deref().map(parse_knowledge_status).transpose()?,
+                domain: domain.as_deref().map(parse_domain).transpose()?,
+                field,
+                anchor_kind: anchor_kind.as_deref().map(parse_anchor_kind).transpose()?,
+                anchor_id,
+            };
+            let report = build_backfill_report(db, &filter)
+                .context("failed to build knowledge card backfill plan")?;
+            print_knowledge_card_backfill_report(&report, &format)?;
+        }
     }
 
     Ok(())
@@ -1887,6 +1925,46 @@ fn print_knowledge_card_events(events: &[KnowledgeCardEvent], format: &str) -> R
             Ok(())
         }
         other => bail!("unsupported knowledge-card format: {other}"),
+    }
+}
+
+fn print_knowledge_card_backfill_report(
+    report: &KnowledgeCardBackfillReport,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!(
+                "ready={} skipped={} already_exists={}",
+                report.ready_count, report.skipped_count, report.already_exists_count
+            );
+            if report.candidates.is_empty() {
+                println!("no knowledge drawers");
+                return Ok(());
+            }
+            for candidate in &report.candidates {
+                println!(
+                    "{} -> {} status={:?}",
+                    candidate.source_drawer_id, candidate.prospective_card_id, candidate.status
+                );
+                if !candidate.reasons.is_empty() {
+                    println!("  reasons: {}", candidate.reasons.join("; "));
+                }
+                if let Some(statement) = candidate.statement.as_deref() {
+                    println!("  statement: {statement}");
+                }
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize knowledge card backfill report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card backfill-plan format: {other}"),
     }
 }
 
