@@ -47,10 +47,10 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 3b. USE MIND-MODEL CONTEXT FOR GUIDANCE
    When you need ordered operating guidance rather than raw evidence search,
    call mempal_context. It assembles typed knowledge in the intended runtime
-   order: dao_tian -> dao_ren -> shu -> qi, with evidence opt-in. Use this
-   before choosing a workflow or skill when the user asks "how should we
-   approach this?" or when a task benefits from high-level principles plus
-   concrete tool bindings.
+   order: dao_tian -> dao_ren -> shu -> qi, with evidence and Phase-2 card
+   context opt-in. Use this before choosing a workflow or skill when the user
+   asks "how should we approach this?" or when a task benefits from high-level
+   principles plus concrete tool bindings.
    dao_tian is intentionally sparse in runtime context: by default at most one
    dao_tian item is injected. Set dao_tian_limit=0 when universal principles
    are not needed, or raise it only when explicitly reasoning about
@@ -212,7 +212,7 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
-  mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi)
+  mempal_context       — ordered mind-model runtime context (dao_tian -> dao_ren -> shu -> qi; evidence/cards opt-in)
   mempal_field_taxonomy — read-only recommended mind-model field values
   mempal_knowledge_distill — create candidate knowledge from evidence refs
   mempal_knowledge_policy — read-only Stage-1 promotion policy thresholds

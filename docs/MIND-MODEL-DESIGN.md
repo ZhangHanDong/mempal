@@ -1009,6 +1009,20 @@ P43 does not change `mempal_search` behavior.
 Card embeddings, ranking strategy, and card-aware context/search surfaces are
 deferred to later specs.
 
+P44 adds the first explicit card-aware context surface:
+
+- `mempal context --include-cards`
+- `mempal_context` with `include_cards=true`
+
+This remains opt-in. Default context assembly is still drawer-only. When enabled,
+active Phase-2 cards are appended inside the existing
+`dao_tian -> dao_ren -> shu -> qi` sections and expose `card_id` plus
+role-separated `evidence_citations`. Each citation keeps the evidence drawer as
+the citation root through `evidence_drawer_id`, `role`, and `source_file`.
+
+P44 does not change `mempal_search`, does not add card embeddings, and does not
+make cards the default runtime source.
+
 ## Decision on Bootstrap vs Final Architecture
 
 Current recommendation:
@@ -1073,7 +1087,8 @@ The remaining work is intentionally explicit:
 
 - define whether card retrieval uses card-level embeddings, linked evidence
   retrieval, or a hybrid of both
-- add a card-aware context source only after the retrieval strategy is specified
+- decide whether card-aware context should eventually become default after more
+  runtime evidence
 - decide whether Phase-2 card lifecycle should write JSONL audit entries in
   addition to append-only `knowledge_events`
 - integrate external `research-rs` outputs as evidence/candidate insights

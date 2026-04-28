@@ -120,6 +120,8 @@ enum Commands {
         format: String,
         #[arg(long)]
         include_evidence: bool,
+        #[arg(long)]
+        include_cards: bool,
         #[arg(long, default_value_t = 12)]
         max_items: usize,
         #[arg(long = "dao-tian-limit", default_value_t = 1)]
@@ -683,6 +685,7 @@ async fn run() -> Result<()> {
             cwd,
             format,
             include_evidence,
+            include_cards,
             max_items,
             dao_tian_limit,
         } => {
@@ -696,6 +699,7 @@ async fn run() -> Result<()> {
                     cwd,
                     format,
                     include_evidence,
+                    include_cards,
                     max_items,
                     dao_tian_limit,
                 },
@@ -750,6 +754,7 @@ struct ContextCommandArgs {
     cwd: Option<PathBuf>,
     format: String,
     include_evidence: bool,
+    include_cards: bool,
     max_items: usize,
     dao_tian_limit: usize,
 }
@@ -968,6 +973,7 @@ async fn context_command(db: &Database, config: &Config, args: ContextCommandArg
             field: args.field,
             cwd,
             include_evidence: args.include_evidence,
+            include_cards: args.include_cards,
             max_items: args.max_items,
             dao_tian_limit: args.dao_tian_limit,
         },
@@ -1010,6 +1016,9 @@ fn print_context_plain(pack: &ContextPack) {
             println!("- {}", item.text);
             println!("  source: {}", item.source_file);
             println!("  drawer: {}", item.drawer_id);
+            if let Some(card_id) = item.card_id.as_deref() {
+                println!("  card: {card_id}");
+            }
             println!(
                 "  anchor: {} {}",
                 anchor_kind_slug(&item.anchor_kind),
@@ -1028,6 +1037,14 @@ fn print_context_plain(pack: &ContextPack) {
                     trigger_hints.intent_tags.join(","),
                     trigger_hints.workflow_bias.join(","),
                     trigger_hints.tool_needs.join(",")
+                );
+            }
+            for citation in &item.evidence_citations {
+                println!(
+                    "  evidence: {} role={} source={}",
+                    citation.evidence_drawer_id,
+                    knowledge_evidence_role_slug(&citation.role),
+                    citation.source_file
                 );
             }
         }

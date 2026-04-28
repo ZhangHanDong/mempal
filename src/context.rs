@@ -11,8 +11,9 @@ use crate::core::{
     db::Database,
     db::DbError,
     types::{
-        AnchorKind, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, RouteDecision,
-        SearchResult, TriggerHints,
+        AnchorKind, KnowledgeCard, KnowledgeCardFilter, KnowledgeEvidenceLink,
+        KnowledgeEvidenceRole, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
+        RouteDecision, SearchResult, TriggerHints,
     },
 };
 use crate::embed::{EmbedError, Embedder};
@@ -32,6 +33,8 @@ pub enum ContextError {
     Search(#[source] SearchError),
     #[error("failed to load context drawer metadata")]
     LoadDrawer(#[source] DbError),
+    #[error("failed to load context card metadata")]
+    LoadCard(#[source] DbError),
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +44,7 @@ pub struct ContextRequest {
     pub field: String,
     pub cwd: PathBuf,
     pub include_evidence: bool,
+    pub include_cards: bool,
     pub max_items: usize,
     pub dao_tian_limit: usize,
 }
@@ -72,6 +76,8 @@ pub struct ContextItem {
     pub source_file: String,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<KnowledgeTier>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<KnowledgeStatus>,
@@ -81,6 +87,15 @@ pub struct ContextItem {
     pub parent_anchor_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_hints: Option<TriggerHints>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub evidence_citations: Vec<ContextEvidenceCitation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextEvidenceCitation {
+    pub evidence_drawer_id: String,
+    pub role: KnowledgeEvidenceRole,
+    pub source_file: String,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +115,13 @@ struct CandidateQuery<'a> {
     tier: Option<KnowledgeTier>,
     status: Option<KnowledgeStatus>,
     top_k: usize,
+}
+
+struct CardAppendState<'a> {
+    seen: &'a mut BTreeSet<String>,
+    items: &'a mut Vec<ContextItem>,
+    remaining: &'a mut usize,
+    tier_remaining: &'a mut usize,
 }
 
 pub async fn assemble_context<E: Embedder + ?Sized>(
@@ -184,10 +206,43 @@ pub fn assemble_context_with_vector(
             }
         }
         if !items.is_empty() {
+            if request.include_cards && remaining > 0 {
+                append_card_context_items(
+                    db,
+                    &request,
+                    &anchors,
+                    tier,
+                    CardAppendState {
+                        seen: &mut seen,
+                        items: &mut items,
+                        remaining: &mut remaining,
+                        tier_remaining: &mut tier_remaining,
+                    },
+                )?;
+            }
             sections.push(ContextSection {
                 name: tier_slug(tier).to_string(),
                 items,
             });
+        } else if request.include_cards && remaining > 0 {
+            append_card_context_items(
+                db,
+                &request,
+                &anchors,
+                tier,
+                CardAppendState {
+                    seen: &mut seen,
+                    items: &mut items,
+                    remaining: &mut remaining,
+                    tier_remaining: &mut tier_remaining,
+                },
+            )?;
+            if !items.is_empty() {
+                sections.push(ContextSection {
+                    name: tier_slug(tier).to_string(),
+                    items,
+                });
+            }
         }
     }
 
@@ -345,6 +400,88 @@ fn context_item_from_result(db: &Database, result: SearchResult) -> Result<Conte
         anchor_id: result.anchor_id,
         parent_anchor_id: result.parent_anchor_id,
         trigger_hints,
+        card_id: None,
+        evidence_citations: Vec::new(),
+    })
+}
+
+fn append_card_context_items(
+    db: &Database,
+    request: &ContextRequest,
+    anchors: &[AnchorCandidate],
+    tier: &KnowledgeTier,
+    state: CardAppendState<'_>,
+) -> Result<()> {
+    for anchor in anchors {
+        if *state.remaining == 0 || *state.tier_remaining == 0 {
+            break;
+        }
+        for status in active_statuses() {
+            if *state.remaining == 0 || *state.tier_remaining == 0 {
+                break;
+            }
+            let cards = db
+                .list_knowledge_cards(&KnowledgeCardFilter {
+                    tier: Some(tier.clone()),
+                    status: Some(status.clone()),
+                    domain: Some(anchor.domain.clone()),
+                    field: Some(request.field.clone()),
+                    anchor_kind: Some(anchor.anchor_kind.clone()),
+                    anchor_id: Some(anchor.anchor_id.clone()),
+                })
+                .map_err(ContextError::LoadCard)?;
+            for card in cards {
+                if *state.remaining == 0 || *state.tier_remaining == 0 {
+                    break;
+                }
+                let seen_key = format!("card:{}", card.id);
+                if !state.seen.insert(seen_key) {
+                    continue;
+                }
+                state.items.push(context_item_from_card(db, card)?);
+                *state.remaining -= 1;
+                *state.tier_remaining -= 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn context_item_from_card(db: &Database, card: KnowledgeCard) -> Result<ContextItem> {
+    let evidence_citations = db
+        .knowledge_evidence_links(&card.id)
+        .map_err(ContextError::LoadCard)?
+        .into_iter()
+        .map(|link| evidence_citation_from_link(db, link))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ContextItem {
+        drawer_id: card.id.clone(),
+        source_file: format!("knowledge-card://{}", card.id),
+        text: card.statement.clone(),
+        card_id: Some(card.id),
+        tier: Some(card.tier),
+        status: Some(card.status),
+        anchor_kind: card.anchor_kind,
+        anchor_id: card.anchor_id,
+        parent_anchor_id: card.parent_anchor_id,
+        trigger_hints: card.trigger_hints,
+        evidence_citations,
+    })
+}
+
+fn evidence_citation_from_link(
+    db: &Database,
+    link: KnowledgeEvidenceLink,
+) -> Result<ContextEvidenceCitation> {
+    let source_file = db
+        .get_drawer(&link.evidence_drawer_id)
+        .map_err(ContextError::LoadDrawer)?
+        .and_then(|drawer| drawer.source_file)
+        .unwrap_or_else(|| format!("drawer://{}", link.evidence_drawer_id));
+    Ok(ContextEvidenceCitation {
+        evidence_drawer_id: link.evidence_drawer_id,
+        role: link.role,
+        source_file,
     })
 }
 

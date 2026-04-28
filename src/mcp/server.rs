@@ -710,7 +710,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_context",
-        description = "Assemble a mind-model runtime context pack from typed memory. Use this when you need ordered guidance rather than raw search results: dao_tian -> dao_ren -> shu -> qi, with evidence opt-in. Returns source-backed items with drawer_id/source_file citations and trigger_hints metadata, but never executes skills."
+        description = "Assemble a mind-model runtime context pack from typed memory. Use this when you need ordered guidance rather than raw search results: dao_tian -> dao_ren -> shu -> qi, with evidence and Phase-2 knowledge cards opt-in. Returns source-backed items with citations and trigger_hints metadata, but never executes skills."
     )]
     async fn mempal_context(
         &self,
@@ -764,6 +764,7 @@ impl MempalMcpServer {
                     .unwrap_or_else(|| anchor::DEFAULT_FIELD.to_string()),
                 cwd,
                 include_evidence: request.include_evidence.unwrap_or(false),
+                include_cards: request.include_cards.unwrap_or(false),
                 max_items,
                 dao_tian_limit,
             },
@@ -1863,7 +1864,8 @@ fn context_error(error: crate::context::ContextError) -> ErrorData {
         crate::context::ContextError::EmbedQuery(_)
         | crate::context::ContextError::MissingQueryVector
         | crate::context::ContextError::Search(_)
-        | crate::context::ContextError::LoadDrawer(_) => {
+        | crate::context::ContextError::LoadDrawer(_)
+        | crate::context::ContextError::LoadCard(_) => {
             ErrorData::internal_error(format!("context assembly failed: {error}"), None)
         }
     }
@@ -2552,6 +2554,62 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["qi", "evidence"]);
         assert_eq!(response.sections[1].items[0].drawer_id, "drawer_evidence");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_include_cards_appends_card_items() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_card_evidence",
+            "card evidence",
+            "mempal",
+            Some("context"),
+            "/tmp/card-evidence.md",
+            2,
+        );
+        let mut card = knowledge_card(
+            "card_context",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "general",
+        );
+        card.anchor_id = anchor::LEGACY_REPO_ANCHOR_ID.to_string();
+        insert_knowledge_card(&db_path, card);
+        insert_knowledge_card_link(
+            &db_path,
+            "link_card_context_supporting",
+            "card_context",
+            "drawer_card_evidence",
+            KnowledgeEvidenceRole::Supporting,
+        );
+
+        let response = server
+            .context_json_for_test(serde_json::json!({
+                "query": "card context",
+                "include_cards": true
+            }))
+            .await
+            .expect("context should succeed");
+        let card = response
+            .sections
+            .iter()
+            .flat_map(|section| section.items.iter())
+            .find(|item| item.card_id.as_deref() == Some("card_context"))
+            .expect("card context item");
+
+        assert_eq!(card.drawer_id, "card_context");
+        assert_eq!(card.source_file, "knowledge-card://card_context");
+        assert_eq!(card.evidence_citations.len(), 1);
+        assert_eq!(
+            card.evidence_citations[0].evidence_drawer_id,
+            "drawer_card_evidence"
+        );
+        assert_eq!(card.evidence_citations[0].role, "supporting");
+        assert_eq!(
+            card.evidence_citations[0].source_file,
+            "/tmp/card-evidence.md"
+        );
     }
 
     #[tokio::test]

@@ -10,8 +10,8 @@ use mempal::context::{ContextRequest, assemble_context};
 use mempal::core::anchor;
 use mempal::core::db::Database;
 use mempal::core::types::{
-    AnchorKind, Drawer, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance,
-    SourceType, TriggerHints,
+    AnchorKind, Drawer, KnowledgeCard, KnowledgeEvidenceLink, KnowledgeEvidenceRole,
+    KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, SourceType, TriggerHints,
 };
 use mempal::embed::Embedder;
 use serde_json::{Value, json};
@@ -69,9 +69,56 @@ fn default_request(query: &str, cwd: &Path) -> ContextRequest {
         field: "general".to_string(),
         cwd: cwd.to_path_buf(),
         include_evidence: false,
+        include_cards: false,
         max_items: 12,
         dao_tian_limit: 1,
     }
+}
+
+fn knowledge_card(
+    id: &str,
+    tier: KnowledgeTier,
+    status: KnowledgeStatus,
+    statement: &str,
+) -> KnowledgeCard {
+    KnowledgeCard {
+        id: id.to_string(),
+        statement: statement.to_string(),
+        content: format!("Card content for {id}."),
+        tier,
+        status,
+        domain: MemoryDomain::Project,
+        field: "general".to_string(),
+        anchor_kind: AnchorKind::Repo,
+        anchor_id: anchor::LEGACY_REPO_ANCHOR_ID.to_string(),
+        parent_anchor_id: None,
+        scope_constraints: None,
+        trigger_hints: None,
+        created_at: "1710000000".to_string(),
+        updated_at: "1710000000".to_string(),
+    }
+}
+
+fn insert_card(db: &Database, card: &KnowledgeCard) {
+    db.insert_knowledge_card(card).expect("insert card");
+}
+
+fn insert_card_link(
+    db: &Database,
+    id: &str,
+    card_id: &str,
+    evidence_drawer_id: &str,
+    role: KnowledgeEvidenceRole,
+) {
+    db.insert_knowledge_evidence_link(&KnowledgeEvidenceLink {
+        id: id.to_string(),
+        card_id: card_id.to_string(),
+        evidence_drawer_id: evidence_drawer_id.to_string(),
+        role,
+        note: None,
+        created_at: "1710000000".to_string(),
+    })
+    .expect("insert card link");
 }
 
 fn knowledge_drawer(
@@ -531,6 +578,110 @@ async fn test_context_omits_evidence_by_default() {
 }
 
 #[tokio::test]
+async fn test_context_omits_cards_by_default() {
+    let (tmp, db) = new_db();
+    insert_card(
+        &db,
+        &knowledge_card(
+            "card_promoted",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Use card context only when requested.",
+        ),
+    );
+
+    let pack = assemble_context(
+        &db,
+        &embedder(),
+        default_request("card context", tmp.path()),
+    )
+    .await
+    .expect("assemble context");
+
+    assert!(
+        pack.sections
+            .iter()
+            .flat_map(|section| section.items.iter())
+            .all(|item| item.card_id.is_none())
+    );
+}
+
+#[tokio::test]
+async fn test_context_include_cards_adds_active_card_citations() {
+    let (tmp, db) = new_db();
+    insert_fixture(
+        &db,
+        &evidence_drawer("drawer_card_evidence", "card evidence source"),
+    );
+    for (id, status) in [
+        ("card_promoted", KnowledgeStatus::Promoted),
+        ("card_canonical", KnowledgeStatus::Canonical),
+        ("card_candidate", KnowledgeStatus::Candidate),
+        ("card_demoted", KnowledgeStatus::Demoted),
+        ("card_retired", KnowledgeStatus::Retired),
+    ] {
+        insert_card(
+            &db,
+            &knowledge_card(
+                id,
+                KnowledgeTier::Shu,
+                status,
+                &format!("Statement for {id}."),
+            ),
+        );
+    }
+    insert_card_link(
+        &db,
+        "link_card_promoted_supporting",
+        "card_promoted",
+        "drawer_card_evidence",
+        KnowledgeEvidenceRole::Supporting,
+    );
+    let mut request = default_request("card", tmp.path());
+    request.include_cards = true;
+
+    let pack = assemble_context(&db, &embedder(), request)
+        .await
+        .expect("assemble context");
+    let card_items = pack
+        .sections
+        .iter()
+        .flat_map(|section| section.items.iter())
+        .filter(|item| item.card_id.is_some())
+        .collect::<Vec<_>>();
+    let card_ids = card_items
+        .iter()
+        .filter_map(|item| item.card_id.as_deref())
+        .collect::<Vec<_>>();
+
+    assert!(card_ids.contains(&"card_promoted"));
+    assert!(card_ids.contains(&"card_canonical"));
+    assert!(!card_ids.contains(&"card_candidate"));
+    assert!(!card_ids.contains(&"card_demoted"));
+    assert!(!card_ids.contains(&"card_retired"));
+
+    let promoted = card_items
+        .iter()
+        .find(|item| item.card_id.as_deref() == Some("card_promoted"))
+        .expect("promoted card item");
+    assert_eq!(promoted.drawer_id, "card_promoted");
+    assert_eq!(promoted.source_file, "knowledge-card://card_promoted");
+    assert_eq!(promoted.evidence_citations.len(), 1);
+    assert_eq!(
+        promoted.evidence_citations[0].evidence_drawer_id,
+        "drawer_card_evidence"
+    );
+    assert_eq!(
+        promoted.evidence_citations[0].role,
+        KnowledgeEvidenceRole::Supporting
+    );
+    assert_eq!(
+        promoted.evidence_citations[0].source_file,
+        "tests://context/drawer_card_evidence"
+    );
+}
+
+#[tokio::test]
 async fn test_context_include_evidence_adds_evidence_section_after_qi() {
     let (tmp, db) = new_db();
     insert_fixture(
@@ -561,6 +712,53 @@ async fn test_context_include_evidence_adds_evidence_section_after_qi() {
         .find(|section| section.name == "evidence")
         .expect("evidence section");
     assert_eq!(evidence.items[0].text, "observed failure");
+}
+
+#[test]
+fn test_cli_context_include_cards_json() {
+    let (tmp, db) = setup_cli_home();
+    insert_fixture(
+        &db,
+        &evidence_drawer("drawer_card_evidence", "card evidence source"),
+    );
+    insert_card(
+        &db,
+        &knowledge_card(
+            "card_cli_context",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Use card-aware context explicitly.",
+        ),
+    );
+    insert_card_link(
+        &db,
+        "link_card_cli_context_supporting",
+        "card_cli_context",
+        "drawer_card_evidence",
+        KnowledgeEvidenceRole::Supporting,
+    );
+
+    let value = run_context_json(tmp.path(), "card-aware", &["--include-cards"]);
+    let items = value["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .flat_map(|section| section["items"].as_array().expect("items"))
+        .collect::<Vec<_>>();
+    let card = items
+        .iter()
+        .find(|item| item["card_id"] == "card_cli_context")
+        .expect("card item");
+    assert_eq!(card["text"], "Use card-aware context explicitly.");
+    assert_eq!(
+        card["evidence_citations"][0]["evidence_drawer_id"],
+        "drawer_card_evidence"
+    );
+    assert_eq!(card["evidence_citations"][0]["role"], "supporting");
+    assert_eq!(
+        card["evidence_citations"][0]["source_file"],
+        "tests://context/drawer_card_evidence"
+    );
 }
 
 #[test]

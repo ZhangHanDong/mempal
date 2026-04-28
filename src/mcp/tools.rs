@@ -71,6 +71,7 @@ pub struct ContextRequest {
     pub domain: Option<String>,
     pub cwd: Option<String>,
     pub include_evidence: Option<bool>,
+    pub include_cards: Option<bool>,
     pub max_items: Option<usize>,
     /// Maximum number of `dao_tian` items to include. Defaults to 1; 0 disables
     /// the `dao_tian` section while preserving lower-tier context.
@@ -422,6 +423,8 @@ pub struct ContextItemDto {
     pub source_file: String,
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub card_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
@@ -431,6 +434,15 @@ pub struct ContextItemDto {
     pub parent_anchor_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_hints: Option<TriggerHintsDto>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub evidence_citations: Vec<ContextEvidenceCitationDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ContextEvidenceCitationDto {
+    pub evidence_drawer_id: String,
+    pub role: String,
+    pub source_file: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -937,6 +949,7 @@ impl From<ContextItem> for ContextItemDto {
             drawer_id: value.drawer_id,
             source_file: value.source_file,
             text: value.text,
+            card_id: value.card_id,
             tier: value
                 .tier
                 .as_ref()
@@ -951,6 +964,15 @@ impl From<ContextItem> for ContextItemDto {
             anchor_id: value.anchor_id,
             parent_anchor_id: value.parent_anchor_id,
             trigger_hints: value.trigger_hints.map(TriggerHintsDto::from),
+            evidence_citations: value
+                .evidence_citations
+                .into_iter()
+                .map(|citation| ContextEvidenceCitationDto {
+                    evidence_drawer_id: citation.evidence_drawer_id,
+                    role: knowledge_evidence_role_slug(&citation.role).to_string(),
+                    source_file: citation.source_file,
+                })
+                .collect(),
         }
     }
 }
@@ -1110,6 +1132,15 @@ fn knowledge_status_slug(value: &KnowledgeStatus) -> &'static str {
         KnowledgeStatus::Canonical => "canonical",
         KnowledgeStatus::Demoted => "demoted",
         KnowledgeStatus::Retired => "retired",
+    }
+}
+
+fn knowledge_evidence_role_slug(value: &crate::core::types::KnowledgeEvidenceRole) -> &'static str {
+    match value {
+        crate::core::types::KnowledgeEvidenceRole::Supporting => "supporting",
+        crate::core::types::KnowledgeEvidenceRole::Verification => "verification",
+        crate::core::types::KnowledgeEvidenceRole::Counterexample => "counterexample",
+        crate::core::types::KnowledgeEvidenceRole::Teaching => "teaching",
     }
 }
 
