@@ -1038,6 +1038,30 @@ citations with `evidence_drawer_id`, `role`, `source_file`, and score.
 P45 intentionally does not add card embeddings, does not add card vector
 storage, and does not make `mempal_search` return cards.
 
+P46 keeps card-aware context opt-in. The default context remains drawer-only for
+both `mempal context` and `mempal_context`; operators must still pass
+`--include-cards` or `include_cards=true` to inject Phase-2 cards into the
+typed context pack.
+
+This is a deliberate default policy, not an unfinished implementation gap.
+Cards are now retrievable and context-injectable, but default runtime context is
+a high-trust path. It should not silently switch from drawer-backed active
+knowledge to mixed drawer/card guidance until real runtime evidence shows the
+change improves agent behavior without weakening citations.
+
+Evidence required before default enablement:
+
+- repeated runtime traces where card-aware context causes better skill/tool
+  selection than drawer-only context
+- no observed citation loss: every default card item must preserve linked
+  evidence citations as the citation root
+- no material context bloat: card items must not crowd out higher-priority
+  `dao_tian`, `dao_ren`, `shu`, or `qi` guidance
+- no lifecycle confusion: inactive cards must remain excluded and demoted cards
+  must not re-enter default context through linked evidence
+- explicit rollback criteria: a future default-on spec must define how to return
+  to drawer-only defaults if card injection degrades runtime behavior
+
 ## Decision on Bootstrap vs Final Architecture
 
 Current recommendation:
@@ -1100,8 +1124,6 @@ Proceed with the following assumptions unless future evidence rejects them:
 
 The remaining work is intentionally explicit:
 
-- decide whether card-aware context should eventually become default after more
-  runtime evidence
 - decide whether a later retrieval phase needs card-level embeddings in addition
   to P45 linked-evidence retrieval
 - decide whether Phase-2 card lifecycle should write JSONL audit entries in
