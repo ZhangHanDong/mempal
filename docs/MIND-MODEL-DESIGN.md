@@ -1062,6 +1062,30 @@ Evidence required before default enablement:
 - explicit rollback criteria: a future default-on spec must define how to return
   to drawer-only defaults if card injection degrades runtime behavior
 
+P47 keeps card-level embeddings deferred. P45 linked-evidence retrieval remains
+the only implemented card retrieval strategy: cards are found through matched
+evidence drawers, not through a separate card vector index.
+
+This keeps the citation model simple. Card statements are distilled beliefs;
+evidence drawers remain the source-backed material. A card embedding index would
+make card statements directly retrievable, which may improve recall, but it also
+adds a new stale-vector surface and can make unsupported belief text feel like a
+primary source unless every result still carries linked evidence citations.
+
+Evidence required before card embeddings:
+
+- statement-match misses: repeated retrieval traces where linked-evidence search
+  misses useful active cards because evidence wording does not match the query
+  but the card statement does
+- citation preservation: card-embedding results must still return linked
+  evidence citations as the citation root
+- measurable recall improvement over P45 linked-evidence retrieval without
+  unacceptable precision loss
+- schema and maintenance plan for card vector storage, reindexing, and
+  stale-vector handling
+- rollback behavior that can disable card-vector retrieval and fall back to P45
+  linked-evidence retrieval without data loss
+
 ## Decision on Bootstrap vs Final Architecture
 
 Current recommendation:
@@ -1124,8 +1148,6 @@ Proceed with the following assumptions unless future evidence rejects them:
 
 The remaining work is intentionally explicit:
 
-- decide whether a later retrieval phase needs card-level embeddings in addition
-  to P45 linked-evidence retrieval
 - decide whether Phase-2 card lifecycle should write JSONL audit entries in
   addition to append-only `knowledge_events`
 - integrate external `research-rs` outputs as evidence/candidate insights
