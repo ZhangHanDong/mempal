@@ -976,8 +976,9 @@ Implemented Phase-2 surface at P42 baseline:
 
 Phase-2 cards are governed objects, but they are not yet the default
 context/search source. At P42, `mempal context`, `mempal_context`, and
-`mempal_search` remain drawer/citation based because cards do not yet have a
-dedicated retrieval strategy or vector indexing policy.
+`mempal_search` remains drawer/citation based. Cards now have an explicit
+linked-evidence retrieval path, but they are still not returned by default
+search.
 
 ### Phase-2 Card Retrieval Contract
 
@@ -1022,6 +1023,20 @@ the citation root through `evidence_drawer_id`, `role`, and `source_file`.
 
 P44 does not change `mempal_search`, does not add card embeddings, and does not
 make cards the default runtime source.
+
+P45 chooses the first card retrieval strategy:
+
+- `mempal knowledge-card retrieve <query>`
+- `mempal_knowledge_cards` with `action="retrieve"`
+
+The strategy is linked-evidence-first. It searches evidence drawers through the
+existing BM25+vector drawer search path, follows `knowledge_evidence_links`, and
+returns active cards linked to matched evidence. Returned card items include the
+card record, a score derived from matched evidence, and role-separated evidence
+citations with `evidence_drawer_id`, `role`, `source_file`, and score.
+
+P45 intentionally does not add card embeddings, does not add card vector
+storage, and does not make `mempal_search` return cards.
 
 ## Decision on Bootstrap vs Final Architecture
 
@@ -1085,10 +1100,10 @@ Proceed with the following assumptions unless future evidence rejects them:
 
 The remaining work is intentionally explicit:
 
-- define whether card retrieval uses card-level embeddings, linked evidence
-  retrieval, or a hybrid of both
 - decide whether card-aware context should eventually become default after more
   runtime evidence
+- decide whether a later retrieval phase needs card-level embeddings in addition
+  to P45 linked-evidence retrieval
 - decide whether Phase-2 card lifecycle should write JSONL audit entries in
   addition to append-only `knowledge_events`
 - integrate external `research-rs` outputs as evidence/candidate insights

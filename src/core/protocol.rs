@@ -204,10 +204,11 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 
 16. INSPECT AND GOVERN PHASE-2 KNOWLEDGE CARDS
    Use mempal_knowledge_cards to inspect Phase-2 knowledge card records and
-   append-only event history. It also supports governed card lifecycle actions:
-   gate is read-only, promote requires verification evidence and a passing gate,
-   and demote requires counterexample evidence. It does not create cards, search,
-   assemble context, or backfill drawers.
+   append-only event history. It also supports linked-evidence retrieval of
+   active cards and governed card lifecycle actions: gate is read-only, promote
+   requires verification evidence and a passing gate, and demote requires
+   counterexample evidence. It does not create cards, replace mempal_search,
+   assemble default context, or backfill drawers.
 
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
@@ -217,7 +218,7 @@ TOOLS:
   mempal_knowledge_distill — create candidate knowledge from evidence refs
   mempal_knowledge_policy — read-only Stage-1 promotion policy thresholds
   mempal_knowledge_gate — read-only knowledge promotion readiness check
-  mempal_knowledge_cards — Phase-2 knowledge card list/get/events/gate/promote/demote
+  mempal_knowledge_cards — Phase-2 knowledge card list/get/retrieve/events/gate/promote/demote
   mempal_knowledge_promote — gate-enforced knowledge lifecycle promotion
   mempal_knowledge_demote — evidence-backed knowledge demotion or retirement
   mempal_knowledge_publish_anchor — metadata-only outward anchor publication

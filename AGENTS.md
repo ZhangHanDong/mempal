@@ -91,6 +91,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p42-mind-model-completion-audit.spec.md` | 完成 | MIND-MODEL P42 baseline completion audit + future work 明确化 |
 | `specs/p43-knowledge-card-retrieval-contract.spec.md` | 完成 | Phase-2 card retrieval contract：定义 card result + evidence citation 形状，不改默认 runtime 行为 |
 | `specs/p44-card-context-assembler.spec.md` | 完成 | `mempal context` / `mempal_context` 显式 `include_cards`：按 P43 contract 注入 active cards + evidence citations |
+| `specs/p45-card-linked-evidence-retrieval.spec.md` | 完成 | `mempal knowledge-card retrieve` / `mempal_knowledge_cards action=retrieve`：通过 linked evidence 检索 active cards，不改默认 search |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -140,6 +141,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-27-p38-p42-knowledge-card-runtime-implementation.md` — P38-P42 knowledge card runtime baseline（已完成）
 - `docs/plans/2026-04-28-p43-knowledge-card-retrieval-contract.md` — P43 knowledge card retrieval contract（已完成）
 - `docs/plans/2026-04-28-p44-card-context-assembler.md` — P44 card-aware context assembler（已完成）
+- `docs/plans/2026-04-28-p45-card-linked-evidence-retrieval.md` — P45 card linked-evidence retrieval（已完成）
 
 ### Spec 使用方式
 
@@ -166,7 +168,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 |------|------|
 | `mempal_status` | 状态 + 协议 + AAAK spec |
 | `mempal_search` | 混合检索（BM25 + 向量 + RRF + tunnel hints）+ AAAK 结构化 signals（P7） |
-| `mempal_context` | mind-model runtime context：按 `dao_tian -> dao_ren -> shu -> qi` 组装指导性 context pack；`dao_tian_limit` 默认 1；用于辅助 workflow/skill/tool 选择但不自动执行（P15/P16/P26） |
+| `mempal_context` | mind-model runtime context：按 `dao_tian -> dao_ren -> shu -> qi` 组装指导性 context pack；`dao_tian_limit` 默认 1；用于辅助 workflow/skill/tool 选择但不自动执行（P15/P16/P26/P44） |
 | `mempal_field_taxonomy` | read-only Stage-1 field taxonomy guidance：推荐 `field` 值但不限制自定义字段（P28） |
 | `mempal_knowledge_distill` | 从 existing evidence drawer refs 创建 candidate `dao_ren` / `qi` knowledge drawer（P22） |
 | `mempal_knowledge_policy` | read-only Stage-1 promotion policy：列出 `dao_tian/dao_ren/shu/qi` 提升阈值（P27） |
@@ -174,6 +176,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_promote` | gate-enforced knowledge lifecycle promotion（P23） |
 | `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
 | `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
+| `mempal_knowledge_cards` | Phase-2 knowledge card list/get/events/gate/promote/demote/retrieve；retrieve 通过 linked evidence 返回 active cards（P35/P40/P45） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |

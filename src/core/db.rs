@@ -1005,6 +1005,26 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn knowledge_evidence_links_for_drawer(
+        &self,
+        evidence_drawer_id: &str,
+    ) -> Result<Vec<KnowledgeEvidenceLink>, DbError> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT id, card_id, evidence_drawer_id, role, note, created_at
+            FROM knowledge_evidence_links
+            WHERE evidence_drawer_id = ?1
+            ORDER BY created_at, id
+            "#,
+        )?;
+        let rows = statement
+            .query_map([evidence_drawer_id], |row| {
+                knowledge_evidence_link_from_row(row).map_err(row_decode_error)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn append_knowledge_event(&self, event: &KnowledgeCardEvent) -> Result<(), DbError> {
         self.conn.execute(
             r#"

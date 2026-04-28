@@ -38,6 +38,9 @@ use mempal::knowledge_card_lifecycle::{
     DemoteCardOutcome, DemoteCardRequest, KnowledgeCardGateReport, PromoteCardOutcome,
     PromoteCardRequest, demote_card, evaluate_card_gate_by_id, promote_card,
 };
+use mempal::knowledge_card_retrieval::{
+    KnowledgeCardRetrievalRequest, RetrievedKnowledgeCard, retrieve_knowledge_cards,
+};
 use mempal::knowledge_distill::{DistillPlan, DistillRequest, commit_distill, prepare_distill};
 use mempal::knowledge_gate::{
     GateReport, PromotionPolicyEntry, evaluate_gate_by_id, promotion_policy,
@@ -421,6 +424,21 @@ enum KnowledgeCardCommands {
         #[arg(long, default_value = "plain")]
         format: String,
     },
+    Retrieve {
+        query: String,
+        #[arg(long, default_value = "project")]
+        domain: String,
+        #[arg(long, default_value = "general")]
+        field: String,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long = "top-k", default_value_t = 5)]
+        top_k: usize,
+        #[arg(long = "evidence-top-k", default_value_t = 20)]
+        evidence_top_k: usize,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     Link {
         card_id: String,
         evidence_drawer_id: String,
@@ -718,7 +736,7 @@ async fn run() -> Result<()> {
         } => reindex_command(&db, &config, stale, force, dry_run).await,
         Commands::Kg { command } => kg_command(&db, command),
         Commands::Knowledge { command } => knowledge_command(&db, &config, command).await,
-        Commands::KnowledgeCard { command } => knowledge_card_command(&db, command),
+        Commands::KnowledgeCard { command } => knowledge_card_command(&db, &config, command).await,
         Commands::Tunnels { command } => tunnels_command(&db, command),
         Commands::Taxonomy { command } => taxonomy_command(&db, command),
         Commands::FieldTaxonomy { format } => field_taxonomy_command(&format),
@@ -1694,7 +1712,11 @@ async fn knowledge_command(
     Ok(())
 }
 
-fn knowledge_card_command(db: &Database, command: KnowledgeCardCommands) -> Result<()> {
+async fn knowledge_card_command(
+    db: &Database,
+    config: &Config,
+    command: KnowledgeCardCommands,
+) -> Result<()> {
     match command {
         KnowledgeCardCommands::Create {
             id,
@@ -1790,6 +1812,37 @@ fn knowledge_card_command(db: &Database, command: KnowledgeCardCommands) -> Resu
                 .list_knowledge_cards(&filter)
                 .context("failed to list knowledge cards")?;
             print_knowledge_cards(&cards, &format)?;
+        }
+        KnowledgeCardCommands::Retrieve {
+            query,
+            domain,
+            field,
+            cwd,
+            top_k,
+            evidence_top_k,
+            format,
+        } => {
+            if top_k == 0 {
+                bail!("--top-k must be greater than 0");
+            }
+            let domain = parse_domain(&domain)?;
+            let cwd = cwd.unwrap_or(env::current_dir().context("failed to read current dir")?);
+            let embedder = build_embedder(config).await?;
+            let results = retrieve_knowledge_cards(
+                db,
+                &*embedder,
+                KnowledgeCardRetrievalRequest {
+                    query,
+                    domain,
+                    field,
+                    cwd,
+                    top_k,
+                    evidence_top_k,
+                },
+            )
+            .await
+            .context("failed to retrieve knowledge cards")?;
+            print_retrieved_knowledge_cards(&results, &format)?;
         }
         KnowledgeCardCommands::Link {
             card_id,
@@ -2063,6 +2116,49 @@ fn print_knowledge_card(card: &KnowledgeCard, format: &str) -> Result<()> {
             Ok(())
         }
         other => bail!("unsupported knowledge-card format: {other}"),
+    }
+}
+
+fn print_retrieved_knowledge_cards(results: &[RetrievedKnowledgeCard], format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            if results.is_empty() {
+                println!("no retrieved knowledge cards");
+                return Ok(());
+            }
+            for result in results {
+                let card = &result.card;
+                println!(
+                    "{} score={:.6} tier={} status={} domain={} field={}",
+                    card.id,
+                    result.score,
+                    knowledge_tier_slug(&card.tier),
+                    knowledge_status_slug(&card.status),
+                    domain_slug(&card.domain),
+                    card.field
+                );
+                println!("statement: {}", card.statement);
+                for citation in &result.evidence_citations {
+                    println!(
+                        "evidence: {} role={} source={} score={:.6}",
+                        citation.evidence_drawer_id,
+                        knowledge_evidence_role_slug(&citation.role),
+                        citation.source_file,
+                        citation.score
+                    );
+                }
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(results)
+                    .context("failed to serialize retrieved knowledge cards")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported knowledge-card retrieve format: {other}"),
     }
 }
 

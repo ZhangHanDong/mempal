@@ -9,6 +9,7 @@ use crate::knowledge_anchor::PublishAnchorOutcome;
 use crate::knowledge_card_lifecycle::{
     DemoteCardOutcome, KnowledgeCardGateReport, PromoteCardOutcome,
 };
+use crate::knowledge_card_retrieval::{RetrievedEvidenceCitation, RetrievedKnowledgeCard};
 use crate::knowledge_distill::DistillOutcome;
 use crate::knowledge_gate::{GateReport, PromotionPolicyEntry};
 use crate::knowledge_lifecycle::{DemoteOutcome, PromoteOutcome};
@@ -269,6 +270,7 @@ pub struct KnowledgePolicyEntryDto {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct KnowledgeCardsRequest {
     pub action: String,
+    pub query: Option<String>,
     pub card_id: Option<String>,
     pub target_status: Option<String>,
     pub reviewer: Option<String>,
@@ -284,11 +286,16 @@ pub struct KnowledgeCardsRequest {
     pub field: Option<String>,
     pub anchor_kind: Option<String>,
     pub anchor_id: Option<String>,
+    pub cwd: Option<String>,
+    pub top_k: Option<usize>,
+    pub evidence_top_k: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct KnowledgeCardsResponse {
     pub cards: Vec<KnowledgeCardDto>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub retrieved: Vec<RetrievedKnowledgeCardDto>,
     pub events: Vec<KnowledgeCardEventDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<KnowledgeCardGateDto>,
@@ -314,6 +321,21 @@ pub struct KnowledgeCardDto {
     pub trigger_hints: Option<TriggerHintsDto>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RetrievedKnowledgeCardDto {
+    pub card: KnowledgeCardDto,
+    pub evidence_citations: Vec<RetrievedEvidenceCitationDto>,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RetrievedEvidenceCitationDto {
+    pub evidence_drawer_id: String,
+    pub role: String,
+    pub source_file: String,
+    pub score: f32,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -1004,6 +1026,31 @@ impl From<KnowledgeCard> for KnowledgeCardDto {
             trigger_hints: value.trigger_hints.map(TriggerHintsDto::from),
             created_at: value.created_at,
             updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<RetrievedKnowledgeCard> for RetrievedKnowledgeCardDto {
+    fn from(value: RetrievedKnowledgeCard) -> Self {
+        Self {
+            card: KnowledgeCardDto::from(value.card),
+            evidence_citations: value
+                .evidence_citations
+                .into_iter()
+                .map(RetrievedEvidenceCitationDto::from)
+                .collect(),
+            score: value.score,
+        }
+    }
+}
+
+impl From<RetrievedEvidenceCitation> for RetrievedEvidenceCitationDto {
+    fn from(value: RetrievedEvidenceCitation) -> Self {
+        Self {
+            evidence_drawer_id: value.evidence_drawer_id,
+            role: knowledge_evidence_role_slug(&value.role).to_string(),
+            source_file: value.source_file,
+            score: value.score,
         }
     }
 }

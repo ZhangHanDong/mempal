@@ -31,6 +31,9 @@ use crate::knowledge_card_lifecycle::{
     DemoteCardRequest as CoreDemoteCardRequest, PromoteCardRequest as CorePromoteCardRequest,
     demote_card, evaluate_card_gate_by_id, promote_card,
 };
+use crate::knowledge_card_retrieval::{
+    KnowledgeCardRetrievalRequest as CoreCardRetrievalRequest, retrieve_knowledge_cards_with_vector,
+};
 use crate::knowledge_distill::{
     DistillPlan, DistillRequest as CoreDistillRequest, commit_distill, prepare_distill,
 };
@@ -58,9 +61,9 @@ use super::tools::{
     KnowledgeDistillResponse, KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePolicyResponse,
     KnowledgePromoteRequest, KnowledgePromoteResponse, KnowledgePublishAnchorRequest,
     KnowledgePublishAnchorResponse, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse,
-    ScopeCount, SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
-    TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
-    TunnelsRequest, TunnelsResponse,
+    RetrievedKnowledgeCardDto, ScopeCount, SearchRequest, SearchResponse, SearchResultDto,
+    StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse, TriggerHintsDto,
+    TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -860,7 +863,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_knowledge_cards",
-        description = "Phase-2 knowledge card inspection and governed lifecycle. Actions: list/get/events/gate/promote/demote. Gate is read-only; promote/demote require evidence refs and append knowledge_events transactionally."
+        description = "Phase-2 knowledge card inspection, linked-evidence retrieval, and governed lifecycle. Actions: list/get/retrieve/events/gate/promote/demote. Retrieve searches linked evidence and returns active cards with citations; promote/demote require evidence refs and append knowledge_events transactionally."
     )]
     async fn mempal_knowledge_cards(
         &self,
@@ -868,10 +871,10 @@ impl MempalMcpServer {
     ) -> std::result::Result<Json<KnowledgeCardsResponse>, ErrorData> {
         let action = trim_to_option(Some(request.action.as_str()))
             .ok_or_else(|| ErrorData::invalid_params("action must not be empty", None))?;
-        let db = self.open_db()?;
 
         match action {
             "list" => {
+                let db = self.open_db()?;
                 let filter = KnowledgeCardFilter {
                     tier: parse_tier(request.tier.as_deref())?,
                     status: parse_status(request.status.as_deref())?,
@@ -888,6 +891,7 @@ impl MempalMcpServer {
                 })?;
                 Ok(Json(KnowledgeCardsResponse {
                     cards: cards.into_iter().map(KnowledgeCardDto::from).collect(),
+                    retrieved: Vec::new(),
                     events: Vec::new(),
                     gate: None,
                     promote: None,
@@ -895,6 +899,7 @@ impl MempalMcpServer {
                 }))
             }
             "get" => {
+                let db = self.open_db()?;
                 let card_id = required_string(request.card_id.as_deref(), "card_id")?;
                 let card = db
                     .get_knowledge_card(card_id)
@@ -912,6 +917,72 @@ impl MempalMcpServer {
                     })?;
                 Ok(Json(KnowledgeCardsResponse {
                     cards: vec![KnowledgeCardDto::from(card)],
+                    retrieved: Vec::new(),
+                    events: Vec::new(),
+                    gate: None,
+                    promote: None,
+                    demote: None,
+                }))
+            }
+            "retrieve" => {
+                let query = required_string(request.query.as_deref(), "query")?.to_string();
+                let top_k = request.top_k.unwrap_or(5);
+                if top_k == 0 {
+                    return Err(ErrorData::invalid_params(
+                        "top_k must be greater than 0",
+                        None,
+                    ));
+                }
+                let domain =
+                    parse_domain(request.domain.as_deref())?.unwrap_or(MemoryDomain::Project);
+                let field = trim_to_owned(request.field.as_deref())
+                    .unwrap_or_else(|| "general".to_string());
+                let cwd = request
+                    .cwd
+                    .as_deref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| {
+                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                    });
+                let embedder = self.embedder_factory.build().await.map_err(|error| {
+                    ErrorData::internal_error(format!("failed to build embedder: {error}"), None)
+                })?;
+                let query_vector = embedder
+                    .embed(&[query.as_str()])
+                    .await
+                    .map_err(|error| {
+                        ErrorData::internal_error(format!("embedding failed: {error}"), None)
+                    })?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        ErrorData::internal_error("embedder returned no query vector", None)
+                    })?;
+                let db = self.open_db()?;
+                let retrieved = retrieve_knowledge_cards_with_vector(
+                    &db,
+                    CoreCardRetrievalRequest {
+                        query,
+                        domain,
+                        field,
+                        cwd,
+                        top_k,
+                        evidence_top_k: request.evidence_top_k.unwrap_or(top_k * 4),
+                    },
+                    &query_vector,
+                )
+                .map_err(|error| {
+                    ErrorData::internal_error(
+                        format!("failed to retrieve knowledge cards: {error}"),
+                        None,
+                    )
+                })?;
+                Ok(Json(KnowledgeCardsResponse {
+                    cards: Vec::new(),
+                    retrieved: retrieved
+                        .into_iter()
+                        .map(RetrievedKnowledgeCardDto::from)
+                        .collect(),
                     events: Vec::new(),
                     gate: None,
                     promote: None,
@@ -919,6 +990,7 @@ impl MempalMcpServer {
                 }))
             }
             "events" => {
+                let db = self.open_db()?;
                 let card_id = required_string(request.card_id.as_deref(), "card_id")?;
                 let events = db.knowledge_events(card_id).map_err(|error| {
                     ErrorData::internal_error(
@@ -928,6 +1000,7 @@ impl MempalMcpServer {
                 })?;
                 Ok(Json(KnowledgeCardsResponse {
                     cards: Vec::new(),
+                    retrieved: Vec::new(),
                     events: events
                         .into_iter()
                         .map(KnowledgeCardEventDto::from)
@@ -938,6 +1011,7 @@ impl MempalMcpServer {
                 }))
             }
             "gate" => {
+                let db = self.open_db()?;
                 let card_id = required_string(request.card_id.as_deref(), "card_id")?;
                 let report = evaluate_card_gate_by_id(
                     &db,
@@ -949,6 +1023,7 @@ impl MempalMcpServer {
                 .map_err(knowledge_card_lifecycle_error)?;
                 Ok(Json(KnowledgeCardsResponse {
                     cards: Vec::new(),
+                    retrieved: Vec::new(),
                     events: Vec::new(),
                     gate: Some(report.into()),
                     promote: None,
@@ -956,6 +1031,7 @@ impl MempalMcpServer {
                 }))
             }
             "promote" => {
+                let db = self.open_db()?;
                 let card_id = required_string(request.card_id.as_deref(), "card_id")?;
                 let status = required_string(request.status.as_deref(), "status")?.to_string();
                 let reason = required_string(request.reason.as_deref(), "reason")?.to_string();
@@ -975,6 +1051,7 @@ impl MempalMcpServer {
                 .map_err(knowledge_card_lifecycle_error)?;
                 Ok(Json(KnowledgeCardsResponse {
                     cards: Vec::new(),
+                    retrieved: Vec::new(),
                     events: Vec::new(),
                     gate: None,
                     promote: Some(outcome.into()),
@@ -982,6 +1059,7 @@ impl MempalMcpServer {
                 }))
             }
             "demote" => {
+                let db = self.open_db()?;
                 let card_id = required_string(request.card_id.as_deref(), "card_id")?;
                 let status = required_string(request.status.as_deref(), "status")?.to_string();
                 let reason = required_string(request.reason.as_deref(), "reason")?.to_string();
@@ -1001,6 +1079,7 @@ impl MempalMcpServer {
                 .map_err(knowledge_card_lifecycle_error)?;
                 Ok(Json(KnowledgeCardsResponse {
                     cards: Vec::new(),
+                    retrieved: Vec::new(),
                     events: Vec::new(),
                     gate: None,
                     promote: None,
@@ -1009,7 +1088,7 @@ impl MempalMcpServer {
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported knowledge cards action: {other}; actions are list, get, events, gate, promote, demote"
+                    "unsupported knowledge cards action: {other}; actions are list, get, retrieve, events, gate, promote, demote"
                 ),
                 None,
             )),
@@ -3006,7 +3085,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("actions are list, get, events, gate, promote, demote")
+                .contains("actions are list, get, retrieve, events, gate, promote, demote")
         );
 
         let after = {
@@ -3122,8 +3201,9 @@ mod tests {
             .find(|tool| tool.name == "mempal_knowledge_cards")
             .expect("mempal_knowledge_cards tool exists");
         let description = tool.description.as_deref().unwrap_or_default();
-        assert!(description.contains("Phase-2 knowledge card inspection and governed lifecycle"));
-        assert!(description.contains("Actions: list/get/events/gate/promote/demote"));
+        assert!(description.contains("Phase-2 knowledge card inspection"));
+        assert!(description.contains("linked-evidence retrieval"));
+        assert!(description.contains("Actions: list/get/retrieve/events/gate/promote/demote"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_cards"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("Phase-2 knowledge card"));
     }
