@@ -92,6 +92,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p45-card-linked-evidence-retrieval.spec.md` | 完成 | `mempal knowledge-card retrieve` / `mempal_knowledge_cards action=retrieve`：通过 linked evidence 检索 active cards，不改默认 search |
 | `specs/p46-card-context-default-policy.spec.md` | 完成 | P46 card context default policy：card-aware context 继续 opt-in；未来默认启用必须有 runtime evidence 和 rollback criteria |
 | `specs/p47-card-embedding-policy.spec.md` | 完成 | P47 card embedding policy：暂不加 card-level embeddings；未来实现必须证明 statement-match misses、处理 stale vectors 和 rollback |
+| `specs/p48-card-audit-policy.spec.md` | 完成 | P48 card audit policy：`knowledge_events` 是 Phase-2 card lifecycle 权威审计；不默认双写 JSONL |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -144,6 +145,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-28-p45-card-linked-evidence-retrieval.md` — P45 card linked-evidence retrieval（已完成）
 - `docs/plans/2026-04-28-p46-card-context-default-policy.md` — P46 card context default policy（已完成）
 - `docs/plans/2026-04-28-p47-card-embedding-policy.md` — P47 card embedding policy（已完成）
+- `docs/plans/2026-04-29-p48-card-audit-policy.md` — P48 card audit policy（已完成）
 
 ### Spec 使用方式
 

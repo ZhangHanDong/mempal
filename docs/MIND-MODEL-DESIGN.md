@@ -1086,6 +1086,21 @@ Evidence required before card embeddings:
 - rollback behavior that can disable card-vector retrieval and fall back to P45
   linked-evidence retrieval without data loss
 
+P48 keeps `knowledge_events` as the authoritative Phase-2 card audit trail, with
+no default JSONL dual-write for card lifecycle mutations. This keeps card
+promote/demote/backfill behavior transactionally bound to the same SQLite
+database that owns `knowledge_cards` and `knowledge_evidence_links`.
+
+Stage-1 drawer lifecycle continues to use `audit.jsonl` where already defined.
+Phase-2 card lifecycle does not mirror those entries into `audit.jsonl` by
+default because that would create two audit surfaces with different durability
+and transaction semantics. The append-only `knowledge_events` table is the
+source of truth for card lifecycle history.
+
+If an external integration needs JSONL card history, it should be added as an
+explicit export surface. JSONL export must be derived from `knowledge_events`,
+must be reproducible, and must not become a second source of truth.
+
 ## Decision on Bootstrap vs Final Architecture
 
 Current recommendation:
@@ -1148,8 +1163,6 @@ Proceed with the following assumptions unless future evidence rejects them:
 
 The remaining work is intentionally explicit:
 
-- decide whether Phase-2 card lifecycle should write JSONL audit entries in
-  addition to append-only `knowledge_events`
 - integrate external `research-rs` outputs as evidence/candidate insights
   without letting research directly define `dao`
 - add evaluator-assisted promotion only behind deterministic gates and human
