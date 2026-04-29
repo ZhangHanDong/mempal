@@ -1204,6 +1204,28 @@ spec and preserve deterministic replay, evidence citation, and audit semantics.
 
 No open Future Work remains in the P42 list.
 
+## Completion Status After P50
+
+P51 closure audit: the MIND-MODEL baseline is complete.
+
+No open implementation tasks remain in the P12-P50 baseline. The completed
+baseline includes:
+
+- typed evidence and knowledge drawers
+- `dao_tian`, `dao_ren`, `shu`, and `qi` governance boundaries
+- worktree/repo/global anchor behavior
+- wake-up/context separation
+- context-guided skill/tool selection
+- distill, gate, promote, demote, and anchor publication lifecycle surfaces
+- Phase-2 knowledge card storage, lifecycle, retrieval, and opt-in context
+- research ingestion and evaluator promotion policies
+
+Completion does not mean every optional future enhancement is implemented. It
+means the current design baseline has no known open implementation task. Future
+evaluator APIs, card-level embeddings, default card context, research adapters,
+or other expansions must start as new-stage specs with their own evidence,
+rollback criteria, and acceptance checks.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."
