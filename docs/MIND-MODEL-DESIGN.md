@@ -1174,10 +1174,35 @@ Proceed with the following assumptions unless future evidence rejects them:
 
 ## Future Work After P42
 
-The remaining work is intentionally explicit:
+P42 originally left one explicit follow-up:
 
 - add evaluator-assisted promotion only behind deterministic gates and human
   review rules for high-level knowledge
+
+P50 closes that item as policy. P50 defines evaluator-assisted promotion as advisory-only.
+Evaluators are not lifecycle actors.
+
+Evaluators may:
+
+- recommend promotion or demotion candidates
+- propose supporting, verification, teaching, and counterexample evidence refs
+- produce contradiction candidates and risk notes
+- explain why a knowledge item appears ready or unsafe
+
+Evaluators must not directly mutate status or otherwise act as lifecycle writers:
+
+- append lifecycle refs as authoritative gate input
+- bypass deterministic promotion or demotion gates
+- satisfy reviewer requirements by evaluator-only review
+- create automatic promotion or demotion paths
+
+The deterministic gates remain authoritative. Promotion and demotion still go
+through the existing gate-enforced CLI/MCP lifecycle surfaces. `dao_tian`
+canonicalization still requires a human reviewer; evaluator-only canonization is forbidden.
+If a future implementation adds evaluator APIs, that work must be a separate
+spec and preserve deterministic replay, evidence citation, and audit semantics.
+
+No open Future Work remains in the P42 list.
 
 ## Closing Summary
 
