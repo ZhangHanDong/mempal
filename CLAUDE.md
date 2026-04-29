@@ -93,6 +93,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p46-card-context-default-policy.spec.md` | 完成 | P46 card context default policy：card-aware context 继续 opt-in；未来默认启用必须有 runtime evidence 和 rollback criteria |
 | `specs/p47-card-embedding-policy.spec.md` | 完成 | P47 card embedding policy：暂不加 card-level embeddings；未来实现必须证明 statement-match misses、处理 stale vectors 和 rollback |
 | `specs/p48-card-audit-policy.spec.md` | 完成 | P48 card audit policy：`knowledge_events` 是 Phase-2 card lifecycle 权威审计；不默认双写 JSONL |
+| `specs/p49-research-ingestion-policy.spec.md` | 完成 | P49 research ingestion policy：research-rs 输出只进 evidence / evidence-backed candidate insights，不可直接定义 dao |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -146,6 +147,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-28-p46-card-context-default-policy.md` — P46 card context default policy（已完成）
 - `docs/plans/2026-04-28-p47-card-embedding-policy.md` — P47 card embedding policy（已完成）
 - `docs/plans/2026-04-29-p48-card-audit-policy.md` — P48 card audit policy（已完成）
+- `docs/plans/2026-04-29-p49-research-ingestion-policy.md` — P49 research ingestion policy（已完成）
 
 ### Spec 使用方式
 

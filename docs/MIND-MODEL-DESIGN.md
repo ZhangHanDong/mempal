@@ -491,6 +491,19 @@ Therefore:
 - `research-rs` organizes the external world
 - memory governs what is promoted from those results
 
+P49 defines the research-rs ingestion path:
+
+- raw/source research output enters as `memory_kind=evidence` with `provenance=research`
+- structured summaries from research remain evidence unless explicitly distilled
+- candidate knowledge only through distill from existing evidence refs
+- contradiction signals become evidence or counterexamples for later demotion or
+  gate evaluation
+
+research must not directly create dao_tian. Research must not directly create
+canonical or promoted knowledge. It must not bypass lifecycle gates. The highest
+trust level research can supply by itself is source-backed evidence; memory owns
+distillation, promotion, demotion, and canonicalization.
+
 ## Runtime Wake-Up Order
 
 The runtime order should be explicit, not left to ad hoc semantic retrieval.
@@ -1163,8 +1176,6 @@ Proceed with the following assumptions unless future evidence rejects them:
 
 The remaining work is intentionally explicit:
 
-- integrate external `research-rs` outputs as evidence/candidate insights
-  without letting research directly define `dao`
 - add evaluator-assisted promotion only behind deterministic gates and human
   review rules for high-level knowledge
 
