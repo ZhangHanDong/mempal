@@ -1226,6 +1226,31 @@ evaluator APIs, card-level embeddings, default card context, research adapters,
 or other expansions must start as new-stage specs with their own evidence,
 rollback criteria, and acceptance checks.
 
+## Phase 3 Intake Roadmap
+
+P52 Phase-3 intake roadmap defines how work starts after baseline closure.
+Phase 3 is new-stage work, not unfinished P12-P50 baseline work.
+
+Candidate tracks:
+
+- evaluator APIs
+- card retrieval maturity
+- research adapter ingestion
+- runtime adoption evidence
+
+Intake rules:
+
+- each candidate must state evidence, rollback criteria, and acceptance checks before implementation begins
+- default-enabling card context or card embeddings requires measured retrieval benefit
+- Evaluator APIs must preserve the P50 advisory-only lifecycle boundary
+- Research adapters must preserve the P49 evidence-first ingestion boundary
+- card retrieval changes must preserve citation and audit semantics
+- runtime adoption work must include rollback criteria for agent behavior changes
+
+The first Phase-3 implementation should be selected only after one candidate has
+enough evidence to justify implementation. Until then, Phase 3 remains an intake
+queue, not an implementation commitment.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."
