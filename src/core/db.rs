@@ -12,12 +12,13 @@ use super::types::{
     AnchorKind, ChunkNeighbors, Drawer, ExplicitTunnel, KnowledgeCard, KnowledgeCardEvent,
     KnowledgeCardFilter, KnowledgeEventType, KnowledgeEvidenceLink, KnowledgeEvidenceRole,
     KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, NeighborChunk, Provenance,
-    ReindexSource, SourceType, TaxonomyEntry, Triple, TripleStats, TunnelEndpoint,
+    ReindexSource, RuntimeAdoptionEvent, RuntimeAdoptionFilter, RuntimeAdoptionSignal,
+    RuntimeAdoptionTrack, SourceType, TaxonomyEntry, Triple, TripleStats, TunnelEndpoint,
     TunnelFollowResult,
 };
 use super::utils::{build_tunnel_id, current_timestamp, format_tunnel_endpoint};
 
-const CURRENT_SCHEMA_VERSION: u32 = 8;
+const CURRENT_SCHEMA_VERSION: u32 = 9;
 const DRAWER_SELECT_COLUMNS: &str = r#"
     id,
     content,
@@ -862,6 +863,84 @@ impl Database {
         self.conn
             .query_row("SELECT COUNT(*) FROM knowledge_cards", [], |row| row.get(0))
             .map_err(Into::into)
+    }
+
+    pub fn insert_runtime_adoption_event(
+        &self,
+        event: &RuntimeAdoptionEvent,
+    ) -> Result<(), DbError> {
+        self.conn.execute(
+            r#"
+            INSERT INTO runtime_adoption_events (
+                id,
+                track,
+                signal,
+                feature,
+                query,
+                context_hash,
+                card_id,
+                evaluator_id,
+                research_report_id,
+                note,
+                metadata,
+                created_at
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+            "#,
+            params![
+                event.id.as_str(),
+                runtime_adoption_track_as_str(&event.track),
+                runtime_adoption_signal_as_str(&event.signal),
+                event.feature.as_str(),
+                event.query.as_deref(),
+                event.context_hash.as_deref(),
+                event.card_id.as_deref(),
+                event.evaluator_id.as_deref(),
+                event.research_report_id.as_deref(),
+                event.note.as_deref(),
+                encode_optional_json(event.metadata.as_ref())?,
+                event.created_at.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_runtime_adoption_events(
+        &self,
+        filter: &RuntimeAdoptionFilter,
+        limit: usize,
+    ) -> Result<Vec<RuntimeAdoptionEvent>, DbError> {
+        let track = filter.track.as_ref().map(runtime_adoption_track_as_str);
+        let limit =
+            i64::try_from(limit).map_err(|_| DbError::InvalidSourceType("limit".to_string()))?;
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT
+                id,
+                track,
+                signal,
+                feature,
+                query,
+                context_hash,
+                card_id,
+                evaluator_id,
+                research_report_id,
+                note,
+                metadata,
+                created_at
+            FROM runtime_adoption_events
+            WHERE (?1 IS NULL OR track = ?1)
+              AND (?2 IS NULL OR feature = ?2)
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?3
+            "#,
+        )?;
+        let rows = statement
+            .query_map(params![track, filter.feature.as_deref(), limit], |row| {
+                runtime_adoption_event_from_row(row).map_err(row_decode_error)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn list_knowledge_drawers_for_card_backfill(
@@ -1894,6 +1973,33 @@ BEGIN
 END;
 "#;
 
+const V9_MIGRATION_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS runtime_adoption_events (
+    id TEXT PRIMARY KEY,
+    track TEXT NOT NULL CHECK(track IN ('runtime_adoption', 'card_context', 'card_embedding', 'evaluator', 'research_adapter')),
+    signal TEXT NOT NULL CHECK(signal IN ('used', 'accepted', 'rejected', 'miss', 'rollback', 'contradiction', 'neutral')),
+    feature TEXT NOT NULL,
+    query TEXT,
+    context_hash TEXT,
+    card_id TEXT,
+    evaluator_id TEXT,
+    research_report_id TEXT,
+    note TEXT,
+    metadata TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(card_id) REFERENCES knowledge_cards(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_adoption_events_track_created_at
+    ON runtime_adoption_events(track, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_adoption_events_feature
+    ON runtime_adoption_events(feature);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_adoption_events_signal
+    ON runtime_adoption_events(signal);
+"#;
+
 fn migrations() -> &'static [Migration] {
     static MIGRATIONS: &[Migration] = &[
         Migration {
@@ -1927,6 +2033,10 @@ fn migrations() -> &'static [Migration] {
         Migration {
             version: 8,
             sql: V8_MIGRATION_SQL,
+        },
+        Migration {
+            version: 9,
+            sql: V9_MIGRATION_SQL,
         },
     ];
     MIGRATIONS
@@ -2150,6 +2260,58 @@ fn knowledge_event_type_from_str(event_type: &str) -> Result<KnowledgeEventType,
     }
 }
 
+fn runtime_adoption_track_as_str(track: &RuntimeAdoptionTrack) -> &'static str {
+    match track {
+        RuntimeAdoptionTrack::RuntimeAdoption => "runtime_adoption",
+        RuntimeAdoptionTrack::CardContext => "card_context",
+        RuntimeAdoptionTrack::CardEmbedding => "card_embedding",
+        RuntimeAdoptionTrack::Evaluator => "evaluator",
+        RuntimeAdoptionTrack::ResearchAdapter => "research_adapter",
+    }
+}
+
+fn runtime_adoption_track_from_str(track: &str) -> Result<RuntimeAdoptionTrack, DbError> {
+    match track {
+        "runtime_adoption" => Ok(RuntimeAdoptionTrack::RuntimeAdoption),
+        "card_context" => Ok(RuntimeAdoptionTrack::CardContext),
+        "card_embedding" => Ok(RuntimeAdoptionTrack::CardEmbedding),
+        "evaluator" => Ok(RuntimeAdoptionTrack::Evaluator),
+        "research_adapter" => Ok(RuntimeAdoptionTrack::ResearchAdapter),
+        other => Err(DbError::InvalidEnumValue {
+            kind: "runtime_adoption_track",
+            value: other.to_string(),
+        }),
+    }
+}
+
+fn runtime_adoption_signal_as_str(signal: &RuntimeAdoptionSignal) -> &'static str {
+    match signal {
+        RuntimeAdoptionSignal::Used => "used",
+        RuntimeAdoptionSignal::Accepted => "accepted",
+        RuntimeAdoptionSignal::Rejected => "rejected",
+        RuntimeAdoptionSignal::Miss => "miss",
+        RuntimeAdoptionSignal::Rollback => "rollback",
+        RuntimeAdoptionSignal::Contradiction => "contradiction",
+        RuntimeAdoptionSignal::Neutral => "neutral",
+    }
+}
+
+fn runtime_adoption_signal_from_str(signal: &str) -> Result<RuntimeAdoptionSignal, DbError> {
+    match signal {
+        "used" => Ok(RuntimeAdoptionSignal::Used),
+        "accepted" => Ok(RuntimeAdoptionSignal::Accepted),
+        "rejected" => Ok(RuntimeAdoptionSignal::Rejected),
+        "miss" => Ok(RuntimeAdoptionSignal::Miss),
+        "rollback" => Ok(RuntimeAdoptionSignal::Rollback),
+        "contradiction" => Ok(RuntimeAdoptionSignal::Contradiction),
+        "neutral" => Ok(RuntimeAdoptionSignal::Neutral),
+        other => Err(DbError::InvalidEnumValue {
+            kind: "runtime_adoption_signal",
+            value: other.to_string(),
+        }),
+    }
+}
+
 fn encode_json<T: serde::Serialize + ?Sized>(value: &T) -> Result<String, DbError> {
     Ok(serde_json::to_string(value)?)
 }
@@ -2240,6 +2402,24 @@ fn knowledge_event_from_row(row: &Row<'_>) -> Result<KnowledgeCardEvent, DbError
         actor: row.get(6)?,
         metadata,
         created_at: row.get(8)?,
+    })
+}
+
+fn runtime_adoption_event_from_row(row: &Row<'_>) -> Result<RuntimeAdoptionEvent, DbError> {
+    let metadata = parse_optional_json(row.get::<_, Option<String>>(10)?.as_deref())?;
+    Ok(RuntimeAdoptionEvent {
+        id: row.get(0)?,
+        track: runtime_adoption_track_from_str(&row.get::<_, String>(1)?)?,
+        signal: runtime_adoption_signal_from_str(&row.get::<_, String>(2)?)?,
+        feature: row.get(3)?,
+        query: row.get(4)?,
+        context_hash: row.get(5)?,
+        card_id: row.get(6)?,
+        evaluator_id: row.get(7)?,
+        research_report_id: row.get(8)?,
+        note: row.get(9)?,
+        metadata,
+        created_at: row.get(11)?,
     })
 }
 

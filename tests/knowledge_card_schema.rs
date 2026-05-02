@@ -245,28 +245,29 @@ fn insert_event(
 }
 
 #[test]
-fn test_new_database_schema_version_is_8() {
+fn test_new_database_schema_version_is_9() {
     let (_tmp, db) = new_db();
 
-    assert_eq!(db.schema_version().expect("schema version"), 8);
+    assert_eq!(db.schema_version().expect("schema version"), 9);
     for table in [
         "knowledge_cards",
         "knowledge_evidence_links",
         "knowledge_events",
+        "runtime_adoption_events",
     ] {
         assert!(table_exists(&db, table), "{table} should exist");
     }
 }
 
 #[test]
-fn test_migration_v7_to_v8_adds_knowledge_card_tables_without_data_loss() {
+fn test_migration_v7_to_v9_adds_phase2_and_phase3_tables_without_data_loss() {
     let tmp = TempDir::new().expect("tempdir");
     let db_path = tmp.path().join("palace.db");
     create_v7_db(&db_path);
 
     let db = Database::open(&db_path).expect("migrate v7 db");
 
-    assert_eq!(db.schema_version().expect("schema version"), 8);
+    assert_eq!(db.schema_version().expect("schema version"), 9);
     assert_eq!(db.drawer_count().expect("drawer count"), 1);
     assert_eq!(db.triple_count().expect("triple count"), 1);
     let taxonomy_count: i64 = db
@@ -284,6 +285,7 @@ fn test_migration_v7_to_v8_adds_knowledge_card_tables_without_data_loss() {
         "knowledge_cards",
         "knowledge_evidence_links",
         "knowledge_events",
+        "runtime_adoption_events",
     ] {
         let count: i64 = db
             .conn()

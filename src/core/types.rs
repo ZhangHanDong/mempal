@@ -90,6 +90,50 @@ pub enum KnowledgeEventType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAdoptionTrack {
+    RuntimeAdoption,
+    CardContext,
+    CardEmbedding,
+    Evaluator,
+    ResearchAdapter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeAdoptionSignal {
+    Used,
+    Accepted,
+    Rejected,
+    Miss,
+    Rollback,
+    Contradiction,
+    Neutral,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeAdoptionEvent {
+    pub id: String,
+    pub track: RuntimeAdoptionTrack,
+    pub signal: RuntimeAdoptionSignal,
+    pub feature: String,
+    pub query: Option<String>,
+    pub context_hash: Option<String>,
+    pub card_id: Option<String>,
+    pub evaluator_id: Option<String>,
+    pub research_report_id: Option<String>,
+    pub note: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RuntimeAdoptionFilter {
+    pub track: Option<RuntimeAdoptionTrack>,
+    pub feature: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnowledgeCard {
     pub id: String,
     pub statement: String,

@@ -493,10 +493,10 @@ mod tests {
     }
 
     #[test]
-    fn protocol_update_does_not_change_schema_version() {
+    fn protocol_schema_version_matches_phase3_runtime_events() {
         let tempdir = tempfile::tempdir().expect("create temp dir");
         let db_path = tempdir.path().join("palace.db");
         let db = Database::open(&db_path).expect("open db");
-        assert_eq!(db.schema_version().expect("schema version"), 8);
+        assert_eq!(db.schema_version().expect("schema version"), 9);
     }
 }

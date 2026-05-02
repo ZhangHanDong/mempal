@@ -100,6 +100,12 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p51-mind-model-closure-audit.spec.md` | 完成 | P51 mind model closure audit：确认 P12-P50 baseline 已完成，未来扩展必须开新阶段 spec |
 | `specs/p52-phase-3-intake-roadmap.spec.md` | 完成 | P52 phase 3 intake roadmap：定义 baseline 后新阶段候选轨道与 evidence/rollback/acceptance 入口规则 |
 | `specs/p53-phase-3-candidate-evidence-audit.spec.md` | 完成 | P53 phase 3 candidate evidence audit：评估 Phase-3 候选证据，推荐先做 runtime adoption evidence |
+| `specs/p54-runtime-adoption-evidence.spec.md` | 完成 | P54 runtime adoption evidence：schema v9 `runtime_adoption_events` + DB API |
+| `specs/p55-runtime-adoption-cli.spec.md` | 完成 | P55 runtime adoption CLI：`mempal phase3 adoption record/list/stats` |
+| `specs/p56-card-context-default-gate.spec.md` | 完成 | P56 card context default gate：read-only Phase-3 gate，不改 `include_cards` 默认值 |
+| `specs/p57-card-embedding-evidence-gate.spec.md` | 完成 | P57 card embedding evidence gate：card embeddings 需 measured miss evidence，未新增 vector schema |
+| `specs/p58-evaluator-api-evidence-gate.spec.md` | 完成 | P58 evaluator API evidence gate：evaluator API 仍 advisory-only，不写 lifecycle |
+| `specs/p59-research-adapter-ingestion-contract.spec.md` | 完成 | P59 research adapter ingestion contract：`phase3 research-validate-plan` 验证外部 report contract，不自动 ingest |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -158,6 +164,12 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-29-p51-mind-model-closure-audit.md` — P51 mind model closure audit（已完成）
 - `docs/plans/2026-05-01-p52-phase-3-intake-roadmap.md` — P52 phase 3 intake roadmap（已完成）
 - `docs/plans/2026-05-02-p53-phase-3-candidate-evidence-audit.md` — P53 phase 3 candidate evidence audit（已完成）
+- `docs/plans/2026-05-02-p54-runtime-adoption-evidence.md` — P54 runtime adoption evidence（已完成）
+- `docs/plans/2026-05-02-p55-runtime-adoption-cli.md` — P55 runtime adoption CLI（已完成）
+- `docs/plans/2026-05-02-p56-card-context-default-gate.md` — P56 card context default gate（已完成）
+- `docs/plans/2026-05-02-p57-card-embedding-evidence-gate.md` — P57 card embedding evidence gate（已完成）
+- `docs/plans/2026-05-02-p58-evaluator-api-evidence-gate.md` — P58 evaluator API evidence gate（已完成）
+- `docs/plans/2026-05-02-p59-research-adapter-ingestion-contract.md` — P59 research adapter ingestion contract（已完成）
 
 ### Spec 使用方式
 
@@ -168,7 +180,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 
 ## 关键架构约束
 
-- **存储**：SQLite + sqlite-vec，单文件 `~/.mempal/palace.db`，schema v8
+- **存储**：SQLite + sqlite-vec，单文件 `~/.mempal/palace.db`，schema v9
 - **嵌入**：model2vec-rs 默认（potion-multilingual-128M, 256d），可选 ort (ONNX) 通过 `onnx` feature flag
 - **搜索**：BM25 (FTS5) + 向量 + RRF 融合混合检索
 - **AAAK 是输出格式化器**：不被 ingest 或 search 依赖
@@ -224,7 +236,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 
 ```
 crates/
-├── mempal-core/      # 数据模型 + SQLite schema v8 + taxonomy + triples
+├── mempal-core/      # 数据模型 + SQLite schema v9 + taxonomy + triples
 ├── mempal-ingest/    # 导入管道
 ├── mempal-search/    # 混合搜索（BM25+向量+RRF）+ 路由 + tunnel hints
 ├── mempal-embed/     # 嵌入层（model2vec 默认, ort 可选）

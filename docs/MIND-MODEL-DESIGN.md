@@ -1267,6 +1267,37 @@ Recommended first Phase-3 track: runtime adoption evidence. Runtime adoption evi
 This keeps Phase 3 evidence-first: implement measurement before implementing
 new authority, new retrieval defaults, or new external ingestion adapters.
 
+## Phase 3 Runtime Surfaces
+
+P54 runtime adoption evidence adds schema v9 table `runtime_adoption_events`.
+Events capture explicit agent/runtime signals with `track`, `signal`, `feature`,
+optional query/context/card/evaluator/research references, note, metadata, and
+timestamp.
+
+P55 runtime adoption CLI exposes this evidence substrate:
+
+- `mempal phase3 adoption record`
+- `mempal phase3 adoption list`
+- `mempal phase3 adoption stats`
+
+P56 implements `mempal phase3 gate card-context-default`. Card context default gate remains read-only; `include_cards` remains opt-in. The gate requires
+accepted `card_context` adoption evidence and zero rollback signals before a
+future default-on spec can even be considered.
+
+P57 implements `mempal phase3 gate card-embeddings`. The gate remains read-only
+and adds no card vector schema. Card embeddings require repeated measured
+`card_embedding` miss signals, and linked evidence remains the citation root.
+
+P58 implements `mempal phase3 gate evaluator-api`. Evaluator API gate remains advisory-only and preserves the P50 advisory-only lifecycle boundary: evaluator
+signals cannot mutate status, satisfy reviewer requirements, or bypass
+deterministic gates.
+
+P59 implements `mempal phase3 research-validate-plan`. The command validates an
+external JSON report/input contract with `report_id`, `title`, `sources`,
+`findings`, and optional `candidate_insights`. It only validates and plans;
+research adapter ingestion still preserves the P49 evidence-first boundary and
+does not create promoted/canonical knowledge.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."
