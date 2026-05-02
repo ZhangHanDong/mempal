@@ -1251,6 +1251,22 @@ The first Phase-3 implementation should be selected only after one candidate has
 enough evidence to justify implementation. Until then, Phase 3 remains an intake
 queue, not an implementation commitment.
 
+## Phase 3 Candidate Evidence Audit
+
+P53 Phase-3 candidate evidence audit records current readiness. No Phase-3 candidate is ready for direct implementation yet.
+
+Candidate readiness:
+
+- Runtime adoption evidence: recommended first measurement track. It should collect concrete agent-behavior evidence before default policy changes.
+- Card retrieval maturity: partial evidence from P43-P45, but it still needs measured retrieval misses and context impact before default context changes or card embeddings.
+- Evaluator APIs: blocked on advisory output contracts and lifecycle replay requirements.
+- Research adapter ingestion: blocked on an explicit external report/input contract.
+
+Recommended first Phase-3 track: runtime adoption evidence. Runtime adoption evidence is the common measurement substrate for deciding whether card-aware context should become default, whether card embeddings are justified, and what evaluator advice is actually useful to agents.
+
+This keeps Phase 3 evidence-first: implement measurement before implementing
+new authority, new retrieval defaults, or new external ingestion adapters.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

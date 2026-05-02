@@ -99,6 +99,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p50-evaluator-promotion-policy.spec.md` | 完成 | P50 evaluator promotion policy：evaluator 只能 advisory，不可绕过 deterministic gates / human review |
 | `specs/p51-mind-model-closure-audit.spec.md` | 完成 | P51 mind model closure audit：确认 P12-P50 baseline 已完成，未来扩展必须开新阶段 spec |
 | `specs/p52-phase-3-intake-roadmap.spec.md` | 完成 | P52 phase 3 intake roadmap：定义 baseline 后新阶段候选轨道与 evidence/rollback/acceptance 入口规则 |
+| `specs/p53-phase-3-candidate-evidence-audit.spec.md` | 完成 | P53 phase 3 candidate evidence audit：评估 Phase-3 候选证据，推荐先做 runtime adoption evidence |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -156,6 +157,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-04-29-p50-evaluator-promotion-policy.md` — P50 evaluator promotion policy（已完成）
 - `docs/plans/2026-04-29-p51-mind-model-closure-audit.md` — P51 mind model closure audit（已完成）
 - `docs/plans/2026-05-01-p52-phase-3-intake-roadmap.md` — P52 phase 3 intake roadmap（已完成）
+- `docs/plans/2026-05-02-p53-phase-3-candidate-evidence-audit.md` — P53 phase 3 candidate evidence audit（已完成）
 
 ### Spec 使用方式
 
