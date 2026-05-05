@@ -210,6 +210,14 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    counterexample evidence. It does not create cards, replace mempal_search,
    assemble default context, or backfill drawers.
 
+17. RECORD PHASE-3 RUNTIME ADOPTION EVIDENCE
+   Use mempal_phase3 to record and inspect runtime adoption evidence before
+   proposing stronger defaults or new authority. The tool supports
+   record/list/stats/gate/research_validate_plan actions over Phase-3
+   runtime_adoption_events. Gate and research_validate_plan are advisory and
+   read-only: they do not enable card context by default, add card embeddings,
+   mutate evaluator lifecycle state, or promote research output into knowledge.
+
 TOOLS:
   mempal_status        — current state + this protocol + AAAK format spec
   mempal_search        — semantic search with wing/room filters, citation-bearing
@@ -219,6 +227,7 @@ TOOLS:
   mempal_knowledge_policy — read-only Stage-1 promotion policy thresholds
   mempal_knowledge_gate — read-only knowledge promotion readiness check
   mempal_knowledge_cards — Phase-2 knowledge card list/get/retrieve/events/gate/promote/demote
+  mempal_phase3       — Phase-3 runtime adoption evidence record/list/stats/gate/research_validate_plan
   mempal_knowledge_promote — gate-enforced knowledge lifecycle promotion
   mempal_knowledge_demote — evidence-backed knowledge demotion or retirement
   mempal_knowledge_publish_anchor — metadata-only outward anchor publication

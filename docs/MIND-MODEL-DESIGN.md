@@ -1298,6 +1298,14 @@ external JSON report/input contract with `report_id`, `title`, `sources`,
 research adapter ingestion still preserves the P49 evidence-first boundary and
 does not create promoted/canonical knowledge.
 
+P60 exposes the Phase-3 runtime evidence baseline to MCP-connected agents
+through `mempal_phase3`. The MCP tool uses `action` values
+`record/list/stats/gate/research_validate_plan`, mirroring the P54-P59 CLI
+surfaces without adding new authority. `record` appends
+`runtime_adoption_events`; `list`, `stats`, `gate`, and
+`research_validate_plan` remain read-only. MCP research validation accepts a
+JSON report object and still does not ingest or promote knowledge.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

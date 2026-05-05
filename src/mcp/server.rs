@@ -7,7 +7,8 @@ use crate::core::{
     db::Database,
     types::{
         AnchorKind, BootstrapIdentityParts, Drawer, ExplicitTunnel, KnowledgeCardFilter,
-        KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, SourceType,
+        KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, RuntimeAdoptionEvent,
+        RuntimeAdoptionFilter, RuntimeAdoptionSignal, RuntimeAdoptionTrack, SourceType,
         TriggerHints, Triple,
     },
     utils::{
@@ -61,9 +62,11 @@ use super::tools::{
     KnowledgeDistillResponse, KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePolicyResponse,
     KnowledgePromoteRequest, KnowledgePromoteResponse, KnowledgePublishAnchorRequest,
     KnowledgePublishAnchorResponse, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse,
-    RetrievedKnowledgeCardDto, ScopeCount, SearchRequest, SearchResponse, SearchResultDto,
-    StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse, TriggerHintsDto,
-    TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
+    Phase3GateDto, Phase3Request, Phase3Response, ResearchAdapterPlanDto,
+    RetrievedKnowledgeCardDto, RuntimeAdoptionEventDto, RuntimeAdoptionStatsDto, ScopeCount,
+    SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
+    TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
+    TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -225,6 +228,17 @@ impl MempalMcpServer {
         let request = serde_json::from_value(value)
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         self.mempal_knowledge_cards(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn phase3_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<Phase3Response, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_phase3(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -609,6 +623,224 @@ fn required_string<'a>(
 ) -> std::result::Result<&'a str, ErrorData> {
     trim_to_option(value)
         .ok_or_else(|| ErrorData::invalid_params(format!("{field} is required"), None))
+}
+
+fn parse_runtime_adoption_track_opt(
+    value: Option<&str>,
+) -> std::result::Result<Option<RuntimeAdoptionTrack>, ErrorData> {
+    parse_enum(value, "track", |normalized| match normalized {
+        "runtime_adoption" => Some(RuntimeAdoptionTrack::RuntimeAdoption),
+        "card_context" => Some(RuntimeAdoptionTrack::CardContext),
+        "card_embedding" => Some(RuntimeAdoptionTrack::CardEmbedding),
+        "evaluator" => Some(RuntimeAdoptionTrack::Evaluator),
+        "research_adapter" => Some(RuntimeAdoptionTrack::ResearchAdapter),
+        _ => None,
+    })
+}
+
+fn parse_runtime_adoption_track(
+    value: &str,
+) -> std::result::Result<RuntimeAdoptionTrack, ErrorData> {
+    parse_runtime_adoption_track_opt(Some(value))?
+        .ok_or_else(|| ErrorData::invalid_params("track is required", None))
+}
+
+fn parse_runtime_adoption_signal(
+    value: &str,
+) -> std::result::Result<RuntimeAdoptionSignal, ErrorData> {
+    parse_enum(Some(value), "signal", |normalized| match normalized {
+        "used" => Some(RuntimeAdoptionSignal::Used),
+        "accepted" => Some(RuntimeAdoptionSignal::Accepted),
+        "rejected" => Some(RuntimeAdoptionSignal::Rejected),
+        "miss" => Some(RuntimeAdoptionSignal::Miss),
+        "rollback" => Some(RuntimeAdoptionSignal::Rollback),
+        "contradiction" => Some(RuntimeAdoptionSignal::Contradiction),
+        "neutral" => Some(RuntimeAdoptionSignal::Neutral),
+        _ => None,
+    })?
+    .ok_or_else(|| ErrorData::invalid_params("signal is required", None))
+}
+
+fn runtime_adoption_track_slug(track: &RuntimeAdoptionTrack) -> &'static str {
+    match track {
+        RuntimeAdoptionTrack::RuntimeAdoption => "runtime_adoption",
+        RuntimeAdoptionTrack::CardContext => "card_context",
+        RuntimeAdoptionTrack::CardEmbedding => "card_embedding",
+        RuntimeAdoptionTrack::Evaluator => "evaluator",
+        RuntimeAdoptionTrack::ResearchAdapter => "research_adapter",
+    }
+}
+
+fn phase3_event_id(
+    track: &RuntimeAdoptionTrack,
+    signal: &RuntimeAdoptionSignal,
+    feature: &str,
+) -> String {
+    let signal = match signal {
+        RuntimeAdoptionSignal::Used => "used",
+        RuntimeAdoptionSignal::Accepted => "accepted",
+        RuntimeAdoptionSignal::Rejected => "rejected",
+        RuntimeAdoptionSignal::Miss => "miss",
+        RuntimeAdoptionSignal::Rollback => "rollback",
+        RuntimeAdoptionSignal::Contradiction => "contradiction",
+        RuntimeAdoptionSignal::Neutral => "neutral",
+    };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let sanitized_feature = feature
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!(
+        "adoption_{}_{}_{}_{}",
+        runtime_adoption_track_slug(track),
+        signal,
+        sanitized_feature,
+        nanos
+    )
+}
+
+fn runtime_adoption_stats(events: &[RuntimeAdoptionEvent]) -> RuntimeAdoptionStatsDto {
+    let mut stats = RuntimeAdoptionStatsDto {
+        total: events.len(),
+        used: 0,
+        accepted: 0,
+        rejected: 0,
+        misses: 0,
+        rollbacks: 0,
+        contradictions: 0,
+        neutral: 0,
+    };
+    for event in events {
+        match event.signal {
+            RuntimeAdoptionSignal::Used => stats.used += 1,
+            RuntimeAdoptionSignal::Accepted => stats.accepted += 1,
+            RuntimeAdoptionSignal::Rejected => stats.rejected += 1,
+            RuntimeAdoptionSignal::Miss => stats.misses += 1,
+            RuntimeAdoptionSignal::Rollback => stats.rollbacks += 1,
+            RuntimeAdoptionSignal::Contradiction => stats.contradictions += 1,
+            RuntimeAdoptionSignal::Neutral => stats.neutral += 1,
+        }
+    }
+    stats
+}
+
+fn phase3_gate_report(
+    db: &Database,
+    candidate: &str,
+) -> std::result::Result<Phase3GateDto, ErrorData> {
+    let (track, ready_fn): (RuntimeAdoptionTrack, fn(&RuntimeAdoptionStatsDto) -> bool) =
+        match candidate {
+            "card-context-default" => (RuntimeAdoptionTrack::CardContext, |stats| {
+                stats.accepted >= 3 && stats.rollbacks == 0 && stats.rejected <= stats.accepted
+            }),
+            "card-embeddings" => (RuntimeAdoptionTrack::CardEmbedding, |stats| {
+                stats.misses >= 3 && stats.rollbacks == 0
+            }),
+            "evaluator-api" => (RuntimeAdoptionTrack::Evaluator, |stats| {
+                stats.accepted >= 3 && stats.rollbacks == 0 && stats.contradictions == 0
+            }),
+            "research-adapter" => (RuntimeAdoptionTrack::ResearchAdapter, |stats| {
+                stats.accepted >= 1 && stats.contradictions == 0 && stats.rollbacks == 0
+            }),
+            other => {
+                return Err(ErrorData::invalid_params(
+                    format!("unsupported phase3 candidate: {other}"),
+                    None,
+                ));
+            }
+        };
+    let events = db
+        .list_runtime_adoption_events(
+            &RuntimeAdoptionFilter {
+                track: Some(track.clone()),
+                feature: None,
+            },
+            10_000,
+        )
+        .map_err(|error| {
+            ErrorData::internal_error(
+                format!("failed to list runtime adoption events: {error}"),
+                None,
+            )
+        })?;
+    let stats = runtime_adoption_stats(&events);
+    let ready = ready_fn(&stats);
+    let mut reasons = Vec::new();
+    if ready {
+        reasons.push("minimum evidence threshold satisfied".to_string());
+    } else {
+        reasons.push("minimum evidence threshold not satisfied".to_string());
+    }
+    if stats.rollbacks > 0 {
+        reasons.push("rollback signals block default or authority changes".to_string());
+    }
+    if stats.contradictions > 0 {
+        reasons.push("contradiction signals require review before implementation".to_string());
+    }
+    Ok(Phase3GateDto {
+        candidate: candidate.to_string(),
+        ready,
+        required_track: runtime_adoption_track_slug(&track).to_string(),
+        stats,
+        reasons,
+    })
+}
+
+fn validate_research_adapter_plan_value(value: &serde_json::Value) -> ResearchAdapterPlanDto {
+    let mut errors = Vec::new();
+    let report_id = required_json_string(value, "report_id", &mut errors);
+    let title = required_json_string(value, "title", &mut errors);
+    let source_count = value
+        .get("sources")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if source_count == 0 {
+        errors.push("sources must contain at least one item".to_string());
+    }
+    let finding_count = value
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if finding_count == 0 {
+        errors.push("findings must contain at least one item".to_string());
+    }
+    let candidate_insight_count = value
+        .get("candidate_insights")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+
+    ResearchAdapterPlanDto {
+        valid: errors.is_empty(),
+        report_id,
+        title,
+        source_count,
+        finding_count,
+        candidate_insight_count,
+        errors,
+    }
+}
+
+fn required_json_string(
+    value: &serde_json::Value,
+    field: &'static str,
+    errors: &mut Vec<String>,
+) -> String {
+    match value.get(field).and_then(serde_json::Value::as_str) {
+        Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => {
+            errors.push(format!("{field} is required"));
+            String::new()
+        }
+    }
 }
 
 fn anchor_error(error: anchor::AnchorError) -> ErrorData {
@@ -1089,6 +1321,143 @@ impl MempalMcpServer {
             other => Err(ErrorData::invalid_params(
                 format!(
                     "unsupported knowledge cards action: {other}; actions are list, get, retrieve, events, gate, promote, demote"
+                ),
+                None,
+            )),
+        }
+    }
+
+    #[tool(
+        name = "mempal_phase3",
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: record/list/stats/gate/research_validate_plan. Record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON without ingesting or promoting knowledge."
+    )]
+    async fn mempal_phase3(
+        &self,
+        Parameters(request): Parameters<Phase3Request>,
+    ) -> std::result::Result<Json<Phase3Response>, ErrorData> {
+        let action = trim_to_option(Some(request.action.as_str()))
+            .ok_or_else(|| ErrorData::invalid_params("action must not be empty", None))?;
+
+        match action {
+            "record" => {
+                let db = self.open_db()?;
+                let track = parse_runtime_adoption_track(required_string(
+                    request.track.as_deref(),
+                    "track",
+                )?)?;
+                let signal = parse_runtime_adoption_signal(required_string(
+                    request.signal.as_deref(),
+                    "signal",
+                )?)?;
+                let feature = required_string(request.feature.as_deref(), "feature")?.to_string();
+                let event = RuntimeAdoptionEvent {
+                    id: request
+                        .id
+                        .unwrap_or_else(|| phase3_event_id(&track, &signal, &feature)),
+                    track,
+                    signal,
+                    feature,
+                    query: trim_to_owned(request.query.as_deref()),
+                    context_hash: trim_to_owned(request.context_hash.as_deref()),
+                    card_id: trim_to_owned(request.card_id.as_deref()),
+                    evaluator_id: trim_to_owned(request.evaluator_id.as_deref()),
+                    research_report_id: trim_to_owned(request.research_report_id.as_deref()),
+                    note: trim_to_owned(request.note.as_deref()),
+                    metadata: request.metadata,
+                    created_at: current_timestamp(),
+                };
+                db.insert_runtime_adoption_event(&event).map_err(|error| {
+                    ErrorData::internal_error(
+                        format!("failed to insert runtime adoption event: {error}"),
+                        None,
+                    )
+                })?;
+                Ok(Json(Phase3Response {
+                    event: Some(RuntimeAdoptionEventDto::from(event)),
+                    events: Vec::new(),
+                    stats: None,
+                    gate: None,
+                    research_plan: None,
+                }))
+            }
+            "list" => {
+                let db = self.open_db()?;
+                let events = db
+                    .list_runtime_adoption_events(
+                        &RuntimeAdoptionFilter {
+                            track: parse_runtime_adoption_track_opt(request.track.as_deref())?,
+                            feature: trim_to_owned(request.feature.as_deref()),
+                        },
+                        request.limit.unwrap_or(50),
+                    )
+                    .map_err(|error| {
+                        ErrorData::internal_error(
+                            format!("failed to list runtime adoption events: {error}"),
+                            None,
+                        )
+                    })?;
+                Ok(Json(Phase3Response {
+                    event: None,
+                    events: events
+                        .into_iter()
+                        .map(RuntimeAdoptionEventDto::from)
+                        .collect(),
+                    stats: None,
+                    gate: None,
+                    research_plan: None,
+                }))
+            }
+            "stats" => {
+                let db = self.open_db()?;
+                let events = db
+                    .list_runtime_adoption_events(
+                        &RuntimeAdoptionFilter {
+                            track: parse_runtime_adoption_track_opt(request.track.as_deref())?,
+                            feature: trim_to_owned(request.feature.as_deref()),
+                        },
+                        10_000,
+                    )
+                    .map_err(|error| {
+                        ErrorData::internal_error(
+                            format!("failed to list runtime adoption events: {error}"),
+                            None,
+                        )
+                    })?;
+                Ok(Json(Phase3Response {
+                    event: None,
+                    events: Vec::new(),
+                    stats: Some(runtime_adoption_stats(&events)),
+                    gate: None,
+                    research_plan: None,
+                }))
+            }
+            "gate" => {
+                let db = self.open_db()?;
+                let candidate = required_string(request.candidate.as_deref(), "candidate")?;
+                let gate = phase3_gate_report(&db, candidate)?;
+                Ok(Json(Phase3Response {
+                    event: None,
+                    events: Vec::new(),
+                    stats: None,
+                    gate: Some(gate),
+                    research_plan: None,
+                }))
+            }
+            "research_validate_plan" => {
+                let report = request.report.ok_or_else(|| {
+                    ErrorData::invalid_params("report is required for research_validate_plan", None)
+                })?;
+                Ok(Json(Phase3Response {
+                    event: None,
+                    events: Vec::new(),
+                    stats: None,
+                    gate: None,
+                    research_plan: Some(validate_research_adapter_plan_value(&report)),
+                }))
+            }
+            other => Err(ErrorData::invalid_params(
+                format!(
+                    "unsupported phase3 action: {other}; actions are record, list, stats, gate, research_validate_plan"
                 ),
                 None,
             )),
@@ -2061,7 +2430,7 @@ mod tests {
     use super::*;
     use crate::core::types::{
         BootstrapEvidenceArgs, KnowledgeCard, KnowledgeCardEvent, KnowledgeEventType,
-        KnowledgeEvidenceLink, KnowledgeEvidenceRole,
+        KnowledgeEvidenceLink, KnowledgeEvidenceRole, RuntimeAdoptionFilter, RuntimeAdoptionTrack,
     };
     use crate::embed::Embedder;
 
@@ -3189,6 +3558,157 @@ mod tests {
         assert_eq!(
             db.knowledge_events("card_lifecycle").expect("events").len(),
             2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_phase3_record_stats_and_gate_actions() {
+        let (_tempdir, db_path, server) = setup_server();
+
+        for i in 0..3 {
+            let response = server
+                .phase3_json_for_test(serde_json::json!({
+                    "action": "record",
+                    "id": format!("mcp_card_context_accept_{i}"),
+                    "track": "card_context",
+                    "signal": "accepted",
+                    "feature": "include_cards",
+                    "query": "skill trigger context",
+                    "metadata": { "source": "mcp-test" }
+                }))
+                .await
+                .expect("record phase3 event");
+            assert_eq!(
+                response.event.expect("event").id,
+                format!("mcp_card_context_accept_{i}")
+            );
+        }
+
+        let stats = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "stats",
+                "track": "card_context",
+                "feature": "include_cards"
+            }))
+            .await
+            .expect("stats");
+        let stats = stats.stats.expect("stats");
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.accepted, 3);
+        assert_eq!(stats.rollbacks, 0);
+
+        let gate = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "gate",
+                "candidate": "card-context-default"
+            }))
+            .await
+            .expect("gate");
+        let gate = gate.gate.expect("gate");
+        assert!(gate.ready);
+        assert_eq!(gate.required_track, "card_context");
+
+        let db = Database::open(&db_path).expect("open db");
+        let events = db
+            .list_runtime_adoption_events(
+                &RuntimeAdoptionFilter {
+                    track: Some(RuntimeAdoptionTrack::CardContext),
+                    feature: Some("include_cards".to_string()),
+                },
+                10,
+            )
+            .expect("events");
+        assert_eq!(events.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_phase3_research_validate_plan_is_read_only() {
+        let (_tempdir, db_path, server) = setup_server();
+        let baseline = {
+            let db = Database::open(&db_path).expect("open db");
+            (
+                db.drawer_count().expect("drawers"),
+                db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                    .expect("events")
+                    .len(),
+            )
+        };
+
+        let response = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "research_validate_plan",
+                "report": {
+                    "report_id": "research_001",
+                    "title": "Agent memory retrieval notes",
+                    "sources": [{ "url": "https://example.invalid/report" }],
+                    "findings": [{ "summary": "Measure card context before defaults." }],
+                    "candidate_insights": [{ "statement": "Measure before defaulting cards." }]
+                }
+            }))
+            .await
+            .expect("validate research plan");
+        let plan = response.research_plan.expect("research plan");
+        assert!(plan.valid);
+        assert_eq!(plan.report_id, "research_001");
+        assert_eq!(plan.source_count, 1);
+        assert_eq!(plan.candidate_insight_count, 1);
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(db.drawer_count().expect("drawers"), baseline.0);
+        assert_eq!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len(),
+            baseline.1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_phase3_rejects_invalid_action_without_mutation() {
+        let (_tempdir, db_path, server) = setup_server();
+        let before = {
+            let db = Database::open(&db_path).expect("open db");
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len()
+        };
+
+        let error = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "promote"
+            }))
+            .await
+            .expect_err("invalid action should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("actions are record, list, stats, gate, research_validate_plan")
+        );
+
+        let db = Database::open(&db_path).expect("open db");
+        assert_eq!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len(),
+            before
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_phase3_runtime_surface() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_phase3")
+            .expect("mempal_phase3 tool exists");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(description.contains("Phase-3 runtime adoption evidence"));
+        assert!(description.contains("Actions: record/list/stats/gate/research_validate_plan"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
+        assert!(
+            crate::core::protocol::MEMORY_PROTOCOL.contains("runtime adoption"),
+            "protocol should explain the Phase-3 runtime evidence surface"
         );
     }
 

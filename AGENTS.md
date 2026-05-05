@@ -106,6 +106,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p57-card-embedding-evidence-gate.spec.md` | 完成 | P57 card embedding evidence gate：card embeddings 需 measured miss evidence，未新增 vector schema |
 | `specs/p58-evaluator-api-evidence-gate.spec.md` | 完成 | P58 evaluator API evidence gate：evaluator API 仍 advisory-only，不写 lifecycle |
 | `specs/p59-research-adapter-ingestion-contract.spec.md` | 完成 | P59 research adapter ingestion contract：`phase3 research-validate-plan` 验证外部 report contract，不自动 ingest |
+| `specs/p60-mcp-phase3-runtime-surface.spec.md` | 完成 | P60 MCP Phase-3 runtime surface：`mempal_phase3` 暴露 record/list/stats/gate/research_validate_plan |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -170,6 +171,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-02-p57-card-embedding-evidence-gate.md` — P57 card embedding evidence gate（已完成）
 - `docs/plans/2026-05-02-p58-evaluator-api-evidence-gate.md` — P58 evaluator API evidence gate（已完成）
 - `docs/plans/2026-05-02-p59-research-adapter-ingestion-contract.md` — P59 research adapter ingestion contract（已完成）
+- `docs/plans/2026-05-05-p60-mcp-phase3-runtime-surface.md` — P60 MCP Phase-3 runtime surface（已完成）
 
 ### Spec 使用方式
 
@@ -188,9 +190,9 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **搜索结果强制带引用**：`SearchResult` 包含 `source_file`、`drawer_id`、`tunnel_hints`
 - **知识图谱**：triples 表已激活（手动 CRUD），支持时态验证
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
-- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，15 条规则
+- **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，17 条规则
 
-## MCP 工具（18 个）
+## MCP 工具（19 个）
 
 | 工具 | 作用 |
 |------|------|
@@ -205,6 +207,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
 | `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
 | `mempal_knowledge_cards` | Phase-2 knowledge card list/get/events/gate/promote/demote/retrieve；retrieve 通过 linked evidence 返回 active cards（P35/P40/P45） |
+| `mempal_phase3` | Phase-3 runtime adoption evidence：record/list/stats/gate/research_validate_plan（P60） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |

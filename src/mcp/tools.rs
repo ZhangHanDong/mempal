@@ -1,8 +1,8 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeCard, KnowledgeCardEvent, KnowledgeStatus, KnowledgeTier,
-    MemoryDomain, MemoryKind, NeighborChunk, RouteDecision, SearchResult, TaxonomyEntry,
-    TunnelEndpoint,
+    MemoryDomain, MemoryKind, NeighborChunk, RouteDecision, RuntimeAdoptionEvent,
+    RuntimeAdoptionSignal, RuntimeAdoptionTrack, SearchResult, TaxonomyEntry, TunnelEndpoint,
 };
 use crate::field_taxonomy::FieldTaxonomyEntry;
 use crate::knowledge_anchor::PublishAnchorOutcome;
@@ -303,6 +303,128 @@ pub struct KnowledgeCardsResponse {
     pub promote: Option<KnowledgeCardPromoteDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub demote: Option<KnowledgeCardDemoteDto>,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct Phase3Request {
+    pub action: String,
+    pub id: Option<String>,
+    pub track: Option<String>,
+    pub signal: Option<String>,
+    pub feature: Option<String>,
+    pub query: Option<String>,
+    pub context_hash: Option<String>,
+    pub card_id: Option<String>,
+    pub evaluator_id: Option<String>,
+    pub research_report_id: Option<String>,
+    pub note: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub limit: Option<usize>,
+    pub candidate: Option<String>,
+    pub report: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct Phase3Response {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<RuntimeAdoptionEventDto>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub events: Vec<RuntimeAdoptionEventDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stats: Option<RuntimeAdoptionStatsDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate: Option<Phase3GateDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub research_plan: Option<ResearchAdapterPlanDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionEventDto {
+    pub id: String,
+    pub track: String,
+    pub signal: String,
+    pub feature: String,
+    pub query: Option<String>,
+    pub context_hash: Option<String>,
+    pub card_id: Option<String>,
+    pub evaluator_id: Option<String>,
+    pub research_report_id: Option<String>,
+    pub note: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionStatsDto {
+    pub total: usize,
+    pub used: usize,
+    pub accepted: usize,
+    pub rejected: usize,
+    pub misses: usize,
+    pub rollbacks: usize,
+    pub contradictions: usize,
+    pub neutral: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct Phase3GateDto {
+    pub candidate: String,
+    pub ready: bool,
+    pub required_track: String,
+    pub stats: RuntimeAdoptionStatsDto,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ResearchAdapterPlanDto {
+    pub valid: bool,
+    pub report_id: String,
+    pub title: String,
+    pub source_count: usize,
+    pub finding_count: usize,
+    pub candidate_insight_count: usize,
+    pub errors: Vec<String>,
+}
+
+impl From<RuntimeAdoptionEvent> for RuntimeAdoptionEventDto {
+    fn from(event: RuntimeAdoptionEvent) -> Self {
+        Self {
+            id: event.id,
+            track: runtime_adoption_track_slug(&event.track).to_string(),
+            signal: runtime_adoption_signal_slug(&event.signal).to_string(),
+            feature: event.feature,
+            query: event.query,
+            context_hash: event.context_hash,
+            card_id: event.card_id,
+            evaluator_id: event.evaluator_id,
+            research_report_id: event.research_report_id,
+            note: event.note,
+            metadata: event.metadata,
+            created_at: event.created_at,
+        }
+    }
+}
+
+fn runtime_adoption_track_slug(track: &RuntimeAdoptionTrack) -> &'static str {
+    match track {
+        RuntimeAdoptionTrack::RuntimeAdoption => "runtime_adoption",
+        RuntimeAdoptionTrack::CardContext => "card_context",
+        RuntimeAdoptionTrack::CardEmbedding => "card_embedding",
+        RuntimeAdoptionTrack::Evaluator => "evaluator",
+        RuntimeAdoptionTrack::ResearchAdapter => "research_adapter",
+    }
+}
+
+fn runtime_adoption_signal_slug(signal: &RuntimeAdoptionSignal) -> &'static str {
+    match signal {
+        RuntimeAdoptionSignal::Used => "used",
+        RuntimeAdoptionSignal::Accepted => "accepted",
+        RuntimeAdoptionSignal::Rejected => "rejected",
+        RuntimeAdoptionSignal::Miss => "miss",
+        RuntimeAdoptionSignal::Rollback => "rollback",
+        RuntimeAdoptionSignal::Contradiction => "contradiction",
+        RuntimeAdoptionSignal::Neutral => "neutral",
+    }
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
