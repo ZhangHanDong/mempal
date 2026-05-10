@@ -327,6 +327,8 @@ pub struct Phase3Request {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct Phase3Response {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub guidance: Option<RuntimeAdoptionGuidanceDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<RuntimeAdoptionEventDto>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub events: Vec<RuntimeAdoptionEventDto>,
@@ -336,6 +338,29 @@ pub struct Phase3Response {
     pub gate: Option<Phase3GateDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub research_plan: Option<ResearchAdapterPlanDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionGuidanceDto {
+    pub version: u32,
+    pub recording_rule: String,
+    pub required_fields: Vec<String>,
+    pub optional_fields: Vec<String>,
+    pub signals: Vec<RuntimeAdoptionSignalGuidanceDto>,
+    pub tracks: Vec<RuntimeAdoptionTrackGuidanceDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionSignalGuidanceDto {
+    pub signal: String,
+    pub when: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionTrackGuidanceDto {
+    pub track: String,
+    pub when: String,
+    pub feature_examples: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

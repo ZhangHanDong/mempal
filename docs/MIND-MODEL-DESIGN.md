@@ -1306,6 +1306,14 @@ surfaces without adding new authority. `record` appends
 `research_validate_plan` remain read-only. MCP research validation accepts a
 JSON report object and still does not ingest or promote knowledge.
 
+P61 adds a read-only runtime adoption recording protocol through
+`mempal_phase3 action=guidance`. The guidance tells agents when to record
+`used`, `accepted`, `rejected`, `miss`, `rollback`, `contradiction`, or
+`neutral`, and exposes the required `track`, `signal`, and `feature` fields
+plus optional context fields. This is a recording discipline, not automatic
+instrumentation: it adds no hooks, no background writes, no schema migration,
+and no default runtime behavior change.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

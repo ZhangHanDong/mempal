@@ -63,8 +63,9 @@ use super::tools::{
     KnowledgePromoteRequest, KnowledgePromoteResponse, KnowledgePublishAnchorRequest,
     KnowledgePublishAnchorResponse, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse,
     Phase3GateDto, Phase3Request, Phase3Response, ResearchAdapterPlanDto,
-    RetrievedKnowledgeCardDto, RuntimeAdoptionEventDto, RuntimeAdoptionStatsDto, ScopeCount,
-    SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
+    RetrievedKnowledgeCardDto, RuntimeAdoptionEventDto, RuntimeAdoptionGuidanceDto,
+    RuntimeAdoptionSignalGuidanceDto, RuntimeAdoptionStatsDto, RuntimeAdoptionTrackGuidanceDto,
+    ScopeCount, SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
     TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
     TunnelsRequest, TunnelsResponse,
 };
@@ -733,6 +734,90 @@ fn runtime_adoption_stats(events: &[RuntimeAdoptionEvent]) -> RuntimeAdoptionSta
     stats
 }
 
+fn runtime_adoption_guidance() -> RuntimeAdoptionGuidanceDto {
+    RuntimeAdoptionGuidanceDto {
+        version: 1,
+        recording_rule: "record only concrete runtime outcomes, not speculation".to_string(),
+        required_fields: vec![
+            "track".to_string(),
+            "signal".to_string(),
+            "feature".to_string(),
+        ],
+        optional_fields: vec![
+            "query".to_string(),
+            "context_hash".to_string(),
+            "card_id".to_string(),
+            "evaluator_id".to_string(),
+            "research_report_id".to_string(),
+            "note".to_string(),
+            "metadata".to_string(),
+        ],
+        signals: vec![
+            RuntimeAdoptionSignalGuidanceDto {
+                signal: "used".to_string(),
+                when: "record when guidance was actually consumed during a task".to_string(),
+            },
+            RuntimeAdoptionSignalGuidanceDto {
+                signal: "accepted".to_string(),
+                when: "record when the consumed guidance materially helped the outcome".to_string(),
+            },
+            RuntimeAdoptionSignalGuidanceDto {
+                signal: "rejected".to_string(),
+                when: "record when guidance was considered and intentionally not followed"
+                    .to_string(),
+            },
+            RuntimeAdoptionSignalGuidanceDto {
+                signal: "miss".to_string(),
+                when: "record when useful guidance should have appeared but did not".to_string(),
+            },
+            RuntimeAdoptionSignalGuidanceDto {
+                signal: "rollback".to_string(),
+                when: "record when behavior was reverted because guidance degraded the outcome"
+                    .to_string(),
+            },
+            RuntimeAdoptionSignalGuidanceDto {
+                signal: "contradiction".to_string(),
+                when: "record when guidance conflicted with stronger evidence or instructions"
+                    .to_string(),
+            },
+            RuntimeAdoptionSignalGuidanceDto {
+                signal: "neutral".to_string(),
+                when: "record when guidance was consumed but had no clear outcome impact"
+                    .to_string(),
+            },
+        ],
+        tracks: vec![
+            RuntimeAdoptionTrackGuidanceDto {
+                track: "runtime_adoption".to_string(),
+                when: "general agent-runtime behavior evidence".to_string(),
+                feature_examples: vec!["context_pack".to_string(), "skill_selection".to_string()],
+            },
+            RuntimeAdoptionTrackGuidanceDto {
+                track: "card_context".to_string(),
+                when: "card-aware context affected or should have affected behavior".to_string(),
+                feature_examples: vec!["include_cards".to_string()],
+            },
+            RuntimeAdoptionTrackGuidanceDto {
+                track: "card_embedding".to_string(),
+                when: "linked-evidence card retrieval missed statement-level matches".to_string(),
+                feature_examples: vec!["card_statement_recall".to_string()],
+            },
+            RuntimeAdoptionTrackGuidanceDto {
+                track: "evaluator".to_string(),
+                when: "evaluator advice affected or should have affected a lifecycle decision"
+                    .to_string(),
+                feature_examples: vec!["advisory_gate".to_string()],
+            },
+            RuntimeAdoptionTrackGuidanceDto {
+                track: "research_adapter".to_string(),
+                when: "external research report validation or ingestion planning affected behavior"
+                    .to_string(),
+                feature_examples: vec!["research_validate_plan".to_string()],
+            },
+        ],
+    }
+}
+
 fn phase3_gate_report(
     db: &Database,
     candidate: &str,
@@ -1329,7 +1414,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_phase3",
-        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: record/list/stats/gate/research_validate_plan. Record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON without ingesting or promoting knowledge."
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/record/list/stats/gate/research_validate_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON without ingesting or promoting knowledge."
     )]
     async fn mempal_phase3(
         &self,
@@ -1339,6 +1424,14 @@ impl MempalMcpServer {
             .ok_or_else(|| ErrorData::invalid_params("action must not be empty", None))?;
 
         match action {
+            "guidance" => Ok(Json(Phase3Response {
+                guidance: Some(runtime_adoption_guidance()),
+                event: None,
+                events: Vec::new(),
+                stats: None,
+                gate: None,
+                research_plan: None,
+            })),
             "record" => {
                 let db = self.open_db()?;
                 let track = parse_runtime_adoption_track(required_string(
@@ -1373,6 +1466,7 @@ impl MempalMcpServer {
                     )
                 })?;
                 Ok(Json(Phase3Response {
+                    guidance: None,
                     event: Some(RuntimeAdoptionEventDto::from(event)),
                     events: Vec::new(),
                     stats: None,
@@ -1397,6 +1491,7 @@ impl MempalMcpServer {
                         )
                     })?;
                 Ok(Json(Phase3Response {
+                    guidance: None,
                     event: None,
                     events: events
                         .into_iter()
@@ -1424,6 +1519,7 @@ impl MempalMcpServer {
                         )
                     })?;
                 Ok(Json(Phase3Response {
+                    guidance: None,
                     event: None,
                     events: Vec::new(),
                     stats: Some(runtime_adoption_stats(&events)),
@@ -1436,6 +1532,7 @@ impl MempalMcpServer {
                 let candidate = required_string(request.candidate.as_deref(), "candidate")?;
                 let gate = phase3_gate_report(&db, candidate)?;
                 Ok(Json(Phase3Response {
+                    guidance: None,
                     event: None,
                     events: Vec::new(),
                     stats: None,
@@ -1448,6 +1545,7 @@ impl MempalMcpServer {
                     ErrorData::invalid_params("report is required for research_validate_plan", None)
                 })?;
                 Ok(Json(Phase3Response {
+                    guidance: None,
                     event: None,
                     events: Vec::new(),
                     stats: None,
@@ -1457,7 +1555,7 @@ impl MempalMcpServer {
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported phase3 action: {other}; actions are record, list, stats, gate, research_validate_plan"
+                    "unsupported phase3 action: {other}; actions are guidance, record, list, stats, gate, research_validate_plan"
                 ),
                 None,
             )),
@@ -3680,9 +3778,9 @@ mod tests {
             .await
             .expect_err("invalid action should fail");
         assert!(
-            error
-                .to_string()
-                .contains("actions are record, list, stats, gate, research_validate_plan")
+            error.to_string().contains(
+                "actions are guidance, record, list, stats, gate, research_validate_plan"
+            )
         );
 
         let db = Database::open(&db_path).expect("open db");
@@ -3691,6 +3789,63 @@ mod tests {
                 .expect("events")
                 .len(),
             before
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_phase3_guidance_action_is_read_only() {
+        let (_tempdir, db_path, server) = setup_server();
+        let baseline = {
+            let db = Database::open(&db_path).expect("open db");
+            (
+                db.drawer_count().expect("drawers"),
+                db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                    .expect("events")
+                    .len(),
+            )
+        };
+
+        let response = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "guidance"
+            }))
+            .await
+            .expect("guidance");
+        let guidance = response.guidance.expect("guidance");
+        assert_eq!(guidance.version, 1);
+        assert_eq!(
+            guidance.recording_rule,
+            "record only concrete runtime outcomes, not speculation"
+        );
+        assert!(guidance.required_fields.contains(&"track".to_string()));
+        assert!(guidance.required_fields.contains(&"signal".to_string()));
+        assert!(guidance.required_fields.contains(&"feature".to_string()));
+        assert!(
+            guidance
+                .signals
+                .iter()
+                .any(|signal| signal.signal == "used" && signal.when.contains("actually consumed"))
+        );
+        assert!(
+            guidance
+                .signals
+                .iter()
+                .any(|signal| signal.signal == "rollback" && signal.when.contains("reverted"))
+        );
+        assert!(guidance.tracks.iter().any(|track| {
+            track.track == "card_context"
+                && track
+                    .feature_examples
+                    .contains(&"include_cards".to_string())
+        }));
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(db.drawer_count().expect("drawers"), baseline.0);
+        assert_eq!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len(),
+            baseline.1
         );
     }
 
@@ -3704,8 +3859,18 @@ mod tests {
             .expect("mempal_phase3 tool exists");
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(description.contains("Phase-3 runtime adoption evidence"));
-        assert!(description.contains("Actions: record/list/stats/gate/research_validate_plan"));
+        assert!(
+            description.contains("Actions: guidance/record/list/stats/gate/research_validate_plan")
+        );
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=guidance"));
+        assert!(
+            crate::core::protocol::MEMORY_PROTOCOL
+                .contains("used when guidance was actually consumed")
+        );
+        assert!(
+            crate::core::protocol::MEMORY_PROTOCOL.contains("rollback when behavior was reverted")
+        );
         assert!(
             crate::core::protocol::MEMORY_PROTOCOL.contains("runtime adoption"),
             "protocol should explain the Phase-3 runtime evidence surface"
