@@ -1314,6 +1314,12 @@ plus optional context fields. This is a recording discipline, not automatic
 instrumentation: it adds no hooks, no background writes, no schema migration,
 and no default runtime behavior change.
 
+P62 exposes the same recording protocol through CLI parity with
+`mempal phase3 adoption guidance`. The CLI supports plain and JSON output and
+shares the guidance implementation with `mempal_phase3 action=guidance`, so MCP
+agents, humans, and non-MCP automation inspect the same semantics. This remains
+read-only and does not append adoption events or change Phase-3 gate policy.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

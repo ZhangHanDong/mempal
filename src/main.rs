@@ -15,6 +15,7 @@ use mempal::context::{ContextPack, ContextRequest, assemble_context};
 use mempal::core::{
     config::Config,
     db::Database,
+    phase3::{RuntimeAdoptionGuidance, runtime_adoption_guidance},
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
         AnchorKind, KnowledgeCard, KnowledgeCardEvent, KnowledgeCardFilter, KnowledgeEventType,
@@ -575,6 +576,10 @@ enum Phase3Commands {
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)] // `record` intentionally carries the full event payload.
 enum Phase3AdoptionCommands {
+    Guidance {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     Record {
         #[arg(long)]
         track: String,
@@ -2179,6 +2184,9 @@ fn phase3_command(db: &Database, command: Phase3Commands) -> Result<()> {
 
 fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Result<()> {
     match command {
+        Phase3AdoptionCommands::Guidance { format } => {
+            print_runtime_adoption_guidance(&runtime_adoption_guidance(), &format)
+        }
         Phase3AdoptionCommands::Record {
             track,
             signal,
@@ -2289,6 +2297,38 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let stats = RuntimeAdoptionStats::from_events(&events);
             print_runtime_adoption_stats(&stats, &format)
         }
+    }
+}
+
+fn print_runtime_adoption_guidance(guidance: &RuntimeAdoptionGuidance, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("version={}", guidance.version);
+            println!("recording_rule={}", guidance.recording_rule);
+            println!("required_fields={}", guidance.required_fields.join(","));
+            println!("optional_fields={}", guidance.optional_fields.join(","));
+            for signal in &guidance.signals {
+                println!("signal={} when={}", signal.signal, signal.when);
+            }
+            for track in &guidance.tracks {
+                println!(
+                    "track={} when={} feature_examples={}",
+                    track.track,
+                    track.when,
+                    track.feature_examples.join(",")
+                );
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(guidance)
+                    .context("failed to serialize runtime adoption guidance")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
     }
 }
 

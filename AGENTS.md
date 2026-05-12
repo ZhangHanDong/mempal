@@ -108,6 +108,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p59-research-adapter-ingestion-contract.spec.md` | 完成 | P59 research adapter ingestion contract：`phase3 research-validate-plan` 验证外部 report contract，不自动 ingest |
 | `specs/p60-mcp-phase3-runtime-surface.spec.md` | 完成 | P60 MCP Phase-3 runtime surface：`mempal_phase3` 暴露 record/list/stats/gate/research_validate_plan |
 | `specs/p61-runtime-adoption-recording-protocol.spec.md` | 完成 | P61 runtime adoption recording protocol：`mempal_phase3 action=guidance` 定义 used/accepted/rejected/miss/rollback 记录语义 |
+| `specs/p62-runtime-adoption-cli-guidance.spec.md` | 完成 | P62 runtime adoption CLI guidance：`mempal phase3 adoption guidance` 与 MCP guidance 共用记录语义 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -174,6 +175,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-02-p59-research-adapter-ingestion-contract.md` — P59 research adapter ingestion contract（已完成）
 - `docs/plans/2026-05-05-p60-mcp-phase3-runtime-surface.md` — P60 MCP Phase-3 runtime surface（已完成）
 - `docs/plans/2026-05-10-p61-runtime-adoption-recording-protocol.md` — P61 runtime adoption recording protocol（已完成）
+- `docs/plans/2026-05-12-p62-runtime-adoption-cli-guidance.md` — P62 runtime adoption CLI guidance（已完成）
 
 ### Spec 使用方式
 

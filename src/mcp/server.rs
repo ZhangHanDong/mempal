@@ -5,6 +5,7 @@ use crate::context::assemble_context_with_vector;
 use crate::core::{
     anchor::{self, DerivedAnchor},
     db::Database,
+    phase3::runtime_adoption_guidance,
     types::{
         AnchorKind, BootstrapIdentityParts, Drawer, ExplicitTunnel, KnowledgeCardFilter,
         KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, RuntimeAdoptionEvent,
@@ -63,9 +64,8 @@ use super::tools::{
     KnowledgePromoteRequest, KnowledgePromoteResponse, KnowledgePublishAnchorRequest,
     KnowledgePublishAnchorResponse, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse,
     Phase3GateDto, Phase3Request, Phase3Response, ResearchAdapterPlanDto,
-    RetrievedKnowledgeCardDto, RuntimeAdoptionEventDto, RuntimeAdoptionGuidanceDto,
-    RuntimeAdoptionSignalGuidanceDto, RuntimeAdoptionStatsDto, RuntimeAdoptionTrackGuidanceDto,
-    ScopeCount, SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
+    RetrievedKnowledgeCardDto, RuntimeAdoptionEventDto, RuntimeAdoptionStatsDto, ScopeCount,
+    SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
     TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
     TunnelsRequest, TunnelsResponse,
 };
@@ -734,90 +734,6 @@ fn runtime_adoption_stats(events: &[RuntimeAdoptionEvent]) -> RuntimeAdoptionSta
     stats
 }
 
-fn runtime_adoption_guidance() -> RuntimeAdoptionGuidanceDto {
-    RuntimeAdoptionGuidanceDto {
-        version: 1,
-        recording_rule: "record only concrete runtime outcomes, not speculation".to_string(),
-        required_fields: vec![
-            "track".to_string(),
-            "signal".to_string(),
-            "feature".to_string(),
-        ],
-        optional_fields: vec![
-            "query".to_string(),
-            "context_hash".to_string(),
-            "card_id".to_string(),
-            "evaluator_id".to_string(),
-            "research_report_id".to_string(),
-            "note".to_string(),
-            "metadata".to_string(),
-        ],
-        signals: vec![
-            RuntimeAdoptionSignalGuidanceDto {
-                signal: "used".to_string(),
-                when: "record when guidance was actually consumed during a task".to_string(),
-            },
-            RuntimeAdoptionSignalGuidanceDto {
-                signal: "accepted".to_string(),
-                when: "record when the consumed guidance materially helped the outcome".to_string(),
-            },
-            RuntimeAdoptionSignalGuidanceDto {
-                signal: "rejected".to_string(),
-                when: "record when guidance was considered and intentionally not followed"
-                    .to_string(),
-            },
-            RuntimeAdoptionSignalGuidanceDto {
-                signal: "miss".to_string(),
-                when: "record when useful guidance should have appeared but did not".to_string(),
-            },
-            RuntimeAdoptionSignalGuidanceDto {
-                signal: "rollback".to_string(),
-                when: "record when behavior was reverted because guidance degraded the outcome"
-                    .to_string(),
-            },
-            RuntimeAdoptionSignalGuidanceDto {
-                signal: "contradiction".to_string(),
-                when: "record when guidance conflicted with stronger evidence or instructions"
-                    .to_string(),
-            },
-            RuntimeAdoptionSignalGuidanceDto {
-                signal: "neutral".to_string(),
-                when: "record when guidance was consumed but had no clear outcome impact"
-                    .to_string(),
-            },
-        ],
-        tracks: vec![
-            RuntimeAdoptionTrackGuidanceDto {
-                track: "runtime_adoption".to_string(),
-                when: "general agent-runtime behavior evidence".to_string(),
-                feature_examples: vec!["context_pack".to_string(), "skill_selection".to_string()],
-            },
-            RuntimeAdoptionTrackGuidanceDto {
-                track: "card_context".to_string(),
-                when: "card-aware context affected or should have affected behavior".to_string(),
-                feature_examples: vec!["include_cards".to_string()],
-            },
-            RuntimeAdoptionTrackGuidanceDto {
-                track: "card_embedding".to_string(),
-                when: "linked-evidence card retrieval missed statement-level matches".to_string(),
-                feature_examples: vec!["card_statement_recall".to_string()],
-            },
-            RuntimeAdoptionTrackGuidanceDto {
-                track: "evaluator".to_string(),
-                when: "evaluator advice affected or should have affected a lifecycle decision"
-                    .to_string(),
-                feature_examples: vec!["advisory_gate".to_string()],
-            },
-            RuntimeAdoptionTrackGuidanceDto {
-                track: "research_adapter".to_string(),
-                when: "external research report validation or ingestion planning affected behavior"
-                    .to_string(),
-                feature_examples: vec!["research_validate_plan".to_string()],
-            },
-        ],
-    }
-}
-
 fn phase3_gate_report(
     db: &Database,
     candidate: &str,
@@ -1425,7 +1341,7 @@ impl MempalMcpServer {
 
         match action {
             "guidance" => Ok(Json(Phase3Response {
-                guidance: Some(runtime_adoption_guidance()),
+                guidance: Some(runtime_adoption_guidance().into()),
                 event: None,
                 events: Vec::new(),
                 stats: None,

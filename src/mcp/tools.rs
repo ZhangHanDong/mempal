@@ -1,4 +1,7 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
+use crate::core::phase3::{
+    RuntimeAdoptionGuidance, RuntimeAdoptionSignalGuidance, RuntimeAdoptionTrackGuidance,
+};
 use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeCard, KnowledgeCardEvent, KnowledgeStatus, KnowledgeTier,
     MemoryDomain, MemoryKind, NeighborChunk, RouteDecision, RuntimeAdoptionEvent,
@@ -361,6 +364,38 @@ pub struct RuntimeAdoptionTrackGuidanceDto {
     pub track: String,
     pub when: String,
     pub feature_examples: Vec<String>,
+}
+
+impl From<RuntimeAdoptionGuidance> for RuntimeAdoptionGuidanceDto {
+    fn from(guidance: RuntimeAdoptionGuidance) -> Self {
+        Self {
+            version: guidance.version,
+            recording_rule: guidance.recording_rule,
+            required_fields: guidance.required_fields,
+            optional_fields: guidance.optional_fields,
+            signals: guidance.signals.into_iter().map(Into::into).collect(),
+            tracks: guidance.tracks.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<RuntimeAdoptionSignalGuidance> for RuntimeAdoptionSignalGuidanceDto {
+    fn from(guidance: RuntimeAdoptionSignalGuidance) -> Self {
+        Self {
+            signal: guidance.signal,
+            when: guidance.when,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionTrackGuidance> for RuntimeAdoptionTrackGuidanceDto {
+    fn from(guidance: RuntimeAdoptionTrackGuidance) -> Self {
+        Self {
+            track: guidance.track,
+            when: guidance.when,
+            feature_examples: guidance.feature_examples,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

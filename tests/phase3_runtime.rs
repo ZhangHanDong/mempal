@@ -127,6 +127,99 @@ fn test_cli_phase3_adoption_record_stats_and_gate() {
 }
 
 #[test]
+fn test_cli_phase3_adoption_guidance_json_is_read_only() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &["phase3", "adoption", "guidance", "--format", "json"],
+    );
+    assert!(
+        output.status.success(),
+        "guidance failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let guidance: Value = serde_json::from_slice(&output.stdout).expect("guidance json");
+    assert_eq!(guidance["version"], 1);
+    assert_eq!(
+        guidance["recording_rule"],
+        "record only concrete runtime outcomes, not speculation"
+    );
+    let required_fields = guidance["required_fields"]
+        .as_array()
+        .expect("required fields");
+    assert!(required_fields.iter().any(|field| field == "track"));
+    assert!(required_fields.iter().any(|field| field == "signal"));
+    assert!(required_fields.iter().any(|field| field == "feature"));
+    assert!(
+        guidance["signals"]
+            .as_array()
+            .expect("signals")
+            .iter()
+            .any(|signal| signal["signal"] == "used"
+                && signal["when"]
+                    .as_str()
+                    .expect("when")
+                    .contains("actually consumed"))
+    );
+    assert!(
+        guidance["signals"]
+            .as_array()
+            .expect("signals")
+            .iter()
+            .any(|signal| signal["signal"] == "rollback"
+                && signal["when"].as_str().expect("when").contains("reverted"))
+    );
+    assert!(
+        guidance["tracks"]
+            .as_array()
+            .expect("tracks")
+            .iter()
+            .any(|track| track["track"] == "card_context"
+                && track["feature_examples"]
+                    .as_array()
+                    .expect("feature examples")
+                    .iter()
+                    .any(|feature| feature == "include_cards"))
+    );
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_adoption_guidance_plain() {
+    let home = setup_cli_home();
+    let output = run_mempal(&home, &["phase3", "adoption", "guidance"]);
+    assert!(
+        output.status.success(),
+        "guidance failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("version=1"));
+    assert!(
+        stdout.contains("recording_rule=record only concrete runtime outcomes, not speculation")
+    );
+    assert!(stdout.contains("signal=used"));
+    assert!(stdout.contains("track=card_context"));
+}
+
+#[test]
+fn test_cli_phase3_adoption_guidance_rejects_invalid_format() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &["phase3", "adoption", "guidance", "--format", "yaml"],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported phase3 adoption format"));
+}
+
+#[test]
 fn test_cli_phase3_gate_blocks_card_embeddings_without_miss_evidence() {
     let home = setup_cli_home();
     let gate = run_mempal(
