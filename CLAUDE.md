@@ -107,6 +107,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p60-mcp-phase3-runtime-surface.spec.md` | 完成 | P60 MCP Phase-3 runtime surface：`mempal_phase3` 暴露 record/list/stats/gate/research_validate_plan |
 | `specs/p61-runtime-adoption-recording-protocol.spec.md` | 完成 | P61 runtime adoption recording protocol：`mempal_phase3 action=guidance` 定义 used/accepted/rejected/miss/rollback 记录语义 |
 | `specs/p62-runtime-adoption-cli-guidance.spec.md` | 完成 | P62 runtime adoption CLI guidance：`mempal phase3 adoption guidance` 与 MCP guidance 共用记录语义 |
+| `specs/p63-runtime-adoption-record-helper.spec.md` | 完成 | P63 runtime adoption record helper：`prepare-record` / `prepare_record` 只读生成 record 命令与 payload |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -174,6 +175,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-05-p60-mcp-phase3-runtime-surface.md` — P60 MCP Phase-3 runtime surface（已完成）
 - `docs/plans/2026-05-10-p61-runtime-adoption-recording-protocol.md` — P61 runtime adoption recording protocol（已完成）
 - `docs/plans/2026-05-12-p62-runtime-adoption-cli-guidance.md` — P62 runtime adoption CLI guidance（已完成）
+- `docs/plans/2026-05-12-p63-runtime-adoption-record-helper.md` — P63 runtime adoption record helper（已完成）
 
 ### Spec 使用方式
 
@@ -209,7 +211,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
 | `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
 | `mempal_knowledge_cards` | Phase-2 knowledge card list/get/events/gate/promote/demote/retrieve；retrieve 通过 linked evidence 返回 active cards（P35/P40/P45） |
-| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/record/list/stats/gate/research_validate_plan（P60/P61） |
+| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/prepare_record/record/list/stats/gate/research_validate_plan（P60/P61/P63） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |

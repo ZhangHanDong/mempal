@@ -15,7 +15,10 @@ use mempal::context::{ContextPack, ContextRequest, assemble_context};
 use mempal::core::{
     config::Config,
     db::Database,
-    phase3::{RuntimeAdoptionGuidance, runtime_adoption_guidance},
+    phase3::{
+        RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
+        prepare_runtime_adoption_record, runtime_adoption_guidance,
+    },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
         AnchorKind, KnowledgeCard, KnowledgeCardEvent, KnowledgeCardFilter, KnowledgeEventType,
@@ -53,6 +56,7 @@ use mempal::knowledge_lifecycle::{
 use mempal::mcp::MempalMcpServer;
 use mempal::search::{SearchFilters, SearchOptions, search_with_options};
 use serde::Serialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 mod longmemeval;
@@ -577,6 +581,32 @@ enum Phase3Commands {
 #[allow(clippy::large_enum_variant)] // `record` intentionally carries the full event payload.
 enum Phase3AdoptionCommands {
     Guidance {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    PrepareRecord {
+        #[arg(long)]
+        track: String,
+        #[arg(long)]
+        signal: String,
+        #[arg(long)]
+        feature: String,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long = "context-hash")]
+        context_hash: Option<String>,
+        #[arg(long = "card-id")]
+        card_id: Option<String>,
+        #[arg(long = "evaluator-id")]
+        evaluator_id: Option<String>,
+        #[arg(long = "research-report-id")]
+        research_report_id: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "metadata-json")]
+        metadata_json: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -2187,6 +2217,42 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
         Phase3AdoptionCommands::Guidance { format } => {
             print_runtime_adoption_guidance(&runtime_adoption_guidance(), &format)
         }
+        Phase3AdoptionCommands::PrepareRecord {
+            track,
+            signal,
+            feature,
+            query,
+            context_hash,
+            card_id,
+            evaluator_id,
+            research_report_id,
+            note,
+            metadata_json,
+            id,
+            format,
+        } => {
+            let track = parse_runtime_adoption_track(&track)?;
+            let signal = parse_runtime_adoption_signal(&signal)?;
+            let metadata = metadata_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .context("failed to parse --metadata-json")?;
+            let plan = prepare_runtime_adoption_record(RuntimeAdoptionRecordPlanInput {
+                id,
+                track: runtime_adoption_track_slug(&track).to_string(),
+                signal: runtime_adoption_signal_slug(&signal).to_string(),
+                feature,
+                query,
+                context_hash,
+                card_id,
+                evaluator_id,
+                research_report_id,
+                note,
+                metadata,
+            });
+            print_runtime_adoption_record_plan(&plan, &format)
+        }
         Phase3AdoptionCommands::Record {
             track,
             signal,
@@ -2297,6 +2363,31 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let stats = RuntimeAdoptionStats::from_events(&events);
             print_runtime_adoption_stats(&stats, &format)
         }
+    }
+}
+
+fn print_runtime_adoption_record_plan(
+    plan: &RuntimeAdoptionRecordPlan,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", plan.writes);
+            println!("record_command={}", plan.record_command.join(" "));
+            if let Some(action) = plan.record_payload.get("action").and_then(Value::as_str) {
+                println!("action={action}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(plan)
+                    .context("failed to serialize runtime adoption record plan")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
     }
 }
 

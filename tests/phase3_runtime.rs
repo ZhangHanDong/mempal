@@ -220,6 +220,102 @@ fn test_cli_phase3_adoption_guidance_rejects_invalid_format() {
 }
 
 #[test]
+fn test_cli_phase3_adoption_prepare_record_json_is_read_only() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "prepare-record",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "include_cards",
+            "--query",
+            "skill trigger",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "prepare-record failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan: Value = serde_json::from_slice(&output.stdout).expect("prepare-record json");
+    assert_eq!(plan["writes"], false);
+    let command = plan["record_command"].as_array().expect("record command");
+    assert_eq!(command[0], "mempal");
+    assert_eq!(command[1], "phase3");
+    assert_eq!(command[2], "adoption");
+    assert_eq!(command[3], "record");
+    assert_eq!(plan["record_payload"]["action"], "record");
+    assert_eq!(plan["record_payload"]["track"], "card_context");
+    assert_eq!(plan["record_payload"]["signal"], "accepted");
+    assert_eq!(plan["record_payload"]["feature"], "include_cards");
+    assert_eq!(plan["record_payload"]["query"], "skill trigger");
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_adoption_prepare_record_plain() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "prepare-record",
+            "--track",
+            "card_context",
+            "--signal",
+            "used",
+            "--feature",
+            "include_cards",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "prepare-record failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("writes=false"));
+    assert!(stdout.contains("mempal phase3 adoption record"));
+    assert!(stdout.contains("action=record"));
+}
+
+#[test]
+fn test_cli_phase3_adoption_prepare_record_rejects_invalid_track() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "prepare-record",
+            "--track",
+            "invalid",
+            "--signal",
+            "accepted",
+            "--feature",
+            "x",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported runtime adoption track"));
+}
+
+#[test]
 fn test_cli_phase3_gate_blocks_card_embeddings_without_miss_evidence() {
     let home = setup_cli_home();
     let gate = run_mempal(

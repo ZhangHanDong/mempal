@@ -1320,6 +1320,13 @@ shares the guidance implementation with `mempal_phase3 action=guidance`, so MCP
 agents, humans, and non-MCP automation inspect the same semantics. This remains
 read-only and does not append adoption events or change Phase-3 gate policy.
 
+P63 adds a read-only record helper through
+`mempal phase3 adoption prepare-record` and
+`mempal_phase3 action=prepare_record`. The helper validates and normalizes
+candidate record inputs, then returns the equivalent CLI `record` command and
+MCP `record` payload with `writes=false`. It does not generate event ids unless
+the caller supplied one, and it does not append runtime adoption events.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."
