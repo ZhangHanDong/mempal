@@ -1607,6 +1607,75 @@ Updated recommended next P candidate after completing P80:
   still requires fully autonomous lifecycle mutation, that requirement must be
   reopened as a separate explicit spec rather than inferred.
 
+P81 self-evolution completion audit is the final audit for the active objective
+`完整自进化 agent 系统`.
+
+Objective restatement: the target is a governed human-gated complete
+self-evolving agent system. "Complete" means the agent can gather external and
+runtime evidence, preserve provenance, distill and structure knowledge, retrieve
+the right knowledge/skills/tools at runtime, record feedback, evaluate stronger
+defaults, apply explicit default/rollback controls, and keep durable knowledge
+lifecycle mutation under deterministic gates plus human/operator intent.
+
+Prompt-to-artifact checklist:
+
+- Evidence substrate: P0-P13 raw drawer storage, citation-bearing search, and
+  P54 `runtime_adoption_events` provide durable evidence and runtime outcome
+  storage. Evidence remains raw and cited; search/context do not rewrite source
+  content.
+- Knowledge governance: P12-P28 typed `dao_tian` / `dao_ren` / `shu` / `qi`
+  drawers, policy surfaces, distill, gate, promote/demote, and anchor
+  publication provide governed knowledge lifecycle for Stage-1 drawers.
+- Knowledge cards: P31-P45 implement card schema, evidence links, append-only
+  events, CLI/MCP lifecycle, backfill, retrieval, and explicit card-aware
+  context without making cards an implicit search/default source.
+- Research bridge: P49/P59/P67/P68 ensure external research enters as evidence
+  or evidence-backed candidate insight suggestions. Research output cannot
+  directly define dao or bypass gates.
+- Runtime feedback loop: P54-P69 provide runtime adoption event storage,
+  guidance, prepare/check helpers, review/readiness/gate reports, and
+  quality-gated `record_checked` writes.
+- Self-evolution replay: P71 `tests/phase3_self_evolution_replay.rs` proves the
+  composed path research -> evidence -> card promotion -> context -> checked
+  adoption record.
+- Live adoption boundary: P77 `instrumentation_policy` defines the safe boundary
+  for future live wrappers: opt-in, preserve opt-out, no silent event append,
+  and route writes through checked capture or `record_checked`.
+- Runtime default control: P74/P78 provide proposal-ready and explicit
+  `default-control` paths for card-aware context. Default change requires
+  runtime evidence and rollback criteria; request-level overrides still win.
+- Rollback and default control: P79 `rollback-control` turns rollback evidence
+  into an explicit reversible config action, setting
+  `context.include_cards_default=false` only with `--execute` and without
+  writing runtime events or lifecycle state.
+- Evaluator boundary: P50/P58/P73 keep evaluators advisory-only.
+  `evaluator_advise` is replayable, returns `lifecycle_authority=false`, and
+  cannot satisfy reviewer authority or bypass deterministic gates.
+- Lifecycle authority boundary: P80 declares autonomous promotion out of scope.
+  Human/operator-triggered promote/demote commands with evidence refs and gates
+  remain the only durable lifecycle mutation path.
+- Spec completeness: P76 requires every numbered P to leave a matching task spec
+  and plan. P77-P81 follow this rule.
+- Mainline verification: PR #68 through PR #72 are merged to main. Main CI runs
+  `25805677837`, `25806999068`, `25808402185`, `25809830828`, and
+  `25810588996` all completed with success across `fmt`, `default`, and `rest`
+  jobs.
+
+P81 conclusion: complete.
+
+The active objective is complete under the governed human-gated definition. The
+system now has an auditable loop from evidence intake to governed knowledge,
+runtime context, feedback capture, policy evaluation, explicit default control,
+and explicit rollback. It does not grant agents silent durable lifecycle
+authority, and that is an intentional design boundary rather than a missing
+implementation.
+
+Residual boundary: fully autonomous lifecycle mutation remains out of scope. If
+future work requires an agent to promote or demote durable knowledge without a
+human/operator-triggered lifecycle command, that is a new objective and must be
+opened as a separate P-level spec with its own evidence, rollback, safety, and
+acceptance criteria.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

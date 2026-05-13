@@ -135,6 +135,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p78-card-context-default-runtime-flag.spec.md` | 完成 | P78 card context default runtime flag：`context.include_cards_default` 显式默认开关 + `phase3 default-control card-context` proposal-gated enable / reversible disable |
 | `specs/p79-rollback-executor-policy.spec.md` | 完成 | P79 rollback executor policy：`phase3 rollback-control card-context` / `mempal_phase3 action=rollback_control` 将 rollback evidence 转成可执行的默认关闭策略 |
 | `specs/p80-autonomous-promotion-boundary-audit.spec.md` | 完成 | P80 autonomous promotion boundary audit：明确 autonomous promotion 当前出界，human-gated lifecycle authority 是最终治理边界 |
+| `specs/p81-self-evolution-completion-audit.spec.md` | 完成 | P81 self-evolution completion audit：按 P80 human-gated 边界审计完整自进化 agent 系统目标并确认完成 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -220,6 +221,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-13-p78-card-context-default-runtime-flag.md` — P78 card context default runtime flag（已完成）
 - `docs/plans/2026-05-13-p79-rollback-executor-policy.md` — P79 rollback executor policy（已完成）
 - `docs/plans/2026-05-13-p80-autonomous-promotion-boundary-audit.md` — P80 autonomous promotion boundary audit（已完成）
+- `docs/plans/2026-05-13-p81-self-evolution-completion-audit.md` — P81 self-evolution completion audit（已完成）
 
 ### Spec 使用方式
 
