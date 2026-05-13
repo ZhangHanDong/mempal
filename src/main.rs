@@ -17,14 +17,15 @@ use mempal::core::{
     config::Config,
     db::Database,
     phase3::{
-        CardContextDefaultProposalReport, EvaluatorAdviceInput, EvaluatorAdviceReport,
-        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionCaptureInput,
-        RuntimeAdoptionCaptureReport, RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance,
-        RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
-        RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
-        RuntimeAdoptionReviewReport, build_research_ingest_plan_from_value,
-        capture_runtime_adoption_record_input, card_context_default_proposal,
-        card_context_default_readiness, check_runtime_adoption_record, evaluator_advice,
+        CardContextDefaultProposalReport, CardContextRollbackControlReport, EvaluatorAdviceInput,
+        EvaluatorAdviceReport, Phase3ReadinessReport, ResearchIngestPlanReport,
+        RuntimeAdoptionCaptureInput, RuntimeAdoptionCaptureReport,
+        RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
+        RuntimeAdoptionRecordPlanInput, RuntimeAdoptionRecordQualityReport,
+        RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport,
+        build_research_ingest_plan_from_value, capture_runtime_adoption_record_input,
+        card_context_default_proposal, card_context_default_readiness,
+        card_context_rollback_control, check_runtime_adoption_record, evaluator_advice,
         prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
         review_runtime_adoption_events, runtime_adoption_guidance,
         runtime_adoption_instrumentation_policy, should_write_checked_record,
@@ -598,6 +599,13 @@ enum Phase3Commands {
         disable: bool,
         #[arg(long = "rollback-criterion")]
         rollback_criteria: Vec<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    RollbackControl {
+        candidate: String,
+        #[arg(long)]
+        execute: bool,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -2399,6 +2407,14 @@ async fn phase3_command(db: &Database, config: &Config, command: Phase3Commands)
                 phase3_default_control(db, &candidate, enable, disable, rollback_criteria)?;
             print_phase3_default_control(&report, &format)
         }
+        Phase3Commands::RollbackControl {
+            candidate,
+            execute,
+            format,
+        } => {
+            let report = phase3_rollback_control(db, &candidate, execute)?;
+            print_phase3_rollback_control(&report, &format)
+        }
         Phase3Commands::Gate { candidate, format } => {
             let report = phase3_gate_report(db, &candidate)?;
             print_phase3_gate_report(&report, &format)
@@ -2505,6 +2521,38 @@ fn phase3_default_control(
             })
         }
         other => bail!("unsupported phase3 default-control candidate: {other}"),
+    }
+}
+
+fn phase3_rollback_control(
+    db: &Database,
+    candidate: &str,
+    execute: bool,
+) -> Result<CardContextRollbackControlReport> {
+    match candidate {
+        "card-context" => {
+            let mut config = Config::load().context("failed to load config")?;
+            let events = db
+                .list_runtime_adoption_events(
+                    &RuntimeAdoptionFilter {
+                        track: Some(RuntimeAdoptionTrack::CardContext),
+                        feature: Some("include_cards".to_string()),
+                    },
+                    10_000,
+                )
+                .context("failed to list runtime adoption events")?;
+            let report = card_context_rollback_control(
+                &events,
+                config.context.include_cards_default,
+                execute,
+            );
+            if report.applied {
+                config.context.include_cards_default = false;
+                config.save_default().context("failed to save config")?;
+            }
+            Ok(report)
+        }
+        other => bail!("unsupported phase3 rollback-control candidate: {other}"),
     }
 }
 
@@ -3639,6 +3687,43 @@ fn print_phase3_default_control(report: &Phase3DefaultControlReport, format: &st
             Ok(())
         }
         other => bail!("unsupported phase3 default control format: {other}"),
+    }
+}
+
+fn print_phase3_rollback_control(
+    report: &CardContextRollbackControlReport,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("candidate={}", report.candidate);
+            println!("execute={}", report.execute);
+            println!("rollback_required={}", report.rollback_required);
+            println!("applied={}", report.applied);
+            println!(
+                "include_cards_default_before={}",
+                report.include_cards_default_before
+            );
+            println!(
+                "include_cards_default_after={}",
+                report.include_cards_default_after
+            );
+            println!("rollback_events={}", report.review.stats.rollbacks);
+            for reason in &report.reasons {
+                println!("reason={reason}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize phase3 rollback control report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 rollback-control format: {other}"),
     }
 }
 

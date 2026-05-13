@@ -213,7 +213,7 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 17. RECORD PHASE-3 RUNTIME ADOPTION EVIDENCE
    Use mempal_phase3 to record and inspect runtime adoption evidence before
    proposing stronger defaults or new authority. The tool supports
-   guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
+   guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
    actions over Phase-3 runtime_adoption_events. Start with action=guidance
    when unsure whether a runtime outcome should be recorded. Use
    action=instrumentation_policy before building live tool instrumentation:
@@ -236,6 +236,11 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    disable local card-context defaults: enable requires a proposal-ready P74
    condition and rollback criteria, disable is always allowed, and the command
    writes only local config (`context.include_cards_default`). Use
+   action=rollback_control or CLI `mempal phase3 rollback-control card-context`
+   to evaluate rollback evidence for the card-context default. The CLI executor
+   is read-only unless `--execute` is supplied; when executed, it only sets local
+   config `context.include_cards_default=false` and does not append runtime
+   adoption events or alter knowledge lifecycle state. Use
    action=check_record to evaluate event quality before writing; check_record is
    advisory, read-only, and reports errors/warnings without blocking record. Use
    action=record_checked for quality-gated writes: ready records write,
@@ -265,7 +270,7 @@ TOOLS:
   mempal_knowledge_policy — read-only Stage-1 promotion policy thresholds
   mempal_knowledge_gate — read-only knowledge promotion readiness check
   mempal_knowledge_cards — Phase-2 knowledge card list/get/retrieve/events/gate/promote/demote
-  mempal_phase3       — Phase-3 runtime adoption evidence guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
+  mempal_phase3       — Phase-3 runtime adoption evidence guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
   mempal_knowledge_promote — gate-enforced knowledge lifecycle promotion
   mempal_knowledge_demote — evidence-backed knowledge demotion or retirement
   mempal_knowledge_publish_anchor — metadata-only outward anchor publication

@@ -1570,8 +1570,17 @@ not append runtime adoption events, change schema, or alter search defaults.
 
 Updated recommended next P candidates after completing P78:
 
-- P79 rollback executor contract: turn rollback criteria into a testable policy
-  action that can revert a default/runtime policy change.
+- P79 rollback executor policy implements the first concrete rollback executor
+  for default/runtime policy changes. CLI `mempal phase3 rollback-control
+  card-context` evaluates `card_context/include_cards` rollback evidence and,
+  only with `--execute`, writes local config
+  `context.include_cards_default=false`. MCP `mempal_phase3
+  action=rollback_control` exposes the same rollback evidence check as a
+  read-only agent surface. No runtime adoption events, knowledge lifecycle
+  state, schema, or search defaults are changed by rollback control.
+
+Updated recommended next P candidates after completing P79:
+
 - P80 autonomous promotion boundary audit: decide whether autonomous promotion is
   actually desired, or explicitly declare human-gated governance as the final
   design boundary.

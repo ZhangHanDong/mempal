@@ -375,6 +375,8 @@ pub struct Phase3Response {
     pub evaluator_advice: Option<EvaluatorAdviceDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_proposal: Option<CardContextDefaultProposalDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rollback_control: Option<CardContextRollbackControlDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -521,6 +523,19 @@ pub struct CardContextDefaultProposalDto {
     pub reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CardContextRollbackControlDto {
+    pub writes: bool,
+    pub candidate: String,
+    pub execute: bool,
+    pub rollback_required: bool,
+    pub applied: bool,
+    pub include_cards_default_before: bool,
+    pub include_cards_default_after: bool,
+    pub review: RuntimeAdoptionReviewReportDto,
+    pub reasons: Vec<String>,
+}
+
 impl From<crate::core::phase3::CardContextDefaultProposalReport> for CardContextDefaultProposalDto {
     fn from(report: crate::core::phase3::CardContextDefaultProposalReport) -> Self {
         Self {
@@ -530,6 +545,22 @@ impl From<crate::core::phase3::CardContextDefaultProposalReport> for CardContext
             decision: report.decision,
             readiness: report.readiness.into(),
             rollback_criteria: report.rollback_criteria,
+            reasons: report.reasons,
+        }
+    }
+}
+
+impl From<crate::core::phase3::CardContextRollbackControlReport> for CardContextRollbackControlDto {
+    fn from(report: crate::core::phase3::CardContextRollbackControlReport) -> Self {
+        Self {
+            writes: report.writes,
+            candidate: report.candidate,
+            execute: report.execute,
+            rollback_required: report.rollback_required,
+            applied: report.applied,
+            include_cards_default_before: report.include_cards_default_before,
+            include_cards_default_after: report.include_cards_default_after,
+            review: report.review.into(),
             reasons: report.reasons,
         }
     }

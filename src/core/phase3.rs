@@ -131,6 +131,19 @@ pub struct CardContextDefaultProposalReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CardContextRollbackControlReport {
+    pub writes: bool,
+    pub candidate: String,
+    pub execute: bool,
+    pub rollback_required: bool,
+    pub applied: bool,
+    pub include_cards_default_before: bool,
+    pub include_cards_default_after: bool,
+    pub review: RuntimeAdoptionReviewReport,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeAdoptionReviewFilters {
     pub track: Option<String>,
     pub feature: Option<String>,
@@ -585,6 +598,52 @@ pub fn card_context_default_proposal(
         .to_string(),
         readiness,
         rollback_criteria,
+        reasons,
+    }
+}
+
+pub fn card_context_rollback_control(
+    events: &[RuntimeAdoptionEvent],
+    include_cards_default: bool,
+    execute: bool,
+) -> CardContextRollbackControlReport {
+    let review = review_runtime_adoption_events(
+        events,
+        RuntimeAdoptionReviewFilters {
+            track: Some("card_context".to_string()),
+            feature: Some("include_cards".to_string()),
+            signal: Some("rollback".to_string()),
+            limit: 10_000,
+        },
+    );
+    let rollback_required = review.stats.rollbacks > 0;
+    let applied = execute && rollback_required && include_cards_default;
+    let include_cards_default_after = include_cards_default && !applied;
+    let mut reasons = Vec::new();
+    if rollback_required {
+        reasons.push("rollback evidence exists for card_context/include_cards".to_string());
+    } else {
+        reasons.push("no rollback evidence exists for card_context/include_cards".to_string());
+    }
+    if !execute {
+        reasons.push("execute=false leaves config unchanged".to_string());
+    } else if applied {
+        reasons.push("card context default disabled by rollback control".to_string());
+    } else if !include_cards_default {
+        reasons.push("card context default already disabled".to_string());
+    } else {
+        reasons.push("rollback not required; config unchanged".to_string());
+    }
+
+    CardContextRollbackControlReport {
+        writes: applied,
+        candidate: "card-context".to_string(),
+        execute,
+        rollback_required,
+        applied,
+        include_cards_default_before: include_cards_default,
+        include_cards_default_after,
+        review,
         reasons,
     }
 }

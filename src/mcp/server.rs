@@ -10,8 +10,9 @@ use crate::core::{
         RuntimeAdoptionRecordPlanInput, RuntimeAdoptionReviewFilters,
         build_research_ingest_plan_from_value, capture_runtime_adoption_record_input,
         card_context_default_proposal, card_context_default_readiness,
-        check_runtime_adoption_record, evaluator_advice, prepare_runtime_adoption_capture,
-        prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
+        card_context_rollback_control, check_runtime_adoption_record, evaluator_advice,
+        prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
+        review_runtime_adoption_events, runtime_adoption_guidance,
         runtime_adoption_instrumentation_policy, should_write_checked_record,
     },
     types::{
@@ -1371,7 +1372,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_phase3",
-        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; instrumentation_policy defines opt-in live instrumentation boundaries without writing; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; default_proposal combines readiness with rollback criteria without changing defaults; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; instrumentation_policy defines opt-in live instrumentation boundaries without writing; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; default_proposal combines readiness with rollback criteria without changing defaults; rollback_control evaluates card-context rollback evidence without writing; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
     )]
     async fn mempal_phase3(
         &self,
@@ -1397,6 +1398,7 @@ impl MempalMcpServer {
                 research_ingest_plan: None,
                 evaluator_advice: None,
                 default_proposal: None,
+                rollback_control: None,
             })),
             "instrumentation_policy" => Ok(Json(Phase3Response {
                 guidance: None,
@@ -1414,6 +1416,7 @@ impl MempalMcpServer {
                 research_ingest_plan: None,
                 evaluator_advice: None,
                 default_proposal: None,
+                rollback_control: None,
             })),
             "prepare_record" => {
                 let track = parse_runtime_adoption_track(required_string(
@@ -1454,6 +1457,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "capture" => {
@@ -1538,6 +1542,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "evaluator_advise" => {
@@ -1575,6 +1580,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: Some(report.into()),
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "default_proposal" => {
@@ -1624,6 +1630,64 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: Some(report.into()),
+                    rollback_control: None,
+                }))
+            }
+            "rollback_control" => {
+                let candidate = required_string(request.candidate.as_deref(), "candidate")?;
+                let report = match candidate {
+                    "card-context" => {
+                        if request.execute.unwrap_or(false) {
+                            return Err(ErrorData::invalid_params(
+                                "rollback_control execute is only supported by CLI in P79",
+                                None,
+                            ));
+                        }
+                        let db = self.open_db()?;
+                        let events = db
+                            .list_runtime_adoption_events(
+                                &RuntimeAdoptionFilter {
+                                    track: Some(RuntimeAdoptionTrack::CardContext),
+                                    feature: Some("include_cards".to_string()),
+                                },
+                                10_000,
+                            )
+                            .map_err(|error| {
+                                ErrorData::internal_error(
+                                    format!("failed to list runtime adoption events: {error}"),
+                                    None,
+                                )
+                            })?;
+                        card_context_rollback_control(
+                            &events,
+                            self.config.context.include_cards_default,
+                            false,
+                        )
+                    }
+                    other => {
+                        return Err(ErrorData::invalid_params(
+                            format!("unsupported phase3 rollback-control candidate: {other}"),
+                            None,
+                        ));
+                    }
+                };
+                Ok(Json(Phase3Response {
+                    guidance: None,
+                    instrumentation_policy: None,
+                    record_plan: None,
+                    record_quality: None,
+                    record_checked: None,
+                    review_report: None,
+                    readiness_report: None,
+                    event: None,
+                    events: Vec::new(),
+                    stats: None,
+                    gate: None,
+                    research_plan: None,
+                    research_ingest_plan: None,
+                    evaluator_advice: None,
+                    default_proposal: None,
+                    rollback_control: Some(report.into()),
                 }))
             }
             "check_record" => {
@@ -1665,6 +1729,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "record_checked" => {
@@ -1745,6 +1810,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "review" => {
@@ -1802,6 +1868,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "readiness" => {
@@ -1848,6 +1915,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "record" => {
@@ -1899,6 +1967,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "list" => {
@@ -1936,6 +2005,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "stats" => {
@@ -1970,6 +2040,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "gate" => {
@@ -1992,6 +2063,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "research_validate_plan" => {
@@ -2014,6 +2086,7 @@ impl MempalMcpServer {
                     research_ingest_plan: None,
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             "research_ingest_plan" => {
@@ -2038,11 +2111,12 @@ impl MempalMcpServer {
                     )),
                     evaluator_advice: None,
                     default_proposal: None,
+                    rollback_control: None,
                 }))
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported phase3 action: {other}; actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                    "unsupported phase3 action: {other}; actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, rollback_control, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
                 ),
                 None,
             )),
@@ -4423,7 +4497,7 @@ mod tests {
             .expect_err("invalid action should fail");
         assert!(
             error.to_string().contains(
-                "actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                "actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, rollback_control, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
             )
         );
 
@@ -4913,6 +4987,57 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_mcp_phase3_rollback_control_check_is_read_only() {
+        let mut config = crate::core::config::Config::default();
+        config.context.include_cards_default = true;
+        let (_tempdir, db_path, server) = setup_server_with_config(config);
+        let before = {
+            let db = Database::open(&db_path).expect("open db");
+            db.insert_runtime_adoption_event(&RuntimeAdoptionEvent {
+                id: "rollback_control_event".to_string(),
+                track: RuntimeAdoptionTrack::CardContext,
+                signal: RuntimeAdoptionSignal::Rollback,
+                feature: "include_cards".to_string(),
+                query: None,
+                context_hash: None,
+                card_id: None,
+                evaluator_id: None,
+                research_report_id: None,
+                note: Some("reverted default".to_string()),
+                metadata: None,
+                created_at: "1777710000".to_string(),
+            })
+            .expect("insert event");
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len()
+        };
+
+        let response = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "rollback_control",
+                "candidate": "card-context"
+            }))
+            .await
+            .expect("rollback control");
+        let report = response.rollback_control.expect("rollback control");
+        assert!(!report.writes);
+        assert!(report.rollback_required);
+        assert!(!report.applied);
+        assert!(report.include_cards_default_before);
+        assert!(report.include_cards_default_after);
+        assert_eq!(report.review.stats.rollbacks, 1);
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len(),
+            before
+        );
+    }
+
     #[test]
     fn test_mcp_tool_registry_and_protocol_include_phase3_runtime_surface() {
         let (_tempdir, _db_path, server) = setup_server();
@@ -4924,7 +5049,7 @@ mod tests {
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(description.contains("Phase-3 runtime adoption evidence"));
         assert!(description.contains(
-            "Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
+            "Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
         ));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=guidance"));
@@ -4933,6 +5058,7 @@ mod tests {
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=capture"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=evaluator_advise"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=default_proposal"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=rollback_control"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("record_checked"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("research_ingest_plan"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("live instrumentation is opt-in"));

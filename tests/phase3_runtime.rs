@@ -57,6 +57,32 @@ fn record_card_context_acceptance(home: &TempDir, id: &str) {
     );
 }
 
+fn record_card_context_rollback(home: &TempDir, id: &str) {
+    let output = run_mempal(
+        home,
+        &[
+            "phase3",
+            "adoption",
+            "record",
+            "--id",
+            id,
+            "--track",
+            "card_context",
+            "--signal",
+            "rollback",
+            "--feature",
+            "include_cards",
+            "--note",
+            "reverted card context default",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "record failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn insert_test_card(home: &TempDir, card_id: &str) {
     let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
     db.insert_knowledge_card(&KnowledgeCard {
@@ -671,6 +697,161 @@ fn test_cli_phase3_default_control_disable_is_reversible() {
         .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
         .expect("list events");
     assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_rollback_control_check_is_read_only() {
+    let home = setup_cli_home();
+    fs::write(
+        home.path().join(".mempal/config.toml"),
+        "[context]\ninclude_cards_default = true\n",
+    )
+    .expect("write config");
+    record_card_context_rollback(&home, "rollback_check_1");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "rollback-control",
+            "card-context",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "rollback control failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("rollback json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["rollback_required"], true);
+    assert_eq!(report["applied"], false);
+    assert!(read_include_cards_default(&home));
+}
+
+#[test]
+fn test_cli_phase3_rollback_control_execute_disables_default() {
+    let home = setup_cli_home();
+    fs::write(
+        home.path().join(".mempal/config.toml"),
+        "[context]\ninclude_cards_default = true\n",
+    )
+    .expect("write config");
+    record_card_context_rollback(&home, "rollback_execute_1");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "rollback-control",
+            "card-context",
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "rollback control execute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("rollback json");
+    assert_eq!(report["writes"], true);
+    assert_eq!(report["rollback_required"], true);
+    assert_eq!(report["applied"], true);
+    assert!(!read_include_cards_default(&home));
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_cli_phase3_rollback_control_execute_without_signal_is_noop() {
+    let home = setup_cli_home();
+    fs::write(
+        home.path().join(".mempal/config.toml"),
+        "[context]\ninclude_cards_default = true\n",
+    )
+    .expect("write config");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "rollback-control",
+            "card-context",
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "rollback control execute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("rollback json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["rollback_required"], false);
+    assert_eq!(report["applied"], false);
+    assert!(read_include_cards_default(&home));
+}
+
+#[test]
+fn test_cli_phase3_rollback_control_execute_already_disabled_is_noop() {
+    let home = setup_cli_home();
+    fs::write(
+        home.path().join(".mempal/config.toml"),
+        "[context]\ninclude_cards_default = false\n",
+    )
+    .expect("write config");
+    record_card_context_rollback(&home, "rollback_disabled_1");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "rollback-control",
+            "card-context",
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "rollback control execute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("rollback json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["rollback_required"], true);
+    assert_eq!(report["applied"], false);
+    assert!(!read_include_cards_default(&home));
+}
+
+#[test]
+fn test_cli_phase3_rollback_control_rejects_unknown_candidate_without_config_write() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "rollback-control",
+            "unknown",
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported phase3 rollback-control candidate"));
+    assert!(!home.path().join(".mempal/config.toml").exists());
 }
 
 #[test]
