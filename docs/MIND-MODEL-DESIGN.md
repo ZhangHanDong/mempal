@@ -1534,16 +1534,24 @@ Remaining gaps after P75:
 - no card embedding implementation: P57/P47 keep card-level embeddings behind
   measured miss evidence and future rollback requirements
 
-Recommended next P candidates:
+P76 spec completeness invariant records the process rule that every numbered P
+must leave both a task contract and a matching plan. This includes
+documentation-only, audit-only, policy-only, and code implementation work. The
+rule exists because the P-series is no longer just a task list; it is the
+auditable decision trail for the mind-model implementation. Every P must leave
+a spec before it can be considered complete. A future spec-less P or missing
+spec is explicitly incomplete and must be fixed before implementation or merge.
 
-- P76 live adoption instrumentation boundary: define whether hooks/tool wrappers
+Updated recommended next P candidates after reserving P76 for governance:
+
+- P77 live adoption instrumentation boundary: define whether hooks/tool wrappers
   may semi-automatically create checked adoption captures, with opt-out and
   rollback rules.
-- P77 card context default-on runtime flag: implement an explicit, reversible
+- P78 card context default-on runtime flag: implement an explicit, reversible
   default-on switch only after a P74 proposal is ready.
-- P78 rollback executor contract: turn rollback criteria into a testable policy
+- P79 rollback executor contract: turn rollback criteria into a testable policy
   action that can revert a default/runtime policy change.
-- P79 autonomous promotion boundary audit: decide whether autonomous promotion is
+- P80 autonomous promotion boundary audit: decide whether autonomous promotion is
   actually desired, or explicitly declare human-gated governance as the final
   design boundary.
 

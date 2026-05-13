@@ -25,6 +25,14 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 
 项目使用 agent-spec 管理任务合约。所有实现必须对照 spec 验收。
 
+硬规则：
+
+- 每一个 numbered P 都必须留下 `specs/pNN-*.spec.md`。
+- 每一个 numbered P 都必须留下匹配的 `docs/plans/*pNN*.md`。
+- 该规则同样适用于文档-only、audit-only、policy-only 和代码实现类 P。
+- future spec-less P 不能算完成；missing spec 必须先补齐再实现或合并。
+- 完成后必须同步更新 `AGENTS.md` / `CLAUDE.md` 的 spec 与 plan inventory。
+
 ### 项目级 Spec
 - `specs/project.spec.md` — 项目约束（edition、依赖、编码规范、架构不变量）
 
@@ -120,6 +128,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p73-evaluator-advisory-api.spec.md` | 完成 | P73 evaluator advisory API：`phase3 evaluator advise` / `mempal_phase3 action=evaluator_advise` 输出可重放 advisory 建议，不具 lifecycle authority |
 | `specs/p74-card-context-default-proposal.spec.md` | 完成 | P74 card context default-on proposal：`default_proposal` 结合 P66 readiness 与 rollback criteria，生成只读默认开启提案但不改默认值 |
 | `specs/p75-self-evolution-completion-audit.spec.md` | 完成 | P75 self-evolution completion audit：审计 P71-P74 后的完整自进化目标，确认 governed substrate 完成但 autonomous runtime 仍有缺口 |
+| `specs/p76-spec-completeness-invariant.spec.md` | 完成 | P76 spec completeness invariant：固化每个 numbered P 必须留下 task spec 与 matching plan 的治理硬规则 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -200,6 +209,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-13-p73-evaluator-advisory-api.md` — P73 evaluator advisory API（已完成）
 - `docs/plans/2026-05-13-p74-card-context-default-proposal.md` — P74 card context default-on proposal（已完成）
 - `docs/plans/2026-05-13-p75-self-evolution-completion-audit.md` — P75 self-evolution completion audit（已完成）
+- `docs/plans/2026-05-13-p76-spec-completeness-invariant.md` — P76 spec completeness invariant（已完成）
 
 ### Spec 使用方式
 
