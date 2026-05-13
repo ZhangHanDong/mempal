@@ -1443,8 +1443,10 @@ Future P candidates:
   walks research -> evidence -> knowledge card -> gate/promote -> context ->
   checked adoption record. This proves the existing pieces can compose, but it
   does not add automatic runtime capture.
-- P72 candidate: adoption capture helper around agent tool outcomes, still
-  explicit and reviewable, not background instrumentation.
+- P72 runtime adoption capture helper: implemented as explicit CLI/MCP
+  `capture` surfaces that map `surface/outcome` observations into existing
+  checked runtime adoption records. It is dry-run by default, writes only with
+  explicit execute, and does not add background instrumentation.
 - P73 candidate: evaluator advisory API contract with replayable outputs and no
   lifecycle authority.
 - P74 candidate: card-context default-on proposal gated by accumulated P66

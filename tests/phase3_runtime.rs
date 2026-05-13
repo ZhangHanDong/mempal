@@ -3,7 +3,8 @@ use std::process::Command;
 
 use mempal::core::db::Database;
 use mempal::core::types::{
-    MemoryKind, Provenance, RuntimeAdoptionEvent, RuntimeAdoptionFilter, RuntimeAdoptionSignal,
+    AnchorKind, KnowledgeCard, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
+    Provenance, RuntimeAdoptionEvent, RuntimeAdoptionFilter, RuntimeAdoptionSignal,
     RuntimeAdoptionTrack,
 };
 use serde_json::{Value, json};
@@ -25,6 +26,27 @@ fn run_mempal(home: &TempDir, args: &[&str]) -> std::process::Output {
         .env("HOME", home.path())
         .output()
         .expect("run mempal")
+}
+
+fn insert_test_card(home: &TempDir, card_id: &str) {
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    db.insert_knowledge_card(&KnowledgeCard {
+        id: card_id.to_string(),
+        statement: format!("Statement for {card_id}."),
+        content: format!("Content for {card_id}."),
+        tier: KnowledgeTier::Shu,
+        status: KnowledgeStatus::Promoted,
+        domain: MemoryDomain::Project,
+        field: "general".to_string(),
+        anchor_kind: AnchorKind::Repo,
+        anchor_id: "repo://mempal".to_string(),
+        parent_anchor_id: None,
+        scope_constraints: None,
+        trigger_hints: None,
+        created_at: "1713000000".to_string(),
+        updated_at: "1713000000".to_string(),
+    })
+    .expect("insert test card");
 }
 
 #[test]
@@ -480,6 +502,169 @@ fn test_cli_phase3_adoption_prepare_record_rejects_invalid_track() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unsupported runtime adoption track"));
+}
+
+#[test]
+fn test_cli_phase3_adoption_capture_card_context_dry_run() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "capture",
+            "--surface",
+            "card-context",
+            "--outcome",
+            "accepted",
+            "--card-id",
+            "card_1",
+            "--query",
+            "skill trigger",
+            "--note",
+            "card helped",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "capture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("capture json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["execute"], false);
+    assert_eq!(report["surface"], "card-context");
+    assert_eq!(report["outcome"], "accepted");
+    assert_eq!(report["record_plan"]["writes"], false);
+    assert_eq!(
+        report["record_plan"]["record_payload"]["track"],
+        "card_context"
+    );
+    assert_eq!(
+        report["record_plan"]["record_payload"]["signal"],
+        "accepted"
+    );
+    assert_eq!(
+        report["record_plan"]["record_payload"]["feature"],
+        "include_cards"
+    );
+    assert_eq!(report["record_quality"]["quality"], "ready");
+    assert!(report["record_checked"].is_null());
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert!(
+        db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+            .expect("events")
+            .is_empty()
+    );
+}
+
+#[test]
+fn test_cli_phase3_adoption_capture_execute_writes_ready_event() {
+    let home = setup_cli_home();
+    insert_test_card(&home, "card_1");
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "capture",
+            "--surface",
+            "card-context",
+            "--outcome",
+            "accepted",
+            "--card-id",
+            "card_1",
+            "--query",
+            "skill trigger",
+            "--note",
+            "card helped",
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "capture execute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("capture json");
+    assert_eq!(report["writes"], true);
+    assert_eq!(report["execute"], true);
+    assert_eq!(report["record_checked"]["writes"], true);
+    assert_eq!(report["record_checked"]["blocked"], false);
+    assert_eq!(
+        report["record_checked"]["record_quality"]["quality"],
+        "ready"
+    );
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].feature, "include_cards");
+}
+
+#[test]
+fn test_cli_phase3_adoption_capture_blocks_warning_by_default() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "capture",
+            "--surface",
+            "card-context",
+            "--outcome",
+            "accepted",
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "capture warning should return blocked JSON: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("capture json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["execute"], true);
+    assert_eq!(report["record_quality"]["quality"], "warning");
+    assert_eq!(report["record_checked"]["writes"], false);
+    assert_eq!(report["record_checked"]["blocked"], true);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert!(
+        db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+            .expect("events")
+            .is_empty()
+    );
+}
+
+#[test]
+fn test_cli_phase3_adoption_capture_rejects_unknown_surface() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "capture",
+            "--surface",
+            "unknown",
+            "--outcome",
+            "accepted",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported adoption capture surface"));
 }
 
 #[test]

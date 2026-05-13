@@ -17,11 +17,13 @@ use mempal::core::{
     config::Config,
     db::Database,
     phase3::{
-        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionCheckedRecordReport,
-        RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
+        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionCaptureInput,
+        RuntimeAdoptionCaptureReport, RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance,
+        RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
         RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
         RuntimeAdoptionReviewReport, build_research_ingest_plan_from_value,
-        card_context_default_readiness, check_runtime_adoption_record,
+        capture_runtime_adoption_record_input, card_context_default_readiness,
+        check_runtime_adoption_record, prepare_runtime_adoption_capture,
         prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
         should_write_checked_record,
     },
@@ -627,6 +629,34 @@ enum Phase3AdoptionCommands {
         metadata_json: Option<String>,
         #[arg(long)]
         id: Option<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Capture {
+        #[arg(long)]
+        surface: String,
+        #[arg(long)]
+        outcome: String,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long = "context-hash")]
+        context_hash: Option<String>,
+        #[arg(long = "card-id")]
+        card_id: Option<String>,
+        #[arg(long = "evaluator-id")]
+        evaluator_id: Option<String>,
+        #[arg(long = "research-report-id")]
+        research_report_id: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "metadata-json")]
+        metadata_json: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long = "allow-warnings")]
+        allow_warnings: bool,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -2348,6 +2378,64 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             });
             print_runtime_adoption_record_plan(&plan, &format)
         }
+        Phase3AdoptionCommands::Capture {
+            surface,
+            outcome,
+            query,
+            context_hash,
+            card_id,
+            evaluator_id,
+            research_report_id,
+            note,
+            metadata_json,
+            id,
+            execute,
+            allow_warnings,
+            format,
+        } => {
+            let metadata = metadata_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .context("failed to parse --metadata-json")?;
+            let record_input = capture_runtime_adoption_record_input(RuntimeAdoptionCaptureInput {
+                id,
+                surface: surface.clone(),
+                outcome: outcome.clone(),
+                query,
+                context_hash,
+                card_id,
+                evaluator_id,
+                research_report_id,
+                note,
+                metadata,
+            })
+            .map_err(anyhow::Error::msg)?;
+            let mut report =
+                prepare_runtime_adoption_capture(surface, outcome, execute, record_input.clone());
+            if execute {
+                let track = parse_runtime_adoption_track(&record_input.track)?;
+                let signal = parse_runtime_adoption_signal(&record_input.signal)?;
+                let should_write =
+                    should_write_checked_record(&report.record_quality, allow_warnings);
+                let event = if should_write {
+                    let event = runtime_adoption_event_from_input(record_input, track, signal);
+                    db.insert_runtime_adoption_event(&event)
+                        .context("failed to insert runtime adoption event")?;
+                    Some(event)
+                } else {
+                    None
+                };
+                report.writes = event.is_some();
+                report.record_checked = Some(RuntimeAdoptionCheckedRecordReport {
+                    writes: event.is_some(),
+                    blocked: event.is_none(),
+                    record_quality: report.record_quality.clone(),
+                    event,
+                });
+            }
+            print_runtime_adoption_capture(&report, &format)
+        }
         Phase3AdoptionCommands::CheckRecord {
             track,
             signal,
@@ -2642,6 +2730,43 @@ fn print_runtime_adoption_checked_record(
                 "{}",
                 serde_json::to_string_pretty(report)
                     .context("failed to serialize runtime adoption checked record report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
+    }
+}
+
+fn print_runtime_adoption_capture(
+    report: &RuntimeAdoptionCaptureReport,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("execute={}", report.execute);
+            println!("surface={}", report.surface);
+            println!("outcome={}", report.outcome);
+            println!("quality={}", report.record_quality.quality);
+            if let Some(checked) = report.record_checked.as_ref() {
+                println!("blocked={}", checked.blocked);
+                if let Some(event) = checked.event.as_ref() {
+                    println!("event_id={}", event.id);
+                }
+            }
+            for error in &report.record_quality.errors {
+                println!("error={error}");
+            }
+            for warning in &report.record_quality.warnings {
+                println!("warning={warning}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize runtime adoption capture report")?
             );
             Ok(())
         }

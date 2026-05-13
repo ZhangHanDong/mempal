@@ -59,6 +59,17 @@ pub struct RuntimeAdoptionCheckedRecordReport {
     pub event: Option<RuntimeAdoptionEvent>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RuntimeAdoptionCaptureReport {
+    pub writes: bool,
+    pub execute: bool,
+    pub surface: String,
+    pub outcome: String,
+    pub record_plan: RuntimeAdoptionRecordPlan,
+    pub record_quality: RuntimeAdoptionRecordQualityReport,
+    pub record_checked: Option<RuntimeAdoptionCheckedRecordReport>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeAdoptionReviewFilters {
     pub track: Option<String>,
@@ -149,6 +160,20 @@ pub struct RuntimeAdoptionRecordPlanInput {
     pub track: String,
     pub signal: String,
     pub feature: String,
+    pub query: Option<String>,
+    pub context_hash: Option<String>,
+    pub card_id: Option<String>,
+    pub evaluator_id: Option<String>,
+    pub research_report_id: Option<String>,
+    pub note: Option<String>,
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeAdoptionCaptureInput {
+    pub id: Option<String>,
+    pub surface: String,
+    pub outcome: String,
     pub query: Option<String>,
     pub context_hash: Option<String>,
     pub card_id: Option<String>,
@@ -305,6 +330,45 @@ pub fn prepare_runtime_adoption_record(
     }
 }
 
+pub fn capture_runtime_adoption_record_input(
+    input: RuntimeAdoptionCaptureInput,
+) -> Result<RuntimeAdoptionRecordPlanInput, String> {
+    let (track, feature) = capture_surface_mapping(&input.surface)?;
+    let signal = capture_outcome_signal(&input.outcome)?;
+    Ok(RuntimeAdoptionRecordPlanInput {
+        id: input.id,
+        track,
+        signal,
+        feature,
+        query: input.query,
+        context_hash: input.context_hash,
+        card_id: input.card_id,
+        evaluator_id: input.evaluator_id,
+        research_report_id: input.research_report_id,
+        note: input.note,
+        metadata: input.metadata,
+    })
+}
+
+pub fn prepare_runtime_adoption_capture(
+    surface: String,
+    outcome: String,
+    execute: bool,
+    record_input: RuntimeAdoptionRecordPlanInput,
+) -> RuntimeAdoptionCaptureReport {
+    let record_plan = prepare_runtime_adoption_record(record_input.clone());
+    let record_quality = check_runtime_adoption_record(&record_input);
+    RuntimeAdoptionCaptureReport {
+        writes: false,
+        execute,
+        surface,
+        outcome,
+        record_plan,
+        record_quality,
+        record_checked: None,
+    }
+}
+
 pub fn check_runtime_adoption_record(
     input: &RuntimeAdoptionRecordPlanInput,
 ) -> RuntimeAdoptionRecordQualityReport {
@@ -354,6 +418,40 @@ pub fn check_runtime_adoption_record(
         quality,
         errors,
         warnings,
+    }
+}
+
+fn capture_surface_mapping(surface: &str) -> Result<(String, String), String> {
+    match surface.trim() {
+        "card-context" | "card_context" => {
+            Ok(("card_context".to_string(), "include_cards".to_string()))
+        }
+        "card-embedding" | "card_embedding" => Ok((
+            "card_embedding".to_string(),
+            "card_statement_recall".to_string(),
+        )),
+        "research-adapter" | "research_adapter" => Ok((
+            "research_adapter".to_string(),
+            "research_ingest_plan".to_string(),
+        )),
+        "evaluator" => Ok(("evaluator".to_string(), "advisory_gate".to_string())),
+        "runtime-context" | "runtime_context" => {
+            Ok(("runtime_adoption".to_string(), "context_pack".to_string()))
+        }
+        "skill-selection" | "skill_selection" => Ok((
+            "runtime_adoption".to_string(),
+            "skill_selection".to_string(),
+        )),
+        other => Err(format!("unsupported adoption capture surface: {other}")),
+    }
+}
+
+fn capture_outcome_signal(outcome: &str) -> Result<String, String> {
+    match outcome.trim() {
+        "used" | "accepted" | "rejected" | "miss" | "rollback" | "contradiction" | "neutral" => {
+            Ok(outcome.trim().to_string())
+        }
+        other => Err(format!("unsupported adoption capture outcome: {other}")),
     }
 }
 

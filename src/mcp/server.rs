@@ -6,11 +6,12 @@ use crate::core::{
     anchor::{self, DerivedAnchor},
     db::Database,
     phase3::{
-        RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionRecordPlanInput,
-        RuntimeAdoptionReviewFilters, build_research_ingest_plan_from_value,
+        RuntimeAdoptionCaptureInput, RuntimeAdoptionCheckedRecordReport,
+        RuntimeAdoptionRecordPlanInput, RuntimeAdoptionReviewFilters,
+        build_research_ingest_plan_from_value, capture_runtime_adoption_record_input,
         card_context_default_readiness, check_runtime_adoption_record,
-        prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
-        should_write_checked_record,
+        prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
+        review_runtime_adoption_events, runtime_adoption_guidance, should_write_checked_record,
     },
     types::{
         AnchorKind, BootstrapIdentityParts, Drawer, ExplicitTunnel, KnowledgeCardFilter,
@@ -1348,7 +1349,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_phase3",
-        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/prepare_record/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; prepare_record validates and returns record inputs without writing; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/prepare_record/capture/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
     )]
     async fn mempal_phase3(
         &self,
@@ -1400,6 +1401,87 @@ impl MempalMcpServer {
                     record_plan: Some(plan.into()),
                     record_quality: None,
                     record_checked: None,
+                    review_report: None,
+                    readiness_report: None,
+                    event: None,
+                    events: Vec::new(),
+                    stats: None,
+                    gate: None,
+                    research_plan: None,
+                    research_ingest_plan: None,
+                }))
+            }
+            "capture" => {
+                let surface = required_string(request.surface.as_deref(), "surface")?.to_string();
+                let outcome = required_string(request.outcome.as_deref(), "outcome")?.to_string();
+                let record_input =
+                    capture_runtime_adoption_record_input(RuntimeAdoptionCaptureInput {
+                        id: trim_to_owned(request.id.as_deref()),
+                        surface: surface.clone(),
+                        outcome: outcome.clone(),
+                        query: trim_to_owned(request.query.as_deref()),
+                        context_hash: trim_to_owned(request.context_hash.as_deref()),
+                        card_id: trim_to_owned(request.card_id.as_deref()),
+                        evaluator_id: trim_to_owned(request.evaluator_id.as_deref()),
+                        research_report_id: trim_to_owned(request.research_report_id.as_deref()),
+                        note: trim_to_owned(request.note.as_deref()),
+                        metadata: request.metadata,
+                    })
+                    .map_err(|error| ErrorData::invalid_params(error, None))?;
+                let mut capture = prepare_runtime_adoption_capture(
+                    surface,
+                    outcome,
+                    request.execute.unwrap_or(false),
+                    record_input.clone(),
+                );
+                if request.execute.unwrap_or(false) {
+                    let db = self.open_db()?;
+                    let track = parse_runtime_adoption_track(&record_input.track)?;
+                    let signal = parse_runtime_adoption_signal(&record_input.signal)?;
+                    let should_write = should_write_checked_record(
+                        &capture.record_quality,
+                        request.allow_warnings.unwrap_or(false),
+                    );
+                    let event = if should_write {
+                        let event = RuntimeAdoptionEvent {
+                            id: record_input.id.unwrap_or_else(|| {
+                                phase3_event_id(&track, &signal, &record_input.feature)
+                            }),
+                            track,
+                            signal,
+                            feature: record_input.feature,
+                            query: record_input.query,
+                            context_hash: record_input.context_hash,
+                            card_id: record_input.card_id,
+                            evaluator_id: record_input.evaluator_id,
+                            research_report_id: record_input.research_report_id,
+                            note: record_input.note,
+                            metadata: record_input.metadata,
+                            created_at: current_timestamp(),
+                        };
+                        db.insert_runtime_adoption_event(&event).map_err(|error| {
+                            ErrorData::internal_error(
+                                format!("failed to insert runtime adoption event: {error}"),
+                                None,
+                            )
+                        })?;
+                        Some(event)
+                    } else {
+                        None
+                    };
+                    capture.writes = event.is_some();
+                    capture.record_checked = Some(RuntimeAdoptionCheckedRecordReport {
+                        writes: event.is_some(),
+                        blocked: event.is_none(),
+                        record_quality: capture.record_quality.clone(),
+                        event,
+                    });
+                }
+                Ok(Json(Phase3Response {
+                    guidance: None,
+                    record_plan: Some(capture.record_plan.into()),
+                    record_quality: Some(capture.record_quality.into()),
+                    record_checked: capture.record_checked.map(Into::into),
                     review_report: None,
                     readiness_report: None,
                     event: None,
@@ -1796,7 +1878,7 @@ impl MempalMcpServer {
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported phase3 action: {other}; actions are guidance, prepare_record, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                    "unsupported phase3 action: {other}; actions are guidance, prepare_record, capture, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
                 ),
                 None,
             )),
@@ -4117,7 +4199,7 @@ mod tests {
             .expect_err("invalid action should fail");
         assert!(
             error.to_string().contains(
-                "actions are guidance, prepare_record, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                "actions are guidance, prepare_record, capture, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
             )
         );
 
@@ -4266,6 +4348,73 @@ mod tests {
                 .len(),
             before
         );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_phase3_capture_action_dry_run_and_execute() {
+        let (_tempdir, db_path, server) = setup_server();
+
+        let dry_run = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "capture",
+                "surface": "card-context",
+                "outcome": "accepted",
+                "card_id": "card_1",
+                "query": "skill trigger",
+                "note": "card helped"
+            }))
+            .await
+            .expect("capture dry run");
+        let plan = dry_run.record_plan.expect("record plan");
+        assert!(!plan.writes);
+        assert_eq!(plan.record_payload["track"], "card_context");
+        assert_eq!(plan.record_payload["signal"], "accepted");
+        assert_eq!(plan.record_payload["feature"], "include_cards");
+        assert_eq!(
+            dry_run.record_quality.expect("record quality").quality,
+            "ready"
+        );
+        assert!(dry_run.record_checked.is_none());
+
+        let db = Database::open(&db_path).expect("open db");
+        assert!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .is_empty()
+        );
+        insert_knowledge_card(
+            &db_path,
+            knowledge_card(
+                "card_1",
+                KnowledgeTier::Shu,
+                KnowledgeStatus::Promoted,
+                "general",
+            ),
+        );
+
+        let executed = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "capture",
+                "surface": "card-context",
+                "outcome": "accepted",
+                "card_id": "card_1",
+                "query": "skill trigger",
+                "note": "card helped",
+                "execute": true
+            }))
+            .await
+            .expect("capture execute");
+        let checked = executed.record_checked.expect("checked record");
+        assert!(checked.writes);
+        assert!(!checked.blocked);
+        assert_eq!(checked.record_quality.quality, "ready");
+
+        let db = Database::open(&db_path).expect("reopen db");
+        let events = db
+            .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+            .expect("events");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].feature, "include_cards");
     }
 
     #[tokio::test]
@@ -4428,11 +4577,12 @@ mod tests {
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(description.contains("Phase-3 runtime adoption evidence"));
         assert!(description.contains(
-            "Actions: guidance/prepare_record/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
+            "Actions: guidance/prepare_record/capture/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
         ));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=guidance"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=readiness"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=capture"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("record_checked"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("research_ingest_plan"));
         assert!(

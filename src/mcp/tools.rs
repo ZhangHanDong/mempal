@@ -316,6 +316,8 @@ pub struct KnowledgeCardsResponse {
 pub struct Phase3Request {
     pub action: String,
     pub id: Option<String>,
+    pub surface: Option<String>,
+    pub outcome: Option<String>,
     pub track: Option<String>,
     pub signal: Option<String>,
     pub feature: Option<String>,
@@ -329,6 +331,7 @@ pub struct Phase3Request {
     pub limit: Option<usize>,
     pub candidate: Option<String>,
     pub report: Option<serde_json::Value>,
+    pub execute: Option<bool>,
     pub allow_warnings: Option<bool>,
 }
 
