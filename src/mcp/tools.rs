@@ -1,9 +1,10 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::phase3::{
     Phase3ReadinessReport, ResearchCandidateInsightPlan, ResearchEvidenceDrawerPlan,
-    ResearchIngestPlanReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
-    RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport,
-    RuntimeAdoptionSignalCounts, RuntimeAdoptionSignalGuidance, RuntimeAdoptionTrackGuidance,
+    ResearchIngestPlanReport, RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance,
+    RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
+    RuntimeAdoptionReviewReport, RuntimeAdoptionSignalCounts, RuntimeAdoptionSignalGuidance,
+    RuntimeAdoptionTrackGuidance,
 };
 use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeCard, KnowledgeCardEvent, KnowledgeStatus, KnowledgeTier,
@@ -328,6 +329,7 @@ pub struct Phase3Request {
     pub limit: Option<usize>,
     pub candidate: Option<String>,
     pub report: Option<serde_json::Value>,
+    pub allow_warnings: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -338,6 +340,8 @@ pub struct Phase3Response {
     pub record_plan: Option<RuntimeAdoptionRecordPlanDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record_quality: Option<RuntimeAdoptionRecordQualityDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_checked: Option<RuntimeAdoptionCheckedRecordDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review_report: Option<RuntimeAdoptionReviewReportDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -393,6 +397,14 @@ pub struct RuntimeAdoptionRecordQualityDto {
     pub quality: String,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionCheckedRecordDto {
+    pub writes: bool,
+    pub blocked: bool,
+    pub record_quality: RuntimeAdoptionRecordQualityDto,
+    pub event: Option<RuntimeAdoptionEventDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -462,6 +474,17 @@ impl From<RuntimeAdoptionRecordQualityReport> for RuntimeAdoptionRecordQualityDt
             quality: report.quality,
             errors: report.errors,
             warnings: report.warnings,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionCheckedRecordReport> for RuntimeAdoptionCheckedRecordDto {
+    fn from(report: RuntimeAdoptionCheckedRecordReport) -> Self {
+        Self {
+            writes: report.writes,
+            blocked: report.blocked,
+            record_quality: report.record_quality.into(),
+            event: report.event.map(RuntimeAdoptionEventDto::from),
         }
     }
 }

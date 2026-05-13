@@ -17,12 +17,13 @@ use mempal::core::{
     config::Config,
     db::Database,
     phase3::{
-        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionGuidance,
-        RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
+        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionCheckedRecordReport,
+        RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
         RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
         RuntimeAdoptionReviewReport, build_research_ingest_plan_from_value,
         card_context_default_readiness, check_runtime_adoption_record,
         prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
+        should_write_checked_record,
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
@@ -652,6 +653,34 @@ enum Phase3AdoptionCommands {
         metadata_json: Option<String>,
         #[arg(long)]
         id: Option<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    RecordChecked {
+        #[arg(long)]
+        track: String,
+        #[arg(long)]
+        signal: String,
+        #[arg(long)]
+        feature: String,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long = "context-hash")]
+        context_hash: Option<String>,
+        #[arg(long = "card-id")]
+        card_id: Option<String>,
+        #[arg(long = "evaluator-id")]
+        evaluator_id: Option<String>,
+        #[arg(long = "research-report-id")]
+        research_report_id: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "metadata-json")]
+        metadata_json: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long = "allow-warnings")]
+        allow_warnings: bool,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -2356,6 +2385,59 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let report = check_runtime_adoption_record(&input);
             print_runtime_adoption_record_quality(&report, &format)
         }
+        Phase3AdoptionCommands::RecordChecked {
+            track,
+            signal,
+            feature,
+            query,
+            context_hash,
+            card_id,
+            evaluator_id,
+            research_report_id,
+            note,
+            metadata_json,
+            id,
+            allow_warnings,
+            format,
+        } => {
+            let track = parse_runtime_adoption_track(&track)?;
+            let signal = parse_runtime_adoption_signal(&signal)?;
+            let metadata = metadata_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .context("failed to parse --metadata-json")?;
+            let input = RuntimeAdoptionRecordPlanInput {
+                id,
+                track: runtime_adoption_track_slug(&track).to_string(),
+                signal: runtime_adoption_signal_slug(&signal).to_string(),
+                feature,
+                query,
+                context_hash,
+                card_id,
+                evaluator_id,
+                research_report_id,
+                note,
+                metadata,
+            };
+            let quality = check_runtime_adoption_record(&input);
+            let should_write = should_write_checked_record(&quality, allow_warnings);
+            let event = if should_write {
+                let event = runtime_adoption_event_from_input(input, track, signal);
+                db.insert_runtime_adoption_event(&event)
+                    .context("failed to insert runtime adoption event")?;
+                Some(event)
+            } else {
+                None
+            };
+            let report = RuntimeAdoptionCheckedRecordReport {
+                writes: event.is_some(),
+                blocked: event.is_none(),
+                record_quality: quality,
+                event,
+            };
+            print_runtime_adoption_checked_record(&report, &format)
+        }
         Phase3AdoptionCommands::Review {
             track,
             feature,
@@ -2418,42 +2500,24 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
                 .map(serde_json::from_str)
                 .transpose()
                 .context("failed to parse --metadata-json")?;
-            let created_at = current_timestamp();
-            let nonce = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos().to_string())
-                .unwrap_or_else(|_| "0".to_string());
-            let id = id.unwrap_or_else(|| {
-                stable_cli_id(
-                    "adoption",
-                    &[
-                        runtime_adoption_track_slug(&track),
-                        runtime_adoption_signal_slug(&signal),
-                        feature.as_str(),
-                        query.as_deref().unwrap_or(""),
-                        context_hash.as_deref().unwrap_or(""),
-                        card_id.as_deref().unwrap_or(""),
-                        evaluator_id.as_deref().unwrap_or(""),
-                        research_report_id.as_deref().unwrap_or(""),
-                        created_at.as_str(),
-                        nonce.as_str(),
-                    ],
-                )
-            });
-            let event = RuntimeAdoptionEvent {
-                id: id.clone(),
+            let event = runtime_adoption_event_from_input(
+                RuntimeAdoptionRecordPlanInput {
+                    id,
+                    track: runtime_adoption_track_slug(&track).to_string(),
+                    signal: runtime_adoption_signal_slug(&signal).to_string(),
+                    feature,
+                    query,
+                    context_hash,
+                    card_id,
+                    evaluator_id,
+                    research_report_id,
+                    note,
+                    metadata,
+                },
                 track,
                 signal,
-                feature,
-                query,
-                context_hash,
-                card_id,
-                evaluator_id,
-                research_report_id,
-                note,
-                metadata,
-                created_at,
-            };
+            );
+            let id = event.id.clone();
             db.insert_runtime_adoption_event(&event)
                 .context("failed to insert runtime adoption event")?;
             match format.as_str() {
@@ -2507,6 +2571,81 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let stats = RuntimeAdoptionStats::from_events(&events);
             print_runtime_adoption_stats(&stats, &format)
         }
+    }
+}
+
+fn runtime_adoption_event_from_input(
+    input: RuntimeAdoptionRecordPlanInput,
+    track: RuntimeAdoptionTrack,
+    signal: RuntimeAdoptionSignal,
+) -> RuntimeAdoptionEvent {
+    let created_at = current_timestamp();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().to_string())
+        .unwrap_or_else(|_| "0".to_string());
+    let id = input.id.unwrap_or_else(|| {
+        stable_cli_id(
+            "adoption",
+            &[
+                runtime_adoption_track_slug(&track),
+                runtime_adoption_signal_slug(&signal),
+                input.feature.as_str(),
+                input.query.as_deref().unwrap_or(""),
+                input.context_hash.as_deref().unwrap_or(""),
+                input.card_id.as_deref().unwrap_or(""),
+                input.evaluator_id.as_deref().unwrap_or(""),
+                input.research_report_id.as_deref().unwrap_or(""),
+                created_at.as_str(),
+                nonce.as_str(),
+            ],
+        )
+    });
+    RuntimeAdoptionEvent {
+        id,
+        track,
+        signal,
+        feature: input.feature,
+        query: input.query,
+        context_hash: input.context_hash,
+        card_id: input.card_id,
+        evaluator_id: input.evaluator_id,
+        research_report_id: input.research_report_id,
+        note: input.note,
+        metadata: input.metadata,
+        created_at,
+    }
+}
+
+fn print_runtime_adoption_checked_record(
+    report: &RuntimeAdoptionCheckedRecordReport,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("blocked={}", report.blocked);
+            println!("quality={}", report.record_quality.quality);
+            if let Some(event) = report.event.as_ref() {
+                println!("event_id={}", event.id);
+            }
+            for error in &report.record_quality.errors {
+                println!("error={error}");
+            }
+            for warning in &report.record_quality.warnings {
+                println!("warning={warning}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize runtime adoption checked record report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
     }
 }
 

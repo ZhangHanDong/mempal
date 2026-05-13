@@ -617,6 +617,160 @@ fn test_cli_phase3_adoption_check_record_rejects_empty_feature() {
 }
 
 #[test]
+fn test_cli_phase3_adoption_record_checked_writes_ready_event() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "record-checked",
+            "--track",
+            "runtime_adoption",
+            "--signal",
+            "accepted",
+            "--feature",
+            "context_pack",
+            "--query",
+            "skill trigger",
+            "--note",
+            "context guidance helped",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "record-checked failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("checked record json");
+    assert_eq!(report["writes"], true);
+    assert_eq!(report["blocked"], false);
+    assert_eq!(report["record_quality"]["quality"], "ready");
+    assert!(report["event"]["id"].as_str().expect("event id").len() > 8);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_cli_phase3_adoption_record_checked_blocks_warning_by_default() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "record-checked",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "include_cards",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "record-checked should return blocked JSON: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("checked record json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["blocked"], true);
+    assert_eq!(report["record_quality"]["quality"], "warning");
+    assert!(report.get("event").is_none() || report["event"].is_null());
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_adoption_record_checked_allow_warnings_writes_warning_event() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "record-checked",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "include_cards",
+            "--allow-warnings",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "record-checked failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("checked record json");
+    assert_eq!(report["writes"], true);
+    assert_eq!(report["blocked"], false);
+    assert_eq!(report["record_quality"]["quality"], "warning");
+    assert!(report["event"]["id"].as_str().expect("event id").len() > 8);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert_eq!(events.len(), 1);
+}
+
+#[test]
+fn test_cli_phase3_adoption_record_checked_blocks_invalid_even_with_allow_warnings() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "record-checked",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "   ",
+            "--allow-warnings",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "record-checked should return blocked JSON: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("checked record json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["blocked"], true);
+    assert_eq!(report["record_quality"]["quality"], "invalid");
+    assert!(report.get("event").is_none() || report["event"].is_null());
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
 fn test_cli_phase3_adoption_review_json_summarizes_events() {
     let home = setup_cli_home();
     for (id, signal) in [

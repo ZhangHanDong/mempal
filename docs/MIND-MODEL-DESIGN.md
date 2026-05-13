@@ -1374,6 +1374,15 @@ candidate `mempal knowledge distill` suggestions, and always reports
 not expose `--execute`, create drawers or vectors, mutate runtime adoption
 events, or promote research output into knowledge.
 
+P69 adds a quality-gated runtime adoption write path through
+`mempal phase3 adoption record-checked` and
+`mempal_phase3 action=record_checked`. The command/action runs the P64 record
+quality policy immediately before writing. `quality=ready` records are written,
+`quality=warning` records are blocked by default unless `allow_warnings` is
+explicitly set, and `quality=invalid` records are always blocked. This reduces
+low-signal self-evolution evidence without adding hooks, background
+instrumentation, schema changes, or new authority for Phase-3 gates.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

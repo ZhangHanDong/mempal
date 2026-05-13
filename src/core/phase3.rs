@@ -51,6 +51,14 @@ pub struct RuntimeAdoptionRecordQualityReport {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RuntimeAdoptionCheckedRecordReport {
+    pub writes: bool,
+    pub blocked: bool,
+    pub record_quality: RuntimeAdoptionRecordQualityReport,
+    pub event: Option<RuntimeAdoptionEvent>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeAdoptionReviewFilters {
     pub track: Option<String>,
@@ -347,6 +355,14 @@ pub fn check_runtime_adoption_record(
         errors,
         warnings,
     }
+}
+
+pub fn should_write_checked_record(
+    quality: &RuntimeAdoptionRecordQualityReport,
+    allow_warnings: bool,
+) -> bool {
+    quality.valid
+        && (quality.quality == "ready" || (allow_warnings && quality.quality == "warning"))
 }
 
 pub fn review_runtime_adoption_events(

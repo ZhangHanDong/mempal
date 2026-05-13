@@ -113,6 +113,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p66-card-context-default-readiness.spec.md` | 完成 | P66 card context default readiness：`readiness` 只读判断 `include_cards` 是否具备未来默认开启资格 |
 | `specs/p67-research-adapter-ingest.spec.md` | 完成 | P67 research adapter evidence ingest：`research-ingest-plan` 显式把 research findings 写入 evidence，candidate insights 仅作为 distill 建议 |
 | `specs/p68-mcp-research-ingest-plan.spec.md` | 完成 | P68 MCP research ingest plan：`mempal_phase3 action=research_ingest_plan` 只读预览 evidence refs + distill 建议 |
+| `specs/p69-runtime-adoption-checked-record.spec.md` | 完成 | P69 runtime adoption checked record：`record-checked` / `record_checked` 质量门控写入 runtime adoption evidence |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -186,6 +187,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-13-p66-card-context-default-readiness.md` — P66 card context default readiness（已完成）
 - `docs/plans/2026-05-13-p67-research-adapter-ingest.md` — P67 research adapter evidence ingest（已完成）
 - `docs/plans/2026-05-13-p68-mcp-research-ingest-plan.md` — P68 MCP research ingest plan（已完成）
+- `docs/plans/2026-05-13-p69-runtime-adoption-checked-record.md` — P69 runtime adoption checked record（已完成）
 
 ### Spec 使用方式
 
@@ -221,7 +223,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
 | `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
 | `mempal_knowledge_cards` | Phase-2 knowledge card list/get/events/gate/promote/demote/retrieve；retrieve 通过 linked evidence 返回 active cards（P35/P40/P45） |
-| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/prepare_record/check_record/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan（P60/P61/P63/P64/P65/P66/P68） |
+| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/prepare_record/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan（P60/P61/P63/P64/P65/P66/P68/P69） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |
