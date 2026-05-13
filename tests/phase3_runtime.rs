@@ -1,11 +1,14 @@
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::process::Command;
+use std::thread;
 
 use mempal::core::db::Database;
 use mempal::core::types::{
-    AnchorKind, KnowledgeCard, KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind,
-    Provenance, RuntimeAdoptionEvent, RuntimeAdoptionFilter, RuntimeAdoptionSignal,
-    RuntimeAdoptionTrack,
+    AnchorKind, Drawer, KnowledgeCard, KnowledgeEvidenceLink, KnowledgeEvidenceRole,
+    KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, RuntimeAdoptionEvent,
+    RuntimeAdoptionFilter, RuntimeAdoptionSignal, RuntimeAdoptionTrack, SourceType,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -28,6 +31,32 @@ fn run_mempal(home: &TempDir, args: &[&str]) -> std::process::Output {
         .expect("run mempal")
 }
 
+fn record_card_context_acceptance(home: &TempDir, id: &str) {
+    let output = run_mempal(
+        home,
+        &[
+            "phase3",
+            "adoption",
+            "record",
+            "--id",
+            id,
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "include_cards",
+            "--query",
+            "skill trigger context",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "record failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn insert_test_card(home: &TempDir, card_id: &str) {
     let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
     db.insert_knowledge_card(&KnowledgeCard {
@@ -47,6 +76,109 @@ fn insert_test_card(home: &TempDir, card_id: &str) {
         updated_at: "1713000000".to_string(),
     })
     .expect("insert test card");
+}
+
+fn evidence_drawer(id: &str, content: &str) -> Drawer {
+    Drawer {
+        id: id.to_string(),
+        content: content.to_string(),
+        wing: "mempal".to_string(),
+        room: Some("phase3".to_string()),
+        source_file: Some(format!("tests://phase3/{id}")),
+        source_type: SourceType::Manual,
+        added_at: "1710000000".to_string(),
+        chunk_index: Some(0),
+        normalize_version: 1,
+        importance: 2,
+        memory_kind: MemoryKind::Evidence,
+        domain: MemoryDomain::Project,
+        field: "general".to_string(),
+        anchor_kind: AnchorKind::Repo,
+        anchor_id: "repo://mempal".to_string(),
+        parent_anchor_id: None,
+        provenance: Some(Provenance::Human),
+        statement: None,
+        tier: None,
+        status: None,
+        supporting_refs: Vec::new(),
+        counterexample_refs: Vec::new(),
+        teaching_refs: Vec::new(),
+        verification_refs: Vec::new(),
+        scope_constraints: None,
+        trigger_hints: None,
+    }
+}
+
+fn insert_test_card_with_evidence(home: &TempDir, card_id: &str, evidence_id: &str) {
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let drawer = evidence_drawer(evidence_id, "card context evidence");
+    db.insert_drawer(&drawer).expect("insert evidence drawer");
+    db.insert_vector(evidence_id, &vec![0.25; 384])
+        .expect("insert evidence vector");
+    drop(db);
+    insert_test_card(home, card_id);
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    db.insert_knowledge_evidence_link(&KnowledgeEvidenceLink {
+        id: format!("link_{card_id}_{evidence_id}"),
+        card_id: card_id.to_string(),
+        evidence_drawer_id: evidence_id.to_string(),
+        role: KnowledgeEvidenceRole::Supporting,
+        note: None,
+        created_at: "1710000000".to_string(),
+    })
+    .expect("insert card evidence link");
+}
+
+fn start_openai_embedding_stub(query: &str) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind embedding stub");
+    listener
+        .set_nonblocking(true)
+        .expect("set embedding stub nonblocking");
+    let address = listener.local_addr().expect("local addr");
+    let query = query.to_string();
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = (0..50)
+            .find_map(|_| match listener.accept() {
+                Ok(connection) => Some(connection),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(std::time::Duration::from_millis(100));
+                    None
+                }
+                Err(error) => panic!("accept request: {error}"),
+            })
+            .expect("embedding stub timed out waiting for request");
+        let mut request = [0_u8; 4096];
+        let bytes_read = stream.read(&mut request).expect("read embedding request");
+        let request = String::from_utf8_lossy(&request[..bytes_read]);
+        let (_, body) = request
+            .split_once("\r\n\r\n")
+            .expect("request should contain JSON body");
+        let payload: Value = serde_json::from_str(body).expect("parse embedding request");
+        assert_eq!(payload["input"][0], query);
+        let body = serde_json::to_string(&json!({
+            "data": [{ "embedding": vec![0.25; 384] }]
+        }))
+        .expect("serialize embedding response");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write embedding response");
+    });
+    (format!("http://{address}/v1/embeddings"), handle)
+}
+
+fn write_cli_api_config(home: &TempDir, endpoint: &str) {
+    fs::write(
+        home.path().join(".mempal/config.toml"),
+        format!(
+            "[embed]\nbackend = \"api\"\napi_endpoint = \"{endpoint}\"\napi_model = \"test-model\"\n"
+        ),
+    )
+    .expect("write config");
 }
 
 #[test]
@@ -242,6 +374,158 @@ fn test_cli_phase3_readiness_card_context_default_blocks_without_evidence() {
         .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
         .expect("list events");
     assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_default_proposal_card_context_ready() {
+    let home = setup_cli_home();
+    for i in 0..3 {
+        record_card_context_acceptance(&home, &format!("proposal_accept_{i}"));
+    }
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-proposal",
+            "card-context",
+            "--rollback-criterion",
+            "rollback on contradiction or user-visible degradation",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "proposal failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("proposal json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["candidate"], "card-context");
+    assert_eq!(report["proposal_ready"], true);
+    assert_eq!(report["decision"], "eligible_for_default_on_spec");
+    assert_eq!(report["readiness"]["ready"], true);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert_eq!(events.len(), 3);
+}
+
+#[test]
+fn test_cli_phase3_default_proposal_requires_rollback_criteria() {
+    let home = setup_cli_home();
+    for i in 0..3 {
+        record_card_context_acceptance(&home, &format!("proposal_no_rollback_{i}"));
+    }
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-proposal",
+            "card-context",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "proposal failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("proposal json");
+    assert_eq!(report["proposal_ready"], false);
+    let reasons = report["reasons"].as_array().expect("reasons");
+    assert!(reasons.iter().any(|reason| {
+        reason
+            .as_str()
+            .is_some_and(|value| value.contains("rollback criteria are required"))
+    }));
+}
+
+#[test]
+fn test_cli_phase3_default_proposal_blocks_without_readiness() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-proposal",
+            "card-context",
+            "--rollback-criterion",
+            "rollback on contradiction or user-visible degradation",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "proposal failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("proposal json");
+    assert_eq!(report["proposal_ready"], false);
+    assert_eq!(report["readiness"]["ready"], false);
+}
+
+#[test]
+fn test_cli_phase3_default_proposal_keeps_context_cards_opt_in() {
+    let home = setup_cli_home();
+    insert_test_card_with_evidence(&home, "card_default_off", "drawer_default_off_evidence");
+    for i in 0..3 {
+        record_card_context_acceptance(&home, &format!("proposal_default_off_{i}"));
+    }
+    let proposal = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-proposal",
+            "card-context",
+            "--rollback-criterion",
+            "rollback on contradiction or user-visible degradation",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        proposal.status.success(),
+        "proposal failed: {}",
+        String::from_utf8_lossy(&proposal.stderr)
+    );
+
+    let query = "card-aware";
+    let (endpoint, handle) = start_openai_embedding_stub(query);
+    write_cli_api_config(&home, &endpoint);
+    let context = run_mempal(&home, &["context", query, "--format", "json"]);
+    assert!(
+        context.status.success(),
+        "context failed: {}",
+        String::from_utf8_lossy(&context.stderr)
+    );
+    handle.join().expect("join embedding stub");
+    let context: Value = serde_json::from_slice(&context.stdout).expect("context json");
+    let has_card = context["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .flat_map(|section| section["items"].as_array().expect("items"))
+        .any(|item| item["card_id"] == "card_default_off");
+    assert!(!has_card, "cards should remain opt-in by default");
+}
+
+#[test]
+fn test_cli_phase3_default_proposal_rejects_unknown_candidate() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &["phase3", "default-proposal", "unknown", "--format", "json"],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported phase3 default proposal candidate"));
 }
 
 #[test]

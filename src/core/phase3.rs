@@ -101,6 +101,17 @@ pub struct EvaluatorAdviceReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CardContextDefaultProposalReport {
+    pub writes: bool,
+    pub candidate: String,
+    pub proposal_ready: bool,
+    pub decision: String,
+    pub readiness: Phase3ReadinessReport,
+    pub rollback_criteria: Vec<String>,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeAdoptionReviewFilters {
     pub track: Option<String>,
     pub feature: Option<String>,
@@ -483,6 +494,44 @@ pub fn evaluator_advice(input: EvaluatorAdviceInput) -> Result<EvaluatorAdviceRe
         reasons,
         adoption_capture,
     })
+}
+
+pub fn card_context_default_proposal(
+    events: &[RuntimeAdoptionEvent],
+    rollback_criteria: Vec<String>,
+) -> CardContextDefaultProposalReport {
+    let readiness = card_context_default_readiness(events);
+    let rollback_criteria = normalize_non_empty(rollback_criteria);
+    let mut reasons = Vec::new();
+    if readiness.ready {
+        reasons.push("card context default readiness threshold satisfied".to_string());
+    } else {
+        reasons.push("card context default readiness threshold not satisfied".to_string());
+    }
+    if rollback_criteria.is_empty() {
+        reasons.push("rollback criteria are required before default-on proposal".to_string());
+    } else {
+        reasons.push("explicit rollback criteria are present".to_string());
+    }
+    let proposal_ready = readiness.ready && !rollback_criteria.is_empty();
+    if proposal_ready {
+        reasons.push("proposal is eligible for a future default-on spec".to_string());
+    }
+
+    CardContextDefaultProposalReport {
+        writes: false,
+        candidate: "card-context".to_string(),
+        proposal_ready,
+        decision: if proposal_ready {
+            "eligible_for_default_on_spec"
+        } else {
+            "keep_opt_in"
+        }
+        .to_string(),
+        readiness,
+        rollback_criteria,
+        reasons,
+    }
 }
 
 pub fn check_runtime_adoption_record(

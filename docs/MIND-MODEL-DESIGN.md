@@ -1454,8 +1454,14 @@ Future P candidates:
   `deterministic_gate_required=true`, reasons, and a `surface=evaluator`
   adoption capture plan. It cannot mutate lifecycle state, satisfy reviewer
   requirements, bypass gates, or call LLM/network evaluators.
-- P74 candidate: card-context default-on proposal gated by accumulated P66
-  readiness evidence plus rollback criteria.
+- P74 card context default-on proposal: implemented as read-only CLI/MCP
+  proposal surfaces through `mempal phase3 default-proposal card-context` and
+  `mempal_phase3 action=default_proposal`. The proposal embeds P66 readiness,
+  requires explicit rollback criteria, returns `writes=false`, and only marks
+  `proposal_ready=true` when both readiness and rollback criteria are present.
+  It deliberately keeps `mempal context` / `mempal_context` default
+  `include_cards=false`; any actual default change still requires a future
+  explicit spec.
 
 ## Closing Summary
 

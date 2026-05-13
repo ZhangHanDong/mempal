@@ -324,6 +324,7 @@ pub struct Phase3Request {
     pub evidence_refs: Option<Vec<String>>,
     pub counterexample_refs: Option<Vec<String>>,
     pub risk_notes: Option<Vec<String>>,
+    pub rollback_criteria: Option<Vec<String>>,
     pub track: Option<String>,
     pub signal: Option<String>,
     pub feature: Option<String>,
@@ -369,6 +370,8 @@ pub struct Phase3Response {
     pub research_ingest_plan: Option<ResearchIngestPlanDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluator_advice: Option<EvaluatorAdviceDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_proposal: Option<CardContextDefaultProposalDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -483,6 +486,31 @@ pub struct EvaluatorAdviceDto {
     pub risk_notes: Vec<String>,
     pub reasons: Vec<String>,
     pub adoption_capture: RuntimeAdoptionRecordPlanDto,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CardContextDefaultProposalDto {
+    pub writes: bool,
+    pub candidate: String,
+    pub proposal_ready: bool,
+    pub decision: String,
+    pub readiness: Phase3ReadinessReportDto,
+    pub rollback_criteria: Vec<String>,
+    pub reasons: Vec<String>,
+}
+
+impl From<crate::core::phase3::CardContextDefaultProposalReport> for CardContextDefaultProposalDto {
+    fn from(report: crate::core::phase3::CardContextDefaultProposalReport) -> Self {
+        Self {
+            writes: report.writes,
+            candidate: report.candidate,
+            proposal_ready: report.proposal_ready,
+            decision: report.decision,
+            readiness: report.readiness.into(),
+            rollback_criteria: report.rollback_criteria,
+            reasons: report.reasons,
+        }
+    }
 }
 
 impl From<crate::core::phase3::EvaluatorAdviceReport> for EvaluatorAdviceDto {

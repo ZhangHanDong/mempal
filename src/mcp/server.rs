@@ -9,9 +9,10 @@ use crate::core::{
         EvaluatorAdviceInput, RuntimeAdoptionCaptureInput, RuntimeAdoptionCheckedRecordReport,
         RuntimeAdoptionRecordPlanInput, RuntimeAdoptionReviewFilters,
         build_research_ingest_plan_from_value, capture_runtime_adoption_record_input,
-        card_context_default_readiness, check_runtime_adoption_record, evaluator_advice,
-        prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
-        review_runtime_adoption_events, runtime_adoption_guidance, should_write_checked_record,
+        card_context_default_proposal, card_context_default_readiness,
+        check_runtime_adoption_record, evaluator_advice, prepare_runtime_adoption_capture,
+        prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
+        should_write_checked_record,
     },
     types::{
         AnchorKind, BootstrapIdentityParts, Drawer, ExplicitTunnel, KnowledgeCardFilter,
@@ -1349,7 +1350,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_phase3",
-        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/prepare_record/capture/evaluator_advise/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; default_proposal combines readiness with rollback criteria without changing defaults; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
     )]
     async fn mempal_phase3(
         &self,
@@ -1373,6 +1374,7 @@ impl MempalMcpServer {
                 research_plan: None,
                 research_ingest_plan: None,
                 evaluator_advice: None,
+                default_proposal: None,
             })),
             "prepare_record" => {
                 let track = parse_runtime_adoption_track(required_string(
@@ -1411,6 +1413,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "capture" => {
@@ -1493,6 +1496,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "evaluator_advise" => {
@@ -1528,6 +1532,55 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: Some(report.into()),
+                    default_proposal: None,
+                }))
+            }
+            "default_proposal" => {
+                let candidate = required_string(request.candidate.as_deref(), "candidate")?;
+                let report = match candidate {
+                    "card-context" => {
+                        let db = self.open_db()?;
+                        let events = db
+                            .list_runtime_adoption_events(
+                                &RuntimeAdoptionFilter {
+                                    track: Some(RuntimeAdoptionTrack::CardContext),
+                                    feature: Some("include_cards".to_string()),
+                                },
+                                10_000,
+                            )
+                            .map_err(|error| {
+                                ErrorData::internal_error(
+                                    format!("failed to list runtime adoption events: {error}"),
+                                    None,
+                                )
+                            })?;
+                        card_context_default_proposal(
+                            &events,
+                            request.rollback_criteria.unwrap_or_default(),
+                        )
+                    }
+                    other => {
+                        return Err(ErrorData::invalid_params(
+                            format!("unsupported phase3 default proposal candidate: {other}"),
+                            None,
+                        ));
+                    }
+                };
+                Ok(Json(Phase3Response {
+                    guidance: None,
+                    record_plan: None,
+                    record_quality: None,
+                    record_checked: None,
+                    review_report: None,
+                    readiness_report: None,
+                    event: None,
+                    events: Vec::new(),
+                    stats: None,
+                    gate: None,
+                    research_plan: None,
+                    research_ingest_plan: None,
+                    evaluator_advice: None,
+                    default_proposal: Some(report.into()),
                 }))
             }
             "check_record" => {
@@ -1567,6 +1620,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "record_checked" => {
@@ -1645,6 +1699,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "review" => {
@@ -1700,6 +1755,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "readiness" => {
@@ -1744,6 +1800,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "record" => {
@@ -1793,6 +1850,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "list" => {
@@ -1828,6 +1886,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "stats" => {
@@ -1860,6 +1919,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "gate" => {
@@ -1880,6 +1940,7 @@ impl MempalMcpServer {
                     research_plan: None,
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "research_validate_plan" => {
@@ -1900,6 +1961,7 @@ impl MempalMcpServer {
                     research_plan: Some(validate_research_adapter_plan_value(&report)),
                     research_ingest_plan: None,
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             "research_ingest_plan" => {
@@ -1922,11 +1984,12 @@ impl MempalMcpServer {
                         build_research_ingest_plan_from_value(&report),
                     )),
                     evaluator_advice: None,
+                    default_proposal: None,
                 }))
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported phase3 action: {other}; actions are guidance, prepare_record, capture, evaluator_advise, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                    "unsupported phase3 action: {other}; actions are guidance, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
                 ),
                 None,
             )),
@@ -4247,7 +4310,7 @@ mod tests {
             .expect_err("invalid action should fail");
         assert!(
             error.to_string().contains(
-                "actions are guidance, prepare_record, capture, evaluator_advise, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                "actions are guidance, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
             )
         );
 
@@ -4644,6 +4707,56 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_mcp_phase3_default_proposal_card_context_is_read_only() {
+        let (_tempdir, db_path, server) = setup_server();
+        let before = {
+            let db = Database::open(&db_path).expect("open db");
+            for i in 0..3 {
+                db.insert_runtime_adoption_event(&RuntimeAdoptionEvent {
+                    id: format!("default_proposal_event_{i}"),
+                    track: RuntimeAdoptionTrack::CardContext,
+                    signal: RuntimeAdoptionSignal::Accepted,
+                    feature: "include_cards".to_string(),
+                    query: Some("skill trigger".to_string()),
+                    context_hash: None,
+                    card_id: None,
+                    evaluator_id: None,
+                    research_report_id: None,
+                    note: Some("helped".to_string()),
+                    metadata: None,
+                    created_at: "1777710000".to_string(),
+                })
+                .expect("insert event");
+            }
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len()
+        };
+
+        let response = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "default_proposal",
+                "candidate": "card-context",
+                "rollback_criteria": ["rollback on contradiction or user-visible degradation"]
+            }))
+            .await
+            .expect("default proposal");
+        let report = response.default_proposal.expect("default proposal");
+        assert!(!report.writes);
+        assert!(report.proposal_ready);
+        assert_eq!(report.decision, "eligible_for_default_on_spec");
+        assert!(report.readiness.ready);
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len(),
+            before
+        );
+    }
+
     #[test]
     fn test_mcp_tool_registry_and_protocol_include_phase3_runtime_surface() {
         let (_tempdir, _db_path, server) = setup_server();
@@ -4655,13 +4768,14 @@ mod tests {
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(description.contains("Phase-3 runtime adoption evidence"));
         assert!(description.contains(
-            "Actions: guidance/prepare_record/capture/evaluator_advise/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
+            "Actions: guidance/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
         ));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=guidance"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=readiness"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=capture"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=evaluator_advise"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=default_proposal"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("record_checked"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("research_ingest_plan"));
         assert!(

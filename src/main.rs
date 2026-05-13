@@ -17,12 +17,13 @@ use mempal::core::{
     config::Config,
     db::Database,
     phase3::{
-        EvaluatorAdviceInput, EvaluatorAdviceReport, Phase3ReadinessReport,
-        ResearchIngestPlanReport, RuntimeAdoptionCaptureInput, RuntimeAdoptionCaptureReport,
-        RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
-        RuntimeAdoptionRecordPlanInput, RuntimeAdoptionRecordQualityReport,
-        RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport,
-        build_research_ingest_plan_from_value, capture_runtime_adoption_record_input,
+        CardContextDefaultProposalReport, EvaluatorAdviceInput, EvaluatorAdviceReport,
+        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionCaptureInput,
+        RuntimeAdoptionCaptureReport, RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance,
+        RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
+        RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
+        RuntimeAdoptionReviewReport, build_research_ingest_plan_from_value,
+        capture_runtime_adoption_record_input, card_context_default_proposal,
         card_context_default_readiness, check_runtime_adoption_record, evaluator_advice,
         prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
         review_runtime_adoption_events, runtime_adoption_guidance, should_write_checked_record,
@@ -578,6 +579,13 @@ enum Phase3Commands {
     Evaluator {
         #[command(subcommand)]
         command: Phase3EvaluatorCommands,
+    },
+    DefaultProposal {
+        candidate: String,
+        #[arg(long = "rollback-criterion")]
+        rollback_criteria: Vec<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
     },
     Gate {
         candidate: String,
@@ -2346,6 +2354,14 @@ async fn phase3_command(db: &Database, config: &Config, command: Phase3Commands)
     match command {
         Phase3Commands::Adoption { command } => phase3_adoption_command(db, command),
         Phase3Commands::Evaluator { command } => phase3_evaluator_command(command),
+        Phase3Commands::DefaultProposal {
+            candidate,
+            rollback_criteria,
+            format,
+        } => {
+            let report = phase3_default_proposal(db, &candidate, rollback_criteria)?;
+            print_card_context_default_proposal(&report, &format)
+        }
         Phase3Commands::Gate { candidate, format } => {
             let report = phase3_gate_report(db, &candidate)?;
             print_phase3_gate_report(&report, &format)
@@ -2363,6 +2379,28 @@ async fn phase3_command(db: &Database, config: &Config, command: Phase3Commands)
             execute,
             format,
         } => research_ingest_plan_command(db, config, &path, execute, &format).await,
+    }
+}
+
+fn phase3_default_proposal(
+    db: &Database,
+    candidate: &str,
+    rollback_criteria: Vec<String>,
+) -> Result<CardContextDefaultProposalReport> {
+    match candidate {
+        "card-context" => {
+            let events = db
+                .list_runtime_adoption_events(
+                    &RuntimeAdoptionFilter {
+                        track: Some(RuntimeAdoptionTrack::CardContext),
+                        feature: Some("include_cards".to_string()),
+                    },
+                    10_000,
+                )
+                .context("failed to list runtime adoption events")?;
+            Ok(card_context_default_proposal(&events, rollback_criteria))
+        }
+        other => bail!("unsupported phase3 default proposal candidate: {other}"),
     }
 }
 
@@ -3397,6 +3435,37 @@ fn print_evaluator_advice(report: &EvaluatorAdviceReport, format: &str) -> Resul
             Ok(())
         }
         other => bail!("unsupported phase3 evaluator format: {other}"),
+    }
+}
+
+fn print_card_context_default_proposal(
+    report: &CardContextDefaultProposalReport,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("candidate={}", report.candidate);
+            println!("proposal_ready={}", report.proposal_ready);
+            println!("decision={}", report.decision);
+            println!("readiness_ready={}", report.readiness.ready);
+            for criterion in &report.rollback_criteria {
+                println!("rollback_criterion={criterion}");
+            }
+            for reason in &report.reasons {
+                println!("reason={reason}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize card context default proposal")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 default proposal format: {other}"),
     }
 }
 
