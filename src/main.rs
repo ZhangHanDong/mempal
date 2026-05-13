@@ -16,10 +16,11 @@ use mempal::core::{
     config::Config,
     db::Database,
     phase3::{
-        RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
-        RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
-        RuntimeAdoptionReviewReport, check_runtime_adoption_record,
-        prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
+        Phase3ReadinessReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
+        RuntimeAdoptionRecordPlanInput, RuntimeAdoptionRecordQualityReport,
+        RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport, card_context_default_readiness,
+        check_runtime_adoption_record, prepare_runtime_adoption_record,
+        review_runtime_adoption_events, runtime_adoption_guidance,
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
@@ -568,6 +569,11 @@ enum Phase3Commands {
         command: Phase3AdoptionCommands,
     },
     Gate {
+        candidate: String,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Readiness {
         candidate: String,
         #[arg(long, default_value = "plain")]
         format: String,
@@ -2245,6 +2251,10 @@ fn phase3_command(db: &Database, command: Phase3Commands) -> Result<()> {
             let report = phase3_gate_report(db, &candidate)?;
             print_phase3_gate_report(&report, &format)
         }
+        Phase3Commands::Readiness { candidate, format } => {
+            let report = phase3_readiness_report(db, &candidate)?;
+            print_phase3_readiness_report(&report, &format)
+        }
         Phase3Commands::ResearchValidatePlan { path, format } => {
             let report = validate_research_adapter_plan(&path)?;
             print_research_adapter_plan(&report, &format)
@@ -2701,6 +2711,24 @@ fn phase3_gate_report(db: &Database, candidate: &str) -> Result<Phase3GateReport
     })
 }
 
+fn phase3_readiness_report(db: &Database, candidate: &str) -> Result<Phase3ReadinessReport> {
+    match candidate {
+        "card-context-default" => {
+            let events = db
+                .list_runtime_adoption_events(
+                    &RuntimeAdoptionFilter {
+                        track: Some(RuntimeAdoptionTrack::CardContext),
+                        feature: Some("include_cards".to_string()),
+                    },
+                    10_000,
+                )
+                .context("failed to list runtime adoption events")?;
+            Ok(card_context_default_readiness(&events))
+        }
+        other => bail!("unsupported phase3 readiness candidate: {other}"),
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct ResearchAdapterPlanReport {
     valid: bool,
@@ -2845,6 +2873,37 @@ fn print_phase3_gate_report(report: &Phase3GateReport, format: &str) -> Result<(
             Ok(())
         }
         other => bail!("unsupported phase3 gate format: {other}"),
+    }
+}
+
+fn print_phase3_readiness_report(report: &Phase3ReadinessReport, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("candidate={}", report.candidate);
+            println!("ready={}", report.ready);
+            println!("decision={}", report.decision);
+            println!("required_track={}", report.required_track);
+            println!("required_feature={}", report.required_feature);
+            println!("accepted={}", report.review.stats.accepted);
+            println!("rejected={}", report.review.stats.rejected);
+            println!("misses={}", report.review.stats.misses);
+            println!("rollbacks={}", report.review.stats.rollbacks);
+            println!("contradictions={}", report.review.stats.contradictions);
+            for reason in &report.reasons {
+                println!("reason={reason}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize phase3 readiness report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 readiness format: {other}"),
     }
 }
 

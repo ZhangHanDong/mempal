@@ -110,6 +110,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p63-runtime-adoption-record-helper.spec.md` | 完成 | P63 runtime adoption record helper：`prepare-record` / `prepare_record` 只读生成 record 命令与 payload |
 | `specs/p64-runtime-adoption-record-quality-policy.spec.md` | 完成 | P64 runtime adoption record quality policy：`check-record` / `check_record` 只读检查 record 质量 |
 | `specs/p65-runtime-adoption-review-report.spec.md` | 完成 | P65 runtime adoption review report：`review` 只读汇总 adoption evidence |
+| `specs/p66-card-context-default-readiness.spec.md` | 完成 | P66 card context default readiness：`readiness` 只读判断 `include_cards` 是否具备未来默认开启资格 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -180,6 +181,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-12-p63-runtime-adoption-record-helper.md` — P63 runtime adoption record helper（已完成）
 - `docs/plans/2026-05-13-p64-runtime-adoption-record-quality-policy.md` — P64 runtime adoption record quality policy（已完成）
 - `docs/plans/2026-05-13-p65-runtime-adoption-review-report.md` — P65 runtime adoption review report（已完成）
+- `docs/plans/2026-05-13-p66-card-context-default-readiness.md` — P66 card context default readiness（已完成）
 
 ### Spec 使用方式
 
@@ -215,7 +217,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
 | `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
 | `mempal_knowledge_cards` | Phase-2 knowledge card list/get/events/gate/promote/demote/retrieve；retrieve 通过 linked evidence 返回 active cards（P35/P40/P45） |
-| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/prepare_record/check_record/review/record/list/stats/gate/research_validate_plan（P60/P61/P63/P64/P65） |
+| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/prepare_record/check_record/review/readiness/record/list/stats/gate/research_validate_plan（P60/P61/P63/P64/P65/P66） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |

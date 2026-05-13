@@ -1,8 +1,8 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::phase3::{
-    RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordQualityReport,
-    RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport, RuntimeAdoptionSignalCounts,
-    RuntimeAdoptionSignalGuidance, RuntimeAdoptionTrackGuidance,
+    Phase3ReadinessReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
+    RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport,
+    RuntimeAdoptionSignalCounts, RuntimeAdoptionSignalGuidance, RuntimeAdoptionTrackGuidance,
 };
 use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeCard, KnowledgeCardEvent, KnowledgeStatus, KnowledgeTier,
@@ -340,6 +340,8 @@ pub struct Phase3Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub review_report: Option<RuntimeAdoptionReviewReportDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness_report: Option<Phase3ReadinessReportDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<RuntimeAdoptionEventDto>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub events: Vec<RuntimeAdoptionEventDto>,
@@ -427,6 +429,18 @@ pub struct RuntimeAdoptionFeatureReviewDto {
     pub stats: RuntimeAdoptionSignalCountsDto,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct Phase3ReadinessReportDto {
+    pub writes: bool,
+    pub candidate: String,
+    pub ready: bool,
+    pub decision: String,
+    pub required_track: String,
+    pub required_feature: String,
+    pub review: RuntimeAdoptionReviewReportDto,
+    pub reasons: Vec<String>,
+}
+
 impl From<RuntimeAdoptionRecordPlan> for RuntimeAdoptionRecordPlanDto {
     fn from(plan: RuntimeAdoptionRecordPlan) -> Self {
         Self {
@@ -465,6 +479,21 @@ impl From<RuntimeAdoptionReviewReport> for RuntimeAdoptionReviewReportDto {
                 })
                 .collect(),
             conclusion: report.conclusion,
+            reasons: report.reasons,
+        }
+    }
+}
+
+impl From<Phase3ReadinessReport> for Phase3ReadinessReportDto {
+    fn from(report: Phase3ReadinessReport) -> Self {
+        Self {
+            writes: report.writes,
+            candidate: report.candidate,
+            ready: report.ready,
+            decision: report.decision,
+            required_track: report.required_track,
+            required_feature: report.required_feature,
+            review: report.review.into(),
             reasons: report.reasons,
         }
     }

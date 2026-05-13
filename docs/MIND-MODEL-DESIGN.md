@@ -1301,10 +1301,11 @@ does not create promoted/canonical knowledge.
 P60 exposes the Phase-3 runtime evidence baseline to MCP-connected agents
 through `mempal_phase3`. The MCP tool uses `action` values
 `record/list/stats/gate/research_validate_plan`, mirroring the P54-P59 CLI
-surfaces without adding new authority. `record` appends
-`runtime_adoption_events`; `list`, `stats`, `gate`, and
-`research_validate_plan` remain read-only. MCP research validation accepts a
-JSON report object and still does not ingest or promote knowledge.
+surfaces without adding new authority. Later Phase-3 actions extend this same
+bounded MCP surface. `record` appends `runtime_adoption_events`; `list`,
+`stats`, `gate`, and `research_validate_plan` remain read-only. MCP research
+validation accepts a JSON report object and still does not ingest or promote
+knowledge.
 
 P61 adds a read-only runtime adoption recording protocol through
 `mempal_phase3 action=guidance`. The guidance tells agents when to record
@@ -1345,6 +1346,15 @@ track, feature, and signal filtering without schema changes; signal filtering is
 applied after DB retrieval. This gives future default-on specs a compact
 evidence artifact while preserving the Phase-3 boundary: review reports do not
 write events, change gates, or authorize runtime default changes.
+
+P66 adds a read-only card-context default readiness report through
+`mempal phase3 readiness card-context-default` and
+`mempal_phase3 action=readiness` with `candidate=card-context-default`. The
+report reuses P65 review semantics filtered to `track=card_context` and
+`feature=include_cards`, then returns `writes=false`, `ready`, `decision`, the
+embedded review, and reasons. `ready=true` only means the surface is eligible
+for a future default-on spec; it does not change `mempal context` defaults,
+enable `include_cards`, mutate lifecycle state, or create card embeddings.
 
 ## Closing Summary
 

@@ -127,6 +127,172 @@ fn test_cli_phase3_adoption_record_stats_and_gate() {
 }
 
 #[test]
+fn test_cli_phase3_readiness_card_context_default_ready() {
+    let home = setup_cli_home();
+    for i in 0..3 {
+        let id = format!("readiness_accept_{i}");
+        let output = run_mempal(
+            &home,
+            &[
+                "phase3",
+                "adoption",
+                "record",
+                "--id",
+                &id,
+                "--track",
+                "card_context",
+                "--signal",
+                "accepted",
+                "--feature",
+                "include_cards",
+                "--query",
+                "skill trigger context",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "record failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "readiness",
+            "card-context-default",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "readiness failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("readiness json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["ready"], true);
+    assert_eq!(report["decision"], "eligible_for_future_default_spec");
+    assert_eq!(report["review"]["stats"]["accepted"], 3);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert_eq!(events.len(), 3);
+}
+
+#[test]
+fn test_cli_phase3_readiness_card_context_default_blocks_without_evidence() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "readiness",
+            "card-context-default",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "readiness failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("readiness json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["ready"], false);
+    assert_eq!(report["decision"], "keep_opt_in");
+    let reasons = report["reasons"].as_array().expect("reasons");
+    assert!(reasons.iter().any(|reason| {
+        reason
+            .as_str()
+            .expect("reason")
+            .contains("insufficient accepted evidence")
+    }));
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_readiness_card_context_default_blocks_rollback() {
+    let home = setup_cli_home();
+    for (id, signal) in [
+        ("readiness_accept_1", "accepted"),
+        ("readiness_accept_2", "accepted"),
+        ("readiness_accept_3", "accepted"),
+        ("readiness_rollback_1", "rollback"),
+    ] {
+        let output = run_mempal(
+            &home,
+            &[
+                "phase3",
+                "adoption",
+                "record",
+                "--id",
+                id,
+                "--track",
+                "card_context",
+                "--signal",
+                signal,
+                "--feature",
+                "include_cards",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "record failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "readiness",
+            "card-context-default",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "readiness failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("readiness json");
+    assert_eq!(report["ready"], false);
+    assert_eq!(report["decision"], "keep_opt_in");
+    let reasons = report["reasons"].as_array().expect("reasons");
+    assert!(reasons.iter().any(|reason| {
+        reason
+            .as_str()
+            .expect("reason")
+            .contains("rollback evidence")
+    }));
+}
+
+#[test]
+fn test_cli_phase3_readiness_rejects_unknown_candidate() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &["phase3", "readiness", "unknown", "--format", "json"],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported phase3 readiness candidate"));
+}
+
+#[test]
 fn test_cli_phase3_adoption_guidance_json_is_read_only() {
     let home = setup_cli_home();
     let output = run_mempal(

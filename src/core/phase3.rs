@@ -81,6 +81,18 @@ pub struct RuntimeAdoptionReviewReport {
     pub reasons: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Phase3ReadinessReport {
+    pub writes: bool,
+    pub candidate: String,
+    pub ready: bool,
+    pub decision: String,
+    pub required_track: String,
+    pub required_feature: String,
+    pub review: RuntimeAdoptionReviewReport,
+    pub reasons: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeAdoptionRecordPlanInput {
     pub id: Option<String>,
@@ -378,6 +390,53 @@ fn review_conclusion(stats: &RuntimeAdoptionSignalCounts) -> (String, Vec<String
         "mixed".to_string(),
         vec!["evidence is present but not clearly positive".to_string()],
     )
+}
+
+pub fn card_context_default_readiness(events: &[RuntimeAdoptionEvent]) -> Phase3ReadinessReport {
+    let review = review_runtime_adoption_events(
+        events,
+        RuntimeAdoptionReviewFilters {
+            track: Some("card_context".to_string()),
+            feature: Some("include_cards".to_string()),
+            signal: None,
+            limit: 10_000,
+        },
+    );
+    let stats = &review.stats;
+    let mut reasons = Vec::new();
+    if stats.accepted < 3 {
+        reasons.push("insufficient accepted evidence for include_cards default".to_string());
+    }
+    if stats.rollbacks > 0 {
+        reasons.push("rollback evidence blocks card context default readiness".to_string());
+    }
+    if stats.contradictions > 0 {
+        reasons.push("contradiction evidence requires review before defaulting".to_string());
+    }
+    if stats.accepted < stats.rejected + stats.misses {
+        reasons.push("negative evidence outweighs accepted evidence".to_string());
+    }
+
+    let ready = reasons.is_empty();
+    if ready {
+        reasons.push("card context default readiness threshold satisfied".to_string());
+    }
+
+    Phase3ReadinessReport {
+        writes: false,
+        candidate: "card-context-default".to_string(),
+        ready,
+        decision: if ready {
+            "eligible_for_future_default_spec"
+        } else {
+            "keep_opt_in"
+        }
+        .to_string(),
+        required_track: "card_context".to_string(),
+        required_feature: "include_cards".to_string(),
+        review,
+        reasons,
+    }
 }
 
 fn requires_outcome_context(signal: &str) -> bool {
