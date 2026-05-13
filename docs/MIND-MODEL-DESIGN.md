@@ -1439,9 +1439,10 @@ Remaining gaps before full self-evolution:
 
 Future P candidates:
 
-- P71 candidate: self-evolution loop replay, an audit/test scenario that walks
-  from research evidence through distill, promotion gate, context use, and
-  `record_checked`.
+- P71 self-evolution loop replay: implemented as a CLI E2E replay test that
+  walks research -> evidence -> knowledge card -> gate/promote -> context ->
+  checked adoption record. This proves the existing pieces can compose, but it
+  does not add automatic runtime capture.
 - P72 candidate: adoption capture helper around agent tool outcomes, still
   explicit and reviewable, not background instrumentation.
 - P73 candidate: evaluator advisory API contract with replayable outputs and no
