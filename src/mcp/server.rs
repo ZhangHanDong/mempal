@@ -81,6 +81,7 @@ use super::tools::{
 #[derive(Clone)]
 pub struct MempalMcpServer {
     db_path: PathBuf,
+    config: crate::core::config::Config,
     embedder_factory: Arc<dyn EmbedderFactory>,
     tool_router: ToolRouter<Self>,
     /// Captured via `initialize` override so `auto` peek mode can infer the
@@ -90,15 +91,33 @@ pub struct MempalMcpServer {
 
 impl MempalMcpServer {
     pub fn new(db_path: PathBuf, config: crate::core::config::Config) -> Self {
-        Self::new_with_factory(
+        let embedder_factory =
+            Arc::new(crate::embed::ConfiguredEmbedderFactory::new(config.clone()));
+        Self {
             db_path,
-            Arc::new(crate::embed::ConfiguredEmbedderFactory::new(config)),
-        )
+            config,
+            embedder_factory,
+            tool_router: Self::tool_router(),
+            client_name: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub fn new_with_factory(db_path: PathBuf, embedder_factory: Arc<dyn EmbedderFactory>) -> Self {
+        Self::new_with_config_and_factory(
+            db_path,
+            crate::core::config::Config::default(),
+            embedder_factory,
+        )
+    }
+
+    pub fn new_with_config_and_factory(
+        db_path: PathBuf,
+        config: crate::core::config::Config,
+        embedder_factory: Arc<dyn EmbedderFactory>,
+    ) -> Self {
         Self {
             db_path,
+            config,
             embedder_factory,
             tool_router: Self::tool_router(),
             client_name: Arc::new(Mutex::new(None)),
@@ -1020,7 +1039,9 @@ impl MempalMcpServer {
                     .unwrap_or_else(|| anchor::DEFAULT_FIELD.to_string()),
                 cwd,
                 include_evidence: request.include_evidence.unwrap_or(false),
-                include_cards: request.include_cards.unwrap_or(false),
+                include_cards: request
+                    .include_cards
+                    .unwrap_or(self.config.context.include_cards_default),
                 max_items,
                 dao_tian_limit,
             },
@@ -3058,6 +3079,21 @@ mod tests {
         (tempdir, db_path, server)
     }
 
+    fn setup_server_with_config(
+        config: crate::core::config::Config,
+    ) -> (TempDir, PathBuf, MempalMcpServer) {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let db_path = tempdir.path().join("palace.db");
+        let server = MempalMcpServer::new_with_config_and_factory(
+            db_path.clone(),
+            config,
+            Arc::new(StubEmbedderFactory {
+                vector: vec![0.1, 0.2, 0.3],
+            }),
+        );
+        (tempdir, db_path, server)
+    }
+
     fn knowledge_card(
         id: &str,
         tier: KnowledgeTier,
@@ -3621,6 +3657,51 @@ mod tests {
         assert_eq!(
             card.evidence_citations[0].source_file,
             "/tmp/card-evidence.md"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_context_include_cards_omitted_uses_config_default() {
+        let mut config = crate::core::config::Config::default();
+        config.context.include_cards_default = true;
+        let (_tempdir, db_path, server) = setup_server_with_config(config);
+        insert_drawer(
+            &db_path,
+            "drawer_card_default_evidence",
+            "card evidence",
+            "mempal",
+            Some("context"),
+            "/tmp/card-default-evidence.md",
+            2,
+        );
+        let mut card = knowledge_card(
+            "card_context_default",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "general",
+        );
+        card.anchor_id = anchor::LEGACY_REPO_ANCHOR_ID.to_string();
+        insert_knowledge_card(&db_path, card);
+        insert_knowledge_card_link(
+            &db_path,
+            "link_card_context_default_supporting",
+            "card_context_default",
+            "drawer_card_default_evidence",
+            KnowledgeEvidenceRole::Supporting,
+        );
+
+        let response = server
+            .context_json_for_test(serde_json::json!({
+                "query": "card context"
+            }))
+            .await
+            .expect("context should succeed");
+        assert!(
+            response
+                .sections
+                .iter()
+                .flat_map(|section| section.items.iter())
+                .any(|item| item.card_id.as_deref() == Some("card_context_default"))
         );
     }
 

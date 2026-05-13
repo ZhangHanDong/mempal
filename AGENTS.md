@@ -132,6 +132,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p75-self-evolution-completion-audit.spec.md` | 完成 | P75 self-evolution completion audit：审计 P71-P74 后的完整自进化目标，确认 governed substrate 完成但 autonomous runtime 仍有缺口 |
 | `specs/p76-spec-completeness-invariant.spec.md` | 完成 | P76 spec completeness invariant：固化每个 numbered P 必须留下 task spec 与 matching plan 的治理硬规则 |
 | `specs/p77-live-adoption-instrumentation-boundary.spec.md` | 完成 | P77 live adoption instrumentation boundary：`instrumentation-policy` / `instrumentation_policy` 只读暴露 live instrumentation opt-in 边界，禁止 silent/background capture |
+| `specs/p78-card-context-default-runtime-flag.spec.md` | 完成 | P78 card context default runtime flag：`context.include_cards_default` 显式默认开关 + `phase3 default-control card-context` proposal-gated enable / reversible disable |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -214,6 +215,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-13-p75-self-evolution-completion-audit.md` — P75 self-evolution completion audit（已完成）
 - `docs/plans/2026-05-13-p76-spec-completeness-invariant.md` — P76 spec completeness invariant（已完成）
 - `docs/plans/2026-05-13-p77-live-adoption-instrumentation-boundary.md` — P77 live adoption instrumentation boundary（已完成）
+- `docs/plans/2026-05-13-p78-card-context-default-runtime-flag.md` — P78 card context default runtime flag（已完成）
 
 ### Spec 使用方式
 

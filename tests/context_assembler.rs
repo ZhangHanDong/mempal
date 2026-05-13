@@ -254,13 +254,27 @@ fn start_openai_embedding_stub(
 
 fn write_cli_api_config(home: &Path, endpoint: &str) {
     let config_path = home.join(".mempal").join("config.toml");
+    let existing = fs::read_to_string(&config_path).unwrap_or_default();
+    let prefix = if existing.trim().is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", existing.trim_end())
+    };
     fs::write(
         config_path,
         format!(
-            "[embed]\nbackend = \"api\"\napi_endpoint = \"{endpoint}\"\napi_model = \"test-model\"\n"
+            "{prefix}[embed]\nbackend = \"api\"\napi_endpoint = \"{endpoint}\"\napi_model = \"test-model\"\n"
         ),
     )
     .expect("write cli config");
+}
+
+fn write_context_default_config(home: &Path, include_cards_default: bool) {
+    fs::write(
+        home.join(".mempal").join("config.toml"),
+        format!("[context]\ninclude_cards_default = {include_cards_default}\n"),
+    )
+    .expect("write context config");
 }
 
 fn run_context_json(home: &Path, query: &str, extra_args: &[&str]) -> Value {
@@ -759,6 +773,115 @@ fn test_cli_context_include_cards_json() {
         card["evidence_citations"][0]["source_file"],
         "tests://context/drawer_card_evidence"
     );
+}
+
+#[test]
+fn test_cli_context_config_default_false_omits_cards() {
+    let (tmp, db) = setup_cli_home();
+    write_context_default_config(tmp.path(), false);
+    insert_fixture(
+        &db,
+        &evidence_drawer("drawer_card_default_false", "card evidence source"),
+    );
+    insert_card(
+        &db,
+        &knowledge_card(
+            "card_default_false",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Config false keeps card context opt-in.",
+        ),
+    );
+    insert_card_link(
+        &db,
+        "link_card_default_false",
+        "card_default_false",
+        "drawer_card_default_false",
+        KnowledgeEvidenceRole::Supporting,
+    );
+
+    let value = run_context_json(tmp.path(), "card-aware", &[]);
+    let items = value["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .flat_map(|section| section["items"].as_array().expect("items"))
+        .collect::<Vec<_>>();
+    assert!(items.iter().all(|item| item["card_id"].is_null()));
+}
+
+#[test]
+fn test_cli_context_config_default_true_includes_cards() {
+    let (tmp, db) = setup_cli_home();
+    write_context_default_config(tmp.path(), true);
+    insert_fixture(
+        &db,
+        &evidence_drawer("drawer_card_default_true", "card evidence source"),
+    );
+    insert_card(
+        &db,
+        &knowledge_card(
+            "card_default_true",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Config true includes card context by default.",
+        ),
+    );
+    insert_card_link(
+        &db,
+        "link_card_default_true",
+        "card_default_true",
+        "drawer_card_default_true",
+        KnowledgeEvidenceRole::Supporting,
+    );
+
+    let value = run_context_json(tmp.path(), "card-aware", &[]);
+    let items = value["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .flat_map(|section| section["items"].as_array().expect("items"))
+        .collect::<Vec<_>>();
+    assert!(
+        items
+            .iter()
+            .any(|item| item["card_id"] == "card_default_true")
+    );
+}
+
+#[test]
+fn test_cli_context_no_include_cards_overrides_config_default_true() {
+    let (tmp, db) = setup_cli_home();
+    write_context_default_config(tmp.path(), true);
+    insert_fixture(
+        &db,
+        &evidence_drawer("drawer_card_no_override", "card evidence source"),
+    );
+    insert_card(
+        &db,
+        &knowledge_card(
+            "card_no_override",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "No include cards flag overrides config true.",
+        ),
+    );
+    insert_card_link(
+        &db,
+        "link_card_no_override",
+        "card_no_override",
+        "drawer_card_no_override",
+        KnowledgeEvidenceRole::Supporting,
+    );
+
+    let value = run_context_json(tmp.path(), "card-aware", &["--no-include-cards"]);
+    let items = value["sections"]
+        .as_array()
+        .expect("sections")
+        .iter()
+        .flat_map(|section| section["items"].as_array().expect("items"))
+        .collect::<Vec<_>>();
+    assert!(items.iter().all(|item| item["card_id"].is_null()));
 }
 
 #[test]

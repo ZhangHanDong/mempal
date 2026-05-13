@@ -143,6 +143,8 @@ enum Commands {
         include_evidence: bool,
         #[arg(long)]
         include_cards: bool,
+        #[arg(long, conflicts_with = "include_cards")]
+        no_include_cards: bool,
         #[arg(long, default_value_t = 12)]
         max_items: usize,
         #[arg(long = "dao-tian-limit", default_value_t = 1)]
@@ -588,6 +590,17 @@ enum Phase3Commands {
         #[arg(long, default_value = "plain")]
         format: String,
     },
+    DefaultControl {
+        candidate: String,
+        #[arg(long, conflicts_with = "disable")]
+        enable: bool,
+        #[arg(long, conflicts_with = "enable")]
+        disable: bool,
+        #[arg(long = "rollback-criterion")]
+        rollback_criteria: Vec<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     Gate {
         candidate: String,
         #[arg(long, default_value = "plain")]
@@ -969,6 +982,7 @@ async fn run() -> Result<()> {
             format,
             include_evidence,
             include_cards,
+            no_include_cards,
             max_items,
             dao_tian_limit,
         } => {
@@ -983,6 +997,7 @@ async fn run() -> Result<()> {
                     format,
                     include_evidence,
                     include_cards,
+                    no_include_cards,
                     max_items,
                     dao_tian_limit,
                 },
@@ -1039,6 +1054,7 @@ struct ContextCommandArgs {
     format: String,
     include_evidence: bool,
     include_cards: bool,
+    no_include_cards: bool,
     max_items: usize,
     dao_tian_limit: usize,
 }
@@ -1248,6 +1264,11 @@ async fn context_command(db: &Database, config: &Config, args: ContextCommandArg
     };
 
     let embedder = build_embedder(config).await?;
+    let include_cards = if args.no_include_cards {
+        false
+    } else {
+        args.include_cards || config.context.include_cards_default
+    };
     let pack = assemble_context(
         db,
         &*embedder,
@@ -1257,7 +1278,7 @@ async fn context_command(db: &Database, config: &Config, args: ContextCommandArg
             field: args.field,
             cwd,
             include_evidence: args.include_evidence,
-            include_cards: args.include_cards,
+            include_cards,
             max_items: args.max_items,
             dao_tian_limit: args.dao_tian_limit,
         },
@@ -2367,6 +2388,17 @@ async fn phase3_command(db: &Database, config: &Config, command: Phase3Commands)
             let report = phase3_default_proposal(db, &candidate, rollback_criteria)?;
             print_card_context_default_proposal(&report, &format)
         }
+        Phase3Commands::DefaultControl {
+            candidate,
+            enable,
+            disable,
+            rollback_criteria,
+            format,
+        } => {
+            let report =
+                phase3_default_control(db, &candidate, enable, disable, rollback_criteria)?;
+            print_phase3_default_control(&report, &format)
+        }
         Phase3Commands::Gate { candidate, format } => {
             let report = phase3_gate_report(db, &candidate)?;
             print_phase3_gate_report(&report, &format)
@@ -2406,6 +2438,73 @@ fn phase3_default_proposal(
             Ok(card_context_default_proposal(&events, rollback_criteria))
         }
         other => bail!("unsupported phase3 default proposal candidate: {other}"),
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct Phase3DefaultControlReport {
+    writes: bool,
+    candidate: String,
+    requested: String,
+    applied: bool,
+    include_cards_default: bool,
+    proposal: Option<CardContextDefaultProposalReport>,
+    reasons: Vec<String>,
+}
+
+fn phase3_default_control(
+    db: &Database,
+    candidate: &str,
+    enable: bool,
+    disable: bool,
+    rollback_criteria: Vec<String>,
+) -> Result<Phase3DefaultControlReport> {
+    if enable == disable {
+        bail!("exactly one of --enable or --disable is required");
+    }
+    match candidate {
+        "card-context" => {
+            let mut config = Config::load().context("failed to load config")?;
+            if disable {
+                config.context.include_cards_default = false;
+                config.save_default().context("failed to save config")?;
+                return Ok(Phase3DefaultControlReport {
+                    writes: true,
+                    candidate: candidate.to_string(),
+                    requested: "disable".to_string(),
+                    applied: true,
+                    include_cards_default: false,
+                    proposal: None,
+                    reasons: vec!["card context default disabled".to_string()],
+                });
+            }
+
+            let proposal = phase3_default_proposal(db, candidate, rollback_criteria)?;
+            if !proposal.proposal_ready {
+                return Ok(Phase3DefaultControlReport {
+                    writes: false,
+                    candidate: candidate.to_string(),
+                    requested: "enable".to_string(),
+                    applied: false,
+                    include_cards_default: config.context.include_cards_default,
+                    proposal: Some(proposal),
+                    reasons: vec!["default-on proposal is not ready".to_string()],
+                });
+            }
+
+            config.context.include_cards_default = true;
+            config.save_default().context("failed to save config")?;
+            Ok(Phase3DefaultControlReport {
+                writes: true,
+                candidate: candidate.to_string(),
+                requested: "enable".to_string(),
+                applied: true,
+                include_cards_default: true,
+                proposal: Some(proposal),
+                reasons: vec!["card context default enabled".to_string()],
+            })
+        }
+        other => bail!("unsupported phase3 default-control candidate: {other}"),
     }
 }
 
@@ -3515,6 +3614,31 @@ fn print_card_context_default_proposal(
             Ok(())
         }
         other => bail!("unsupported phase3 default proposal format: {other}"),
+    }
+}
+
+fn print_phase3_default_control(report: &Phase3DefaultControlReport, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("candidate={}", report.candidate);
+            println!("requested={}", report.requested);
+            println!("applied={}", report.applied);
+            println!("include_cards_default={}", report.include_cards_default);
+            for reason in &report.reasons {
+                println!("reason={reason}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize phase3 default control report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 default control format: {other}"),
     }
 }
 

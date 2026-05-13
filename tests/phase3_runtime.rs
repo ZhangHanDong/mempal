@@ -181,6 +181,12 @@ fn write_cli_api_config(home: &TempDir, endpoint: &str) {
     .expect("write config");
 }
 
+fn read_include_cards_default(home: &TempDir) -> bool {
+    let config = mempal::core::config::Config::load_from(&home.path().join(".mempal/config.toml"))
+        .expect("load config");
+    config.context.include_cards_default
+}
+
 #[test]
 fn test_runtime_adoption_event_roundtrip_db() {
     let tmp = TempDir::new().expect("tempdir");
@@ -526,6 +532,145 @@ fn test_cli_phase3_default_proposal_rejects_unknown_candidate() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unsupported phase3 default proposal candidate"));
+}
+
+#[test]
+fn test_cli_phase3_default_control_enable_requires_ready_proposal() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-control",
+            "card-context",
+            "--enable",
+            "--rollback-criterion",
+            "disable if rollbacks appear",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "default control failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("control json");
+    assert_eq!(report["applied"], false);
+    assert_eq!(report["include_cards_default"], false);
+    assert!(!read_include_cards_default(&home));
+
+    for i in 0..3 {
+        record_card_context_acceptance(&home, &format!("control_accept_{i}"));
+    }
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-control",
+            "card-context",
+            "--enable",
+            "--rollback-criterion",
+            "disable if rollbacks appear",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "default control enable failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("control json");
+    assert_eq!(report["applied"], true);
+    assert_eq!(report["include_cards_default"], true);
+    assert!(read_include_cards_default(&home));
+}
+
+#[test]
+fn test_cli_phase3_default_control_enable_writes_config_file_output() {
+    let home = setup_cli_home();
+    for i in 0..3 {
+        record_card_context_acceptance(&home, &format!("control_file_accept_{i}"));
+    }
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-control",
+            "card-context",
+            "--enable",
+            "--rollback-criterion",
+            "disable if rollbacks appear",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "default control enable failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let contents =
+        fs::read_to_string(home.path().join(".mempal/config.toml")).expect("read config");
+    assert!(contents.contains("include_cards_default = true"));
+}
+
+#[test]
+fn test_cli_phase3_default_control_rejects_unknown_candidate_without_config_write() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-control",
+            "unknown",
+            "--enable",
+            "--rollback-criterion",
+            "disable if rollbacks appear",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported phase3 default-control candidate"));
+    assert!(!home.path().join(".mempal/config.toml").exists());
+}
+
+#[test]
+fn test_cli_phase3_default_control_disable_is_reversible() {
+    let home = setup_cli_home();
+    fs::write(
+        home.path().join(".mempal/config.toml"),
+        "[context]\ninclude_cards_default = true\n",
+    )
+    .expect("write config");
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "default-control",
+            "card-context",
+            "--disable",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "default control disable failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("control json");
+    assert_eq!(report["applied"], true);
+    assert_eq!(report["include_cards_default"], false);
+    assert!(!read_include_cards_default(&home));
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
 }
 
 #[test]

@@ -2,17 +2,18 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const DEFAULT_DB_PATH: &str = "~/.mempal/palace.db";
 const DEFAULT_EMBED_BACKEND: &str = "model2vec";
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub db_path: String,
     pub embed: EmbedConfig,
+    pub context: ContextConfig,
 }
 
 impl Default for Config {
@@ -20,6 +21,7 @@ impl Default for Config {
         Self {
             db_path: DEFAULT_DB_PATH.to_string(),
             embed: EmbedConfig::default(),
+            context: ContextConfig::default(),
         }
     }
 }
@@ -39,9 +41,27 @@ impl Config {
             }),
         }
     }
+
+    pub fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let contents = toml::to_string_pretty(self)?;
+        fs::write(path, contents).map_err(|source| ConfigError::Write {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
+    pub fn save_default(&self) -> Result<(), ConfigError> {
+        self.save_to(&default_config_path())
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EmbedConfig {
     pub backend: String,
@@ -62,6 +82,12 @@ impl Default for EmbedConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct ContextConfig {
+    pub include_cards_default: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("failed to read config from {path}")]
@@ -70,8 +96,16 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+    #[error("failed to write config to {path}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("failed to parse config TOML")]
     Parse(#[from] toml::de::Error),
+    #[error("failed to serialize config TOML")]
+    Serialize(#[from] toml::ser::Error),
 }
 
 fn default_config_path() -> PathBuf {

@@ -1556,8 +1556,20 @@ degrades behavior.
 
 Updated recommended next P candidates after completing P77:
 
-- P78 card context default-on runtime flag: implement an explicit, reversible
-  default-on switch only after a P74 proposal is ready.
+P78 card context default runtime flag implements the first actual default
+runtime change path for cards. The default remains `false` unless local config
+sets `context.include_cards_default=true`. `mempal context` and `mempal_context`
+use that config only when the request omits explicit card flags; CLI
+`--include-cards` still opts in, CLI `--no-include-cards` opts out, and MCP
+`include_cards` overrides config when supplied. The only supported write path is
+`mempal phase3 default-control card-context`: enabling requires the P74
+proposal-ready conditions, including sufficient `card_context/include_cards`
+runtime adoption evidence and rollback criteria; disabling is always allowed
+and writes the flag back to false. The command writes local config only and does
+not append runtime adoption events, change schema, or alter search defaults.
+
+Updated recommended next P candidates after completing P78:
+
 - P79 rollback executor contract: turn rollback criteria into a testable policy
   action that can revert a default/runtime policy change.
 - P80 autonomous promotion boundary audit: decide whether autonomous promotion is
