@@ -316,6 +316,140 @@ fn test_cli_phase3_adoption_prepare_record_rejects_invalid_track() {
 }
 
 #[test]
+fn test_cli_phase3_adoption_check_record_json_accepts_supported_event() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "check-record",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "include_cards",
+            "--query",
+            "skill trigger",
+            "--card-id",
+            "card_1",
+            "--note",
+            "card evidence helped",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "check-record failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("quality report json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["quality"], "ready");
+    assert!(report["errors"].as_array().expect("errors").is_empty());
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_adoption_check_record_json_warns_on_weak_evidence() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "check-record",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "include_cards",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "check-record failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("quality report json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["quality"], "warning");
+    let warnings = report["warnings"].as_array().expect("warnings");
+    assert!(warnings.iter().any(|warning| {
+        warning
+            .as_str()
+            .expect("warning")
+            .contains("concrete outcome context")
+    }));
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.as_str().expect("warning").contains("card_id"))
+    );
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_adoption_check_record_rejects_empty_feature() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "check-record",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--feature",
+            "   ",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "check-record should report invalid input without failing: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("quality report json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["valid"], false);
+    assert_eq!(report["quality"], "invalid");
+    let errors = report["errors"].as_array().expect("errors");
+    assert!(errors.iter().any(|error| {
+        error
+            .as_str()
+            .expect("error")
+            .contains("feature must not be empty")
+    }));
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
 fn test_cli_phase3_gate_blocks_card_embeddings_without_miss_evidence() {
     let home = setup_cli_home();
     let gate = run_mempal(

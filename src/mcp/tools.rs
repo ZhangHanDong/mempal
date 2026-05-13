@@ -1,7 +1,7 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::phase3::{
-    RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionSignalGuidance,
-    RuntimeAdoptionTrackGuidance,
+    RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordQualityReport,
+    RuntimeAdoptionSignalGuidance, RuntimeAdoptionTrackGuidance,
 };
 use crate::core::types::{
     AnchorKind, ChunkNeighbors, KnowledgeCard, KnowledgeCardEvent, KnowledgeStatus, KnowledgeTier,
@@ -335,6 +335,8 @@ pub struct Phase3Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record_plan: Option<RuntimeAdoptionRecordPlanDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_quality: Option<RuntimeAdoptionRecordQualityDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<RuntimeAdoptionEventDto>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub events: Vec<RuntimeAdoptionEventDto>,
@@ -376,12 +378,33 @@ pub struct RuntimeAdoptionRecordPlanDto {
     pub record_payload: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionRecordQualityDto {
+    pub writes: bool,
+    pub valid: bool,
+    pub quality: String,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 impl From<RuntimeAdoptionRecordPlan> for RuntimeAdoptionRecordPlanDto {
     fn from(plan: RuntimeAdoptionRecordPlan) -> Self {
         Self {
             writes: plan.writes,
             record_command: plan.record_command,
             record_payload: plan.record_payload,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionRecordQualityReport> for RuntimeAdoptionRecordQualityDto {
+    fn from(report: RuntimeAdoptionRecordQualityReport) -> Self {
+        Self {
+            writes: report.writes,
+            valid: report.valid,
+            quality: report.quality,
+            errors: report.errors,
+            warnings: report.warnings,
         }
     }
 }

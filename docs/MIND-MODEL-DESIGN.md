@@ -1327,6 +1327,16 @@ candidate record inputs, then returns the equivalent CLI `record` command and
 MCP `record` payload with `writes=false`. It does not generate event ids unless
 the caller supplied one, and it does not append runtime adoption events.
 
+P64 adds a read-only record quality policy through
+`mempal phase3 adoption check-record` and
+`mempal_phase3 action=check_record`. The policy evaluates candidate runtime
+adoption event quality before writing and returns `writes=false`, `valid`,
+`quality`, `errors`, and `warnings`. It treats empty `feature` as an error,
+warns when outcome-bearing signals lack concrete note/query context, and warns
+when track-specific references such as `card_id`, `evaluator_id`, or
+`research_report_id` are missing. This remains advisory only: it does not append
+events and does not block the lower-level `record` command.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

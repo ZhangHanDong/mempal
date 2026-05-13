@@ -31,6 +31,15 @@ pub struct RuntimeAdoptionRecordPlan {
     pub record_payload: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeAdoptionRecordQualityReport {
+    pub writes: bool,
+    pub valid: bool,
+    pub quality: String,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeAdoptionRecordPlanInput {
     pub id: Option<String>,
@@ -188,6 +197,69 @@ pub fn prepare_runtime_adoption_record(
         record_command: command,
         record_payload: Value::Object(payload),
     }
+}
+
+pub fn check_runtime_adoption_record(
+    input: &RuntimeAdoptionRecordPlanInput,
+) -> RuntimeAdoptionRecordQualityReport {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    if is_blank(&input.feature) {
+        errors.push("feature must not be empty".to_string());
+    }
+
+    if requires_outcome_context(&input.signal)
+        && input.query.as_deref().is_none_or(is_blank)
+        && input.note.as_deref().is_none_or(is_blank)
+    {
+        warnings.push(
+            "missing concrete outcome context: provide note or query for this signal".to_string(),
+        );
+    }
+
+    match input.track.as_str() {
+        "card_context" | "card_embedding" if input.card_id.as_deref().is_none_or(is_blank) => {
+            warnings.push("missing card_id for card-related adoption evidence".to_string());
+        }
+        "evaluator" if input.evaluator_id.as_deref().is_none_or(is_blank) => {
+            warnings.push("missing evaluator_id for evaluator adoption evidence".to_string());
+        }
+        "research_adapter" if input.research_report_id.as_deref().is_none_or(is_blank) => {
+            warnings.push(
+                "missing research_report_id for research adapter adoption evidence".to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    let quality = if !errors.is_empty() {
+        "invalid"
+    } else if !warnings.is_empty() {
+        "warning"
+    } else {
+        "ready"
+    }
+    .to_string();
+
+    RuntimeAdoptionRecordQualityReport {
+        writes: false,
+        valid: errors.is_empty(),
+        quality,
+        errors,
+        warnings,
+    }
+}
+
+fn requires_outcome_context(signal: &str) -> bool {
+    matches!(
+        signal,
+        "accepted" | "rejected" | "miss" | "rollback" | "contradiction"
+    )
+}
+
+fn is_blank(value: &str) -> bool {
+    value.trim().is_empty()
 }
 
 fn push_command_arg(command: &mut Vec<String>, name: &str, value: &str) {

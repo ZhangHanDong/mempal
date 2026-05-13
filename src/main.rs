@@ -17,6 +17,7 @@ use mempal::core::{
     db::Database,
     phase3::{
         RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
+        RuntimeAdoptionRecordQualityReport, check_runtime_adoption_record,
         prepare_runtime_adoption_record, runtime_adoption_guidance,
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
@@ -585,6 +586,32 @@ enum Phase3AdoptionCommands {
         format: String,
     },
     PrepareRecord {
+        #[arg(long)]
+        track: String,
+        #[arg(long)]
+        signal: String,
+        #[arg(long)]
+        feature: String,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long = "context-hash")]
+        context_hash: Option<String>,
+        #[arg(long = "card-id")]
+        card_id: Option<String>,
+        #[arg(long = "evaluator-id")]
+        evaluator_id: Option<String>,
+        #[arg(long = "research-report-id")]
+        research_report_id: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "metadata-json")]
+        metadata_json: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    CheckRecord {
         #[arg(long)]
         track: String,
         #[arg(long)]
@@ -2253,6 +2280,43 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             });
             print_runtime_adoption_record_plan(&plan, &format)
         }
+        Phase3AdoptionCommands::CheckRecord {
+            track,
+            signal,
+            feature,
+            query,
+            context_hash,
+            card_id,
+            evaluator_id,
+            research_report_id,
+            note,
+            metadata_json,
+            id,
+            format,
+        } => {
+            let track = parse_runtime_adoption_track(&track)?;
+            let signal = parse_runtime_adoption_signal(&signal)?;
+            let metadata = metadata_json
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .context("failed to parse --metadata-json")?;
+            let input = RuntimeAdoptionRecordPlanInput {
+                id,
+                track: runtime_adoption_track_slug(&track).to_string(),
+                signal: runtime_adoption_signal_slug(&signal).to_string(),
+                feature,
+                query,
+                context_hash,
+                card_id,
+                evaluator_id,
+                research_report_id,
+                note,
+                metadata,
+            };
+            let report = check_runtime_adoption_record(&input);
+            print_runtime_adoption_record_quality(&report, &format)
+        }
         Phase3AdoptionCommands::Record {
             track,
             signal,
@@ -2363,6 +2427,35 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let stats = RuntimeAdoptionStats::from_events(&events);
             print_runtime_adoption_stats(&stats, &format)
         }
+    }
+}
+
+fn print_runtime_adoption_record_quality(
+    report: &RuntimeAdoptionRecordQualityReport,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("valid={}", report.valid);
+            println!("quality={}", report.quality);
+            for error in &report.errors {
+                println!("error={error}");
+            }
+            for warning in &report.warnings {
+                println!("warning={warning}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize runtime adoption record quality report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
     }
 }
 
