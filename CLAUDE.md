@@ -111,6 +111,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p64-runtime-adoption-record-quality-policy.spec.md` | 完成 | P64 runtime adoption record quality policy：`check-record` / `check_record` 只读检查 record 质量 |
 | `specs/p65-runtime-adoption-review-report.spec.md` | 完成 | P65 runtime adoption review report：`review` 只读汇总 adoption evidence |
 | `specs/p66-card-context-default-readiness.spec.md` | 完成 | P66 card context default readiness：`readiness` 只读判断 `include_cards` 是否具备未来默认开启资格 |
+| `specs/p67-research-adapter-ingest.spec.md` | 完成 | P67 research adapter evidence ingest：`research-ingest-plan` 显式把 research findings 写入 evidence，candidate insights 仅作为 distill 建议 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -182,6 +183,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-13-p64-runtime-adoption-record-quality-policy.md` — P64 runtime adoption record quality policy（已完成）
 - `docs/plans/2026-05-13-p65-runtime-adoption-review-report.md` — P65 runtime adoption review report（已完成）
 - `docs/plans/2026-05-13-p66-card-context-default-readiness.md` — P66 card context default readiness（已完成）
+- `docs/plans/2026-05-13-p67-research-adapter-ingest.md` — P67 research adapter evidence ingest（已完成）
 
 ### Spec 使用方式
 

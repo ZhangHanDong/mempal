@@ -1356,6 +1356,16 @@ embedded review, and reasons. `ready=true` only means the surface is eligible
 for a future default-on spec; it does not change `mempal context` defaults,
 enable `include_cards`, mutate lifecycle state, or create card embeddings.
 
+P67 adds explicit evidence-first research ingestion through
+`mempal phase3 research-ingest-plan`. The command accepts the same P59 report
+contract and defaults to dry-run with `writes=false`. With `--execute`, it
+writes one `memory_kind=evidence` drawer per finding using
+`provenance=research`, stable drawer ids, and idempotent skip-on-existing
+behavior. `candidate_insights` are surfaced only as `mempal knowledge distill`
+suggestions backed by the planned evidence refs; P67 does not create knowledge
+drawers, promote research output, add a schema migration, or expose MCP write
+access.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

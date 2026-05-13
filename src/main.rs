@@ -13,6 +13,7 @@ use mempal::aaak::{AaakCodec, AaakMeta};
 use mempal::api::{ApiState, DEFAULT_REST_ADDR, serve as serve_rest_api};
 use mempal::context::{ContextPack, ContextRequest, assemble_context};
 use mempal::core::{
+    anchor,
     config::Config,
     db::Database,
     phase3::{
@@ -24,17 +25,22 @@ use mempal::core::{
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
-        AnchorKind, KnowledgeCard, KnowledgeCardEvent, KnowledgeCardFilter, KnowledgeEventType,
-        KnowledgeEvidenceLink, KnowledgeEvidenceRole, KnowledgeStatus, KnowledgeTier, MemoryDomain,
-        MemoryKind, RuntimeAdoptionEvent, RuntimeAdoptionFilter, RuntimeAdoptionSignal,
-        RuntimeAdoptionTrack, TaxonomyEntry, TriggerHints, TunnelEndpoint,
+        AnchorKind, BootstrapIdentityParts, Drawer, KnowledgeCard, KnowledgeCardEvent,
+        KnowledgeCardFilter, KnowledgeEventType, KnowledgeEvidenceLink, KnowledgeEvidenceRole,
+        KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, RuntimeAdoptionEvent,
+        RuntimeAdoptionFilter, RuntimeAdoptionSignal, RuntimeAdoptionTrack, SourceType,
+        TaxonomyEntry, TriggerHints, TunnelEndpoint,
     },
-    utils::{build_triple_id, current_timestamp, format_tunnel_endpoint},
+    utils::{
+        build_bootstrap_drawer_id_from_parts, build_triple_id, current_timestamp,
+        format_tunnel_endpoint,
+    },
 };
 use mempal::embed::{ConfiguredEmbedderFactory, Embedder};
 use mempal::field_taxonomy::{FieldTaxonomyEntry, field_taxonomy};
 use mempal::ingest::{
     IngestOptions, IngestStats, ingest_dir_with_options, ingest_file_with_options,
+    normalize::CURRENT_NORMALIZE_VERSION,
     reindex::{ReindexMode, ReindexOptions, ReindexReport, reindex_sources},
 };
 use mempal::knowledge_anchor::{PublishAnchorRequest, publish_anchor};
@@ -583,6 +589,13 @@ enum Phase3Commands {
         #[arg(long, default_value = "plain")]
         format: String,
     },
+    ResearchIngestPlan {
+        path: PathBuf,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -891,7 +904,7 @@ async fn run() -> Result<()> {
         Commands::Kg { command } => kg_command(&db, command),
         Commands::Knowledge { command } => knowledge_command(&db, &config, command).await,
         Commands::KnowledgeCard { command } => knowledge_card_command(&db, &config, command).await,
-        Commands::Phase3 { command } => phase3_command(&db, command),
+        Commands::Phase3 { command } => phase3_command(&db, &config, command).await,
         Commands::Tunnels { command } => tunnels_command(&db, command),
         Commands::Taxonomy { command } => taxonomy_command(&db, command),
         Commands::FieldTaxonomy { format } => field_taxonomy_command(&format),
@@ -2244,7 +2257,7 @@ async fn knowledge_card_command(
     Ok(())
 }
 
-fn phase3_command(db: &Database, command: Phase3Commands) -> Result<()> {
+async fn phase3_command(db: &Database, config: &Config, command: Phase3Commands) -> Result<()> {
     match command {
         Phase3Commands::Adoption { command } => phase3_adoption_command(db, command),
         Phase3Commands::Gate { candidate, format } => {
@@ -2259,6 +2272,11 @@ fn phase3_command(db: &Database, command: Phase3Commands) -> Result<()> {
             let report = validate_research_adapter_plan(&path)?;
             print_research_adapter_plan(&report, &format)
         }
+        Phase3Commands::ResearchIngestPlan {
+            path,
+            execute,
+            format,
+        } => research_ingest_plan_command(db, config, &path, execute, &format).await,
     }
 }
 
@@ -2740,6 +2758,41 @@ struct ResearchAdapterPlanReport {
     errors: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct ResearchEvidenceDrawerPlan {
+    drawer_id: String,
+    finding_index: usize,
+    source_file: String,
+    created: bool,
+    skipped: bool,
+    #[serde(skip)]
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ResearchCandidateInsightPlan {
+    statement: String,
+    supporting_refs: Vec<String>,
+    suggested_command: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResearchIngestPlanReport {
+    valid: bool,
+    writes: bool,
+    report_id: String,
+    title: String,
+    source_count: usize,
+    finding_count: usize,
+    candidate_insight_count: usize,
+    planned_evidence_count: usize,
+    created_count: usize,
+    skipped_count: usize,
+    errors: Vec<String>,
+    evidence_drawers: Vec<ResearchEvidenceDrawerPlan>,
+    candidate_insights: Vec<ResearchCandidateInsightPlan>,
+}
+
 fn validate_research_adapter_plan(path: &Path) -> Result<ResearchAdapterPlanReport> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read research report {}", path.display()))?;
@@ -2775,6 +2828,305 @@ fn validate_research_adapter_plan(path: &Path) -> Result<ResearchAdapterPlanRepo
         candidate_insight_count: candidate_insights,
         errors,
     })
+}
+
+async fn research_ingest_plan_command(
+    db: &Database,
+    config: &Config,
+    path: &Path,
+    execute: bool,
+    format: &str,
+) -> Result<()> {
+    let mut report = build_research_ingest_plan(path)?;
+    if report.valid && execute {
+        let existing = report
+            .evidence_drawers
+            .iter()
+            .filter_map(|plan| {
+                db.get_drawer(&plan.drawer_id)
+                    .ok()
+                    .flatten()
+                    .map(|_| plan.drawer_id.clone())
+            })
+            .collect::<BTreeSet<_>>();
+        let pending = report
+            .evidence_drawers
+            .iter()
+            .enumerate()
+            .filter(|(_, plan)| !existing.contains(&plan.drawer_id))
+            .map(|(index, plan)| (index, plan.drawer_id.clone(), plan.content.clone()))
+            .collect::<Vec<_>>();
+
+        let mut created_indices = BTreeSet::new();
+        if !pending.is_empty() {
+            let embedder = build_embedder(config).await?;
+            let content_refs = pending
+                .iter()
+                .map(|(_, _, content)| content.as_str())
+                .collect::<Vec<_>>();
+            let vectors = embedder
+                .embed(&content_refs)
+                .await
+                .context("failed to embed research evidence drawers")?;
+
+            for ((index, drawer_id, content), vector) in pending.into_iter().zip(vectors) {
+                let source_file = report.evidence_drawers[index].source_file.clone();
+                let drawer = research_evidence_drawer(
+                    drawer_id.clone(),
+                    content,
+                    source_file,
+                    report.report_id.as_str(),
+                    index,
+                );
+                db.insert_drawer(&drawer).with_context(|| {
+                    format!("failed to insert research evidence drawer {drawer_id}")
+                })?;
+                db.insert_vector(&drawer_id, &vector)
+                    .with_context(|| format!("failed to insert vector for {drawer_id}"))?;
+                created_indices.insert(index);
+            }
+        }
+
+        for (index, plan) in report.evidence_drawers.iter_mut().enumerate() {
+            plan.created = created_indices.contains(&index);
+            plan.skipped = existing.contains(&plan.drawer_id);
+        }
+        report.created_count = report
+            .evidence_drawers
+            .iter()
+            .filter(|plan| plan.created)
+            .count();
+        report.skipped_count = report
+            .evidence_drawers
+            .iter()
+            .filter(|plan| plan.skipped)
+            .count();
+        report.writes = report.created_count > 0;
+    }
+    print_research_ingest_plan(&report, format)
+}
+
+fn build_research_ingest_plan(path: &Path) -> Result<ResearchIngestPlanReport> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read research report {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&raw)
+        .with_context(|| format!("failed to parse research report {}", path.display()))?;
+    let mut errors = Vec::new();
+    let report_id = required_string(&value, "report_id", &mut errors);
+    let title = required_string(&value, "title", &mut errors);
+    let source_count = value
+        .get("sources")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    if source_count == 0 {
+        errors.push("sources must contain at least one item".to_string());
+    }
+    let findings = value
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if findings.is_empty() {
+        errors.push("findings must contain at least one item".to_string());
+    }
+    let candidate_values = value
+        .get("candidate_insights")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let evidence_drawers = findings
+        .iter()
+        .enumerate()
+        .map(|(index, finding)| {
+            let content = research_evidence_content_from_value(
+                report_id.as_str(),
+                title.as_str(),
+                value.get("sources"),
+                finding,
+                index,
+            )?;
+            let drawer_id = research_evidence_drawer_id(&content);
+            Ok(ResearchEvidenceDrawerPlan {
+                drawer_id,
+                finding_index: index,
+                source_file: format!("research://{}#finding-{index}", report_id),
+                created: false,
+                skipped: false,
+                content,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let supporting_refs = evidence_drawers
+        .iter()
+        .map(|plan| plan.drawer_id.clone())
+        .collect::<Vec<_>>();
+    let candidate_insights = candidate_values
+        .iter()
+        .filter_map(|candidate| candidate_statement(candidate).map(str::to_string))
+        .map(|statement| ResearchCandidateInsightPlan {
+            suggested_command: research_distill_command(&statement, &supporting_refs),
+            statement,
+            supporting_refs: supporting_refs.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(ResearchIngestPlanReport {
+        valid: errors.is_empty(),
+        writes: false,
+        report_id,
+        title,
+        source_count,
+        finding_count: findings.len(),
+        candidate_insight_count: candidate_values.len(),
+        planned_evidence_count: evidence_drawers.len(),
+        created_count: 0,
+        skipped_count: 0,
+        errors,
+        evidence_drawers,
+        candidate_insights,
+    })
+}
+
+fn research_evidence_content_from_value(
+    report_id: &str,
+    title: &str,
+    sources: Option<&serde_json::Value>,
+    finding: &serde_json::Value,
+    finding_index: usize,
+) -> Result<String> {
+    let summary = finding_summary(finding)?;
+    let sources = sources
+        .map(serde_json::to_string_pretty)
+        .transpose()
+        .context("failed to serialize research sources")?
+        .unwrap_or_else(|| "[]".to_string());
+    let raw_finding =
+        serde_json::to_string_pretty(finding).context("failed to serialize research finding")?;
+    Ok(format!(
+        "# Research finding: {title}\n\nreport_id: {report_id}\nfinding_index: {finding_index}\n\nsummary: {summary}\n\nsources:\n```json\n{sources}\n```\n\nraw_finding:\n```json\n{raw_finding}\n```\n"
+    ))
+}
+
+fn finding_summary(finding: &serde_json::Value) -> Result<String> {
+    if let Some(raw) = finding.as_str() {
+        return Ok(raw.trim().to_string());
+    }
+    for field in ["summary", "statement", "content", "text"] {
+        if let Some(raw) = finding.get(field).and_then(serde_json::Value::as_str)
+            && !raw.trim().is_empty()
+        {
+            return Ok(raw.trim().to_string());
+        }
+    }
+    serde_json::to_string(finding).context("failed to serialize research finding summary")
+}
+
+fn candidate_statement(candidate: &serde_json::Value) -> Option<&str> {
+    if let Some(raw) = candidate.as_str()
+        && !raw.trim().is_empty()
+    {
+        return Some(raw.trim());
+    }
+    for field in ["statement", "summary", "content", "text"] {
+        if let Some(raw) = candidate.get(field).and_then(serde_json::Value::as_str)
+            && !raw.trim().is_empty()
+        {
+            return Some(raw.trim());
+        }
+    }
+    None
+}
+
+fn research_evidence_drawer_id(content: &str) -> String {
+    let memory_kind = MemoryKind::Evidence;
+    let domain = MemoryDomain::Project;
+    let anchor_kind = AnchorKind::Repo;
+    let provenance = Provenance::Research;
+    let empty_refs: &[String] = &[];
+    build_bootstrap_drawer_id_from_parts(
+        "mempal",
+        Some("research"),
+        content,
+        BootstrapIdentityParts {
+            memory_kind: &memory_kind,
+            domain: &domain,
+            field: "research",
+            anchor_kind: &anchor_kind,
+            anchor_id: anchor::LEGACY_REPO_ANCHOR_ID,
+            parent_anchor_id: None,
+            provenance: Some(&provenance),
+            statement: None,
+            tier: None,
+            status: None,
+            supporting_refs: empty_refs,
+            counterexample_refs: empty_refs,
+            teaching_refs: empty_refs,
+            verification_refs: empty_refs,
+            scope_constraints: None,
+            trigger_hints: None,
+        },
+    )
+}
+
+fn research_evidence_drawer(
+    drawer_id: String,
+    content: String,
+    source_file: String,
+    report_id: &str,
+    finding_index: usize,
+) -> Drawer {
+    Drawer {
+        id: drawer_id,
+        content,
+        wing: "mempal".to_string(),
+        room: Some("research".to_string()),
+        source_file: Some(source_file),
+        source_type: SourceType::Project,
+        added_at: current_timestamp(),
+        chunk_index: Some(finding_index as i64),
+        normalize_version: CURRENT_NORMALIZE_VERSION,
+        importance: 3,
+        memory_kind: MemoryKind::Evidence,
+        domain: MemoryDomain::Project,
+        field: "research".to_string(),
+        anchor_kind: AnchorKind::Repo,
+        anchor_id: anchor::LEGACY_REPO_ANCHOR_ID.to_string(),
+        parent_anchor_id: None,
+        provenance: Some(Provenance::Research),
+        statement: Some(format!(
+            "Research finding from {report_id} #{finding_index}"
+        )),
+        tier: None,
+        status: None,
+        supporting_refs: Vec::new(),
+        counterexample_refs: Vec::new(),
+        teaching_refs: Vec::new(),
+        verification_refs: Vec::new(),
+        scope_constraints: None,
+        trigger_hints: None,
+    }
+}
+
+fn research_distill_command(statement: &str, supporting_refs: &[String]) -> Vec<String> {
+    let mut command = vec![
+        "mempal".to_string(),
+        "knowledge".to_string(),
+        "distill".to_string(),
+        "--tier".to_string(),
+        "qi".to_string(),
+        "--statement".to_string(),
+        statement.to_string(),
+        "--content".to_string(),
+        statement.to_string(),
+        "--field".to_string(),
+        "research".to_string(),
+    ];
+    for supporting_ref in supporting_refs {
+        command.push("--supporting-ref".to_string());
+        command.push(supporting_ref.clone());
+    }
+    command
 }
 
 fn required_string(
@@ -2930,6 +3282,40 @@ fn print_research_adapter_plan(report: &ResearchAdapterPlanReport, format: &str)
             Ok(())
         }
         other => bail!("unsupported research adapter plan format: {other}"),
+    }
+}
+
+fn print_research_ingest_plan(report: &ResearchIngestPlanReport, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("valid={}", report.valid);
+            println!("writes={}", report.writes);
+            println!("report_id={}", report.report_id);
+            println!("title={}", report.title);
+            println!("planned_evidence_count={}", report.planned_evidence_count);
+            println!("created_count={}", report.created_count);
+            println!("skipped_count={}", report.skipped_count);
+            println!("candidate_insight_count={}", report.candidate_insight_count);
+            for error in &report.errors {
+                println!("error={error}");
+            }
+            for drawer in &report.evidence_drawers {
+                println!(
+                    "drawer={} finding_index={} created={} skipped={}",
+                    drawer.drawer_id, drawer.finding_index, drawer.created, drawer.skipped
+                );
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize research ingest plan")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 research ingest format: {other}"),
     }
 }
 

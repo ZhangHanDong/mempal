@@ -3,7 +3,8 @@ use std::process::Command;
 
 use mempal::core::db::Database;
 use mempal::core::types::{
-    RuntimeAdoptionEvent, RuntimeAdoptionFilter, RuntimeAdoptionSignal, RuntimeAdoptionTrack,
+    MemoryKind, Provenance, RuntimeAdoptionEvent, RuntimeAdoptionFilter, RuntimeAdoptionSignal,
+    RuntimeAdoptionTrack,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -883,4 +884,213 @@ fn test_cli_phase3_research_validate_plan_reports_missing_fields() {
     assert!(stdout.contains("valid=false"));
     assert!(stdout.contains("error=report_id is required"));
     assert!(stdout.contains("error=sources must contain at least one item"));
+}
+
+#[test]
+fn test_cli_phase3_research_ingest_plan_dry_run_json_no_write() {
+    let home = setup_cli_home();
+    let report_path = home.path().join("research-report.json");
+    fs::write(
+        &report_path,
+        json!({
+            "report_id": "research_p67_001",
+            "title": "Agent self-evolution research",
+            "sources": [{"id": "src_1", "url": "https://example.invalid/research"}],
+            "findings": [{"summary": "Research findings must enter memory as evidence first."}],
+            "candidate_insights": [{"statement": "Research output should be distilled only from evidence refs."}]
+        })
+        .to_string(),
+    )
+    .expect("write report");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "research-ingest-plan",
+            report_path.to_str().expect("report path"),
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "research-ingest-plan failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("ingest plan json");
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["planned_evidence_count"], 1);
+    assert_eq!(report["candidate_insight_count"], 1);
+    assert_eq!(
+        report["evidence_drawers"]
+            .as_array()
+            .expect("drawers")
+            .len(),
+        1
+    );
+    assert_eq!(
+        report["candidate_insights"]
+            .as_array()
+            .expect("insights")
+            .len(),
+        1
+    );
+    assert_eq!(
+        report["candidate_insights"][0]["suggested_command"][0],
+        "mempal"
+    );
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert_eq!(db.top_drawers(10).expect("drawers").len(), 0);
+}
+
+#[test]
+fn test_cli_phase3_research_ingest_plan_execute_writes_research_evidence() {
+    let home = setup_cli_home();
+    let report_path = home.path().join("research-report.json");
+    fs::write(
+        &report_path,
+        json!({
+            "report_id": "research_p67_002",
+            "title": "Research adapter evidence",
+            "sources": [{"id": "src_1", "url": "https://example.invalid/a"}],
+            "findings": [
+                {"summary": "First finding becomes research evidence."},
+                {"summary": "Second finding becomes research evidence."}
+            ],
+            "candidate_insights": []
+        })
+        .to_string(),
+    )
+    .expect("write report");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "research-ingest-plan",
+            report_path.to_str().expect("report path"),
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "research-ingest-plan execute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("ingest plan json");
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["writes"], true);
+    assert_eq!(report["created_count"], 2);
+    assert_eq!(report["skipped_count"], 0);
+    let drawers = report["evidence_drawers"].as_array().expect("drawers");
+    assert_eq!(drawers.len(), 2);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert_eq!(db.top_drawers(10).expect("drawers").len(), 2);
+    for drawer in drawers {
+        let drawer_id = drawer["drawer_id"].as_str().expect("drawer id");
+        let stored = db
+            .get_drawer(drawer_id)
+            .expect("load drawer")
+            .expect("drawer exists");
+        assert_eq!(stored.memory_kind, MemoryKind::Evidence);
+        assert_eq!(stored.provenance, Some(Provenance::Research));
+        assert!(stored.tier.is_none());
+        assert!(stored.status.is_none());
+    }
+
+    let second = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "research-ingest-plan",
+            report_path.to_str().expect("report path"),
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        second.status.success(),
+        "second execute failed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second_report: Value = serde_json::from_slice(&second.stdout).expect("second json");
+    assert_eq!(second_report["created_count"], 0);
+    assert_eq!(second_report["skipped_count"], 2);
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert_eq!(db.top_drawers(10).expect("drawers").len(), 2);
+}
+
+#[test]
+fn test_cli_phase3_research_ingest_plan_invalid_report_no_write() {
+    let home = setup_cli_home();
+    let report_path = home.path().join("bad-research-report.json");
+    fs::write(&report_path, "{}").expect("write bad report");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "research-ingest-plan",
+            report_path.to_str().expect("report path"),
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "invalid ingest plan should report invalid input without failing: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("invalid json");
+    assert_eq!(report["valid"], false);
+    assert_eq!(report["writes"], false);
+    assert!(
+        report["errors"]
+            .as_array()
+            .expect("errors")
+            .iter()
+            .any(|error| error.as_str().expect("error") == "report_id is required")
+    );
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert_eq!(db.top_drawers(10).expect("drawers").len(), 0);
+}
+
+#[test]
+fn test_cli_phase3_research_ingest_plan_rejects_invalid_format() {
+    let home = setup_cli_home();
+    let report_path = home.path().join("research-report.json");
+    fs::write(
+        &report_path,
+        json!({
+            "report_id": "research_p67_003",
+            "title": "Research adapter evidence",
+            "sources": [{"url": "https://example.invalid/a"}],
+            "findings": [{"summary": "Finding."}]
+        })
+        .to_string(),
+    )
+    .expect("write report");
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "research-ingest-plan",
+            report_path.to_str().expect("report path"),
+            "--format",
+            "yaml",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported phase3 research ingest format"));
 }
