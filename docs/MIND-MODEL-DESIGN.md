@@ -1383,6 +1383,72 @@ explicitly set, and `quality=invalid` records are always blocked. This reduces
 low-signal self-evolution evidence without adding hooks, background
 instrumentation, schema changes, or new authority for Phase-3 gates.
 
+P70 self-evolution completion audit records the current state against the
+larger objective: a complete self-evolving agent system. Complete
+self-evolving agent system deliverables are:
+
+- evidence substrate: the system can store cited raw evidence and runtime
+  adoption outcomes without losing provenance
+- knowledge governance: evidence can be distilled into governed knowledge and
+  moved through lifecycle gates
+- runtime retrieval: agents can request context/search/card/research guidance
+  without changing defaults implicitly
+- research bridge: external research output can enter as evidence and candidate
+  insight suggestions, not as direct dao
+- feedback loop: runtime use, acceptance, rejection, misses, rollbacks, and
+  contradictions can be recorded and reviewed
+- policy hardening path: stronger defaults require evidence, readiness checks,
+  rollback criteria, and a new P-level spec
+
+Prompt-to-artifact checklist:
+
+- Evidence substrate -> P54 runtime_adoption_events plus P0-P13 raw drawer
+  storage and cited search provide durable evidence records.
+- Knowledge governance -> P12-P28 implement typed `dao_tian` / `dao_ren` /
+  `shu` / `qi` drawers, context assembly, policy surfaces, distill, gate,
+  promote, demote, and anchor publication.
+- Knowledge cards -> P31-P45 implement Phase-2 card schema, core API, CLI,
+  MCP read/lifecycle/retrieval, backfill, and explicit card-aware context.
+- Research ingestion -> P49/P59/P67/P68 preserve evidence-first research
+  boundaries: validate report, plan evidence refs, write research evidence only
+  through explicit CLI `--execute`, and expose MCP dry-run planning.
+- Runtime adoption -> P54-P69 implement event storage, CLI/MCP record/list/stats,
+  guidance, prepare/check helpers, review, readiness, and quality-gated
+  `record_checked` writes.
+- Default hardening -> P56/P57/P58/P66 define read-only gates and readiness
+  reports for card context, card embeddings, evaluator APIs, and
+  card-context-default eligibility.
+
+P70 conclusion: not complete. P12-P69 establish a governed self-evolution
+substrate, but they do not yet prove a complete self-evolving agent system.
+Remaining gaps before full self-evolution:
+
+- no automatic or semi-automatic adoption capture around actual agent tool
+  execution; evidence still depends on explicit CLI/MCP calls
+- no end-to-end replay that demonstrates research -> evidence -> distill ->
+  gated promotion -> runtime context -> checked adoption record in one audited
+  scenario
+- no evaluator advisory API with replayable output contracts; P50/P58 only keep
+  evaluators advisory and gated
+- no default-on card context or card embeddings; P66 readiness only reports
+  eligibility for a future default-on spec
+- no autonomous promotion authority; lifecycle changes still require deterministic
+  gates, evidence refs, and human/reviewer boundaries
+- no rollback executor for default/runtime policy changes; rollback criteria are
+  policy requirements, not an automated runtime mechanism
+
+Future P candidates:
+
+- P71 candidate: self-evolution loop replay, an audit/test scenario that walks
+  from research evidence through distill, promotion gate, context use, and
+  `record_checked`.
+- P72 candidate: adoption capture helper around agent tool outcomes, still
+  explicit and reviewable, not background instrumentation.
+- P73 candidate: evaluator advisory API contract with replayable outputs and no
+  lifecycle authority.
+- P74 candidate: card-context default-on proposal gated by accumulated P66
+  readiness evidence plus rollback criteria.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

@@ -116,6 +116,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p67-research-adapter-ingest.spec.md` | 完成 | P67 research adapter evidence ingest：`research-ingest-plan` 显式把 research findings 写入 evidence，candidate insights 仅作为 distill 建议 |
 | `specs/p68-mcp-research-ingest-plan.spec.md` | 完成 | P68 MCP research ingest plan：`mempal_phase3 action=research_ingest_plan` 只读预览 evidence refs + distill 建议 |
 | `specs/p69-runtime-adoption-checked-record.spec.md` | 完成 | P69 runtime adoption checked record：`record-checked` / `record_checked` 质量门控写入 runtime adoption evidence |
+| `specs/p70-self-evolution-completion-audit.spec.md` | 完成 | P70 self-evolution completion audit：审计完整自进化 agent 系统目标，明确已完成能力与剩余缺口 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -190,6 +191,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-13-p67-research-adapter-ingest.md` — P67 research adapter evidence ingest（已完成）
 - `docs/plans/2026-05-13-p68-mcp-research-ingest-plan.md` — P68 MCP research ingest plan（已完成）
 - `docs/plans/2026-05-13-p69-runtime-adoption-checked-record.md` — P69 runtime adoption checked record（已完成）
+- `docs/plans/2026-05-13-p70-self-evolution-completion-audit.md` — P70 self-evolution completion audit（已完成）
 
 ### Spec 使用方式
 
