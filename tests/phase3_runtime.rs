@@ -450,6 +450,156 @@ fn test_cli_phase3_adoption_check_record_rejects_empty_feature() {
 }
 
 #[test]
+fn test_cli_phase3_adoption_review_json_summarizes_events() {
+    let home = setup_cli_home();
+    for (id, signal) in [
+        ("review_accept_1", "accepted"),
+        ("review_accept_2", "accepted"),
+        ("review_reject_1", "rejected"),
+    ] {
+        let output = run_mempal(
+            &home,
+            &[
+                "phase3",
+                "adoption",
+                "record",
+                "--id",
+                id,
+                "--track",
+                "card_context",
+                "--signal",
+                signal,
+                "--feature",
+                "include_cards",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "record failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "review",
+            "--track",
+            "card_context",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "review failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("review json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["total"], 3);
+    assert_eq!(report["stats"]["accepted"], 2);
+    assert_eq!(report["stats"]["rejected"], 1);
+    assert_eq!(report["features"][0]["feature"], "include_cards");
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert_eq!(events.len(), 3);
+}
+
+#[test]
+fn test_cli_phase3_adoption_review_json_filters_signal() {
+    let home = setup_cli_home();
+    for (id, signal) in [
+        ("review_accept_1", "accepted"),
+        ("review_accept_2", "accepted"),
+        ("review_reject_1", "rejected"),
+    ] {
+        let output = run_mempal(
+            &home,
+            &[
+                "phase3",
+                "adoption",
+                "record",
+                "--id",
+                id,
+                "--track",
+                "card_context",
+                "--signal",
+                signal,
+                "--feature",
+                "include_cards",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "record failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "review",
+            "--track",
+            "card_context",
+            "--signal",
+            "accepted",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "review failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("review json");
+    assert_eq!(report["total"], 2);
+    assert_eq!(report["stats"]["accepted"], 2);
+    assert_eq!(report["stats"]["rejected"], 0);
+}
+
+#[test]
+fn test_cli_phase3_adoption_review_json_no_evidence_read_only() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "review",
+            "--track",
+            "evaluator",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "review failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("review json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["total"], 0);
+    assert_eq!(report["conclusion"], "no_evidence");
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
 fn test_cli_phase3_gate_blocks_card_embeddings_without_miss_evidence() {
     let home = setup_cli_home();
     let gate = run_mempal(

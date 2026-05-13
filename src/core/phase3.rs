@@ -1,5 +1,9 @@
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 use serde_json::{Map, Value};
+
+use super::types::{RuntimeAdoptionEvent, RuntimeAdoptionSignal};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeAdoptionGuidance {
@@ -38,6 +42,43 @@ pub struct RuntimeAdoptionRecordQualityReport {
     pub quality: String,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeAdoptionReviewFilters {
+    pub track: Option<String>,
+    pub feature: Option<String>,
+    pub signal: Option<String>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct RuntimeAdoptionSignalCounts {
+    pub total: usize,
+    pub used: usize,
+    pub accepted: usize,
+    pub rejected: usize,
+    pub misses: usize,
+    pub rollbacks: usize,
+    pub contradictions: usize,
+    pub neutral: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeAdoptionFeatureReview {
+    pub feature: String,
+    pub stats: RuntimeAdoptionSignalCounts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeAdoptionReviewReport {
+    pub writes: bool,
+    pub filters: RuntimeAdoptionReviewFilters,
+    pub total: usize,
+    pub stats: RuntimeAdoptionSignalCounts,
+    pub features: Vec<RuntimeAdoptionFeatureReview>,
+    pub conclusion: String,
+    pub reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -251,6 +292,94 @@ pub fn check_runtime_adoption_record(
     }
 }
 
+pub fn review_runtime_adoption_events(
+    events: &[RuntimeAdoptionEvent],
+    filters: RuntimeAdoptionReviewFilters,
+) -> RuntimeAdoptionReviewReport {
+    let filtered_events = events
+        .iter()
+        .filter(|event| {
+            filters
+                .signal
+                .as_deref()
+                .is_none_or(|signal| runtime_adoption_signal_slug(&event.signal) == signal)
+        })
+        .collect::<Vec<_>>();
+
+    let stats = RuntimeAdoptionSignalCounts::from_events(filtered_events.iter().copied());
+    let mut by_feature = BTreeMap::<String, Vec<&RuntimeAdoptionEvent>>::new();
+    for event in &filtered_events {
+        by_feature
+            .entry(event.feature.clone())
+            .or_default()
+            .push(event);
+    }
+    let features = by_feature
+        .into_iter()
+        .map(|(feature, events)| RuntimeAdoptionFeatureReview {
+            feature,
+            stats: RuntimeAdoptionSignalCounts::from_events(events),
+        })
+        .collect::<Vec<_>>();
+
+    let (conclusion, reasons) = review_conclusion(&stats);
+
+    RuntimeAdoptionReviewReport {
+        writes: false,
+        filters,
+        total: stats.total,
+        stats,
+        features,
+        conclusion,
+        reasons,
+    }
+}
+
+impl RuntimeAdoptionSignalCounts {
+    fn from_events<'a>(events: impl IntoIterator<Item = &'a RuntimeAdoptionEvent>) -> Self {
+        let mut stats = Self::default();
+        for event in events {
+            stats.total += 1;
+            match event.signal {
+                RuntimeAdoptionSignal::Used => stats.used += 1,
+                RuntimeAdoptionSignal::Accepted => stats.accepted += 1,
+                RuntimeAdoptionSignal::Rejected => stats.rejected += 1,
+                RuntimeAdoptionSignal::Miss => stats.misses += 1,
+                RuntimeAdoptionSignal::Rollback => stats.rollbacks += 1,
+                RuntimeAdoptionSignal::Contradiction => stats.contradictions += 1,
+                RuntimeAdoptionSignal::Neutral => stats.neutral += 1,
+            }
+        }
+        stats
+    }
+}
+
+fn review_conclusion(stats: &RuntimeAdoptionSignalCounts) -> (String, Vec<String>) {
+    if stats.total == 0 {
+        return (
+            "no_evidence".to_string(),
+            vec!["no runtime adoption events match the requested filters".to_string()],
+        );
+    }
+    if stats.rollbacks > 0 {
+        return (
+            "rollback_risk".to_string(),
+            vec!["rollback evidence exists for this adoption surface".to_string()],
+        );
+    }
+    if stats.accepted > 0 && stats.accepted >= stats.rejected + stats.misses + stats.contradictions
+    {
+        return (
+            "positive".to_string(),
+            vec!["accepted evidence is at least as strong as negative evidence".to_string()],
+        );
+    }
+    (
+        "mixed".to_string(),
+        vec!["evidence is present but not clearly positive".to_string()],
+    )
+}
+
 fn requires_outcome_context(signal: &str) -> bool {
     matches!(
         signal,
@@ -260,6 +389,18 @@ fn requires_outcome_context(signal: &str) -> bool {
 
 fn is_blank(value: &str) -> bool {
     value.trim().is_empty()
+}
+
+fn runtime_adoption_signal_slug(signal: &RuntimeAdoptionSignal) -> &'static str {
+    match signal {
+        RuntimeAdoptionSignal::Used => "used",
+        RuntimeAdoptionSignal::Accepted => "accepted",
+        RuntimeAdoptionSignal::Rejected => "rejected",
+        RuntimeAdoptionSignal::Miss => "miss",
+        RuntimeAdoptionSignal::Rollback => "rollback",
+        RuntimeAdoptionSignal::Contradiction => "contradiction",
+        RuntimeAdoptionSignal::Neutral => "neutral",
+    }
 }
 
 fn push_command_arg(command: &mut Vec<String>, name: &str, value: &str) {

@@ -1337,6 +1337,15 @@ when track-specific references such as `card_id`, `evaluator_id`, or
 `research_report_id` are missing. This remains advisory only: it does not append
 events and does not block the lower-level `record` command.
 
+P65 adds a read-only runtime adoption review report through
+`mempal phase3 adoption review` and `mempal_phase3 action=review`. The report
+summarizes accumulated adoption evidence with applied filters, aggregate signal
+counts, per-feature counts, an advisory conclusion, and reasons. It supports
+track, feature, and signal filtering without schema changes; signal filtering is
+applied after DB retrieval. This gives future default-on specs a compact
+evidence artifact while preserving the Phase-3 boundary: review reports do not
+write events, change gates, or authorize runtime default changes.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

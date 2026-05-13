@@ -17,8 +17,9 @@ use mempal::core::{
     db::Database,
     phase3::{
         RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
-        RuntimeAdoptionRecordQualityReport, check_runtime_adoption_record,
-        prepare_runtime_adoption_record, runtime_adoption_guidance,
+        RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
+        RuntimeAdoptionReviewReport, check_runtime_adoption_record,
+        prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
@@ -634,6 +635,18 @@ enum Phase3AdoptionCommands {
         metadata_json: Option<String>,
         #[arg(long)]
         id: Option<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Review {
+        #[arg(long)]
+        track: Option<String>,
+        #[arg(long)]
+        feature: Option<String>,
+        #[arg(long)]
+        signal: Option<String>,
+        #[arg(long, default_value_t = 10_000)]
+        limit: usize,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -2317,6 +2330,47 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let report = check_runtime_adoption_record(&input);
             print_runtime_adoption_record_quality(&report, &format)
         }
+        Phase3AdoptionCommands::Review {
+            track,
+            feature,
+            signal,
+            limit,
+            format,
+        } => {
+            let track = track
+                .as_deref()
+                .map(parse_runtime_adoption_track)
+                .transpose()?;
+            let signal = signal
+                .as_deref()
+                .map(parse_runtime_adoption_signal)
+                .transpose()?;
+            let events = db
+                .list_runtime_adoption_events(
+                    &RuntimeAdoptionFilter {
+                        track: track.clone(),
+                        feature: feature.clone(),
+                    },
+                    limit,
+                )
+                .context("failed to list runtime adoption events")?;
+            let report = review_runtime_adoption_events(
+                &events,
+                RuntimeAdoptionReviewFilters {
+                    track: track
+                        .as_ref()
+                        .map(runtime_adoption_track_slug)
+                        .map(str::to_string),
+                    feature,
+                    signal: signal
+                        .as_ref()
+                        .map(runtime_adoption_signal_slug)
+                        .map(str::to_string),
+                    limit,
+                },
+            );
+            print_runtime_adoption_review(&report, &format)
+        }
         Phase3AdoptionCommands::Record {
             track,
             signal,
@@ -2427,6 +2481,40 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let stats = RuntimeAdoptionStats::from_events(&events);
             print_runtime_adoption_stats(&stats, &format)
         }
+    }
+}
+
+fn print_runtime_adoption_review(report: &RuntimeAdoptionReviewReport, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("total={}", report.total);
+            println!("conclusion={}", report.conclusion);
+            for reason in &report.reasons {
+                println!("reason={reason}");
+            }
+            for feature in &report.features {
+                println!(
+                    "feature={} total={} accepted={} rejected={} misses={} rollbacks={}",
+                    feature.feature,
+                    feature.stats.total,
+                    feature.stats.accepted,
+                    feature.stats.rejected,
+                    feature.stats.misses,
+                    feature.stats.rollbacks
+                );
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize runtime adoption review report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
     }
 }
 

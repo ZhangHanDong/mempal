@@ -1,6 +1,7 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::phase3::{
     RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordQualityReport,
+    RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport, RuntimeAdoptionSignalCounts,
     RuntimeAdoptionSignalGuidance, RuntimeAdoptionTrackGuidance,
 };
 use crate::core::types::{
@@ -337,6 +338,8 @@ pub struct Phase3Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record_quality: Option<RuntimeAdoptionRecordQualityDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_report: Option<RuntimeAdoptionReviewReportDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub event: Option<RuntimeAdoptionEventDto>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub events: Vec<RuntimeAdoptionEventDto>,
@@ -387,6 +390,43 @@ pub struct RuntimeAdoptionRecordQualityDto {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionReviewReportDto {
+    pub writes: bool,
+    pub filters: RuntimeAdoptionReviewFiltersDto,
+    pub total: usize,
+    pub stats: RuntimeAdoptionSignalCountsDto,
+    pub features: Vec<RuntimeAdoptionFeatureReviewDto>,
+    pub conclusion: String,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionReviewFiltersDto {
+    pub track: Option<String>,
+    pub feature: Option<String>,
+    pub signal: Option<String>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionSignalCountsDto {
+    pub total: usize,
+    pub used: usize,
+    pub accepted: usize,
+    pub rejected: usize,
+    pub misses: usize,
+    pub rollbacks: usize,
+    pub contradictions: usize,
+    pub neutral: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionFeatureReviewDto {
+    pub feature: String,
+    pub stats: RuntimeAdoptionSignalCountsDto,
+}
+
 impl From<RuntimeAdoptionRecordPlan> for RuntimeAdoptionRecordPlanDto {
     fn from(plan: RuntimeAdoptionRecordPlan) -> Self {
         Self {
@@ -405,6 +445,53 @@ impl From<RuntimeAdoptionRecordQualityReport> for RuntimeAdoptionRecordQualityDt
             quality: report.quality,
             errors: report.errors,
             warnings: report.warnings,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionReviewReport> for RuntimeAdoptionReviewReportDto {
+    fn from(report: RuntimeAdoptionReviewReport) -> Self {
+        Self {
+            writes: report.writes,
+            filters: report.filters.into(),
+            total: report.total,
+            stats: report.stats.into(),
+            features: report
+                .features
+                .into_iter()
+                .map(|feature| RuntimeAdoptionFeatureReviewDto {
+                    feature: feature.feature,
+                    stats: feature.stats.into(),
+                })
+                .collect(),
+            conclusion: report.conclusion,
+            reasons: report.reasons,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionReviewFilters> for RuntimeAdoptionReviewFiltersDto {
+    fn from(filters: RuntimeAdoptionReviewFilters) -> Self {
+        Self {
+            track: filters.track,
+            feature: filters.feature,
+            signal: filters.signal,
+            limit: filters.limit,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionSignalCounts> for RuntimeAdoptionSignalCountsDto {
+    fn from(stats: RuntimeAdoptionSignalCounts) -> Self {
+        Self {
+            total: stats.total,
+            used: stats.used,
+            accepted: stats.accepted,
+            rejected: stats.rejected,
+            misses: stats.misses,
+            rollbacks: stats.rollbacks,
+            contradictions: stats.contradictions,
+            neutral: stats.neutral,
         }
     }
 }

@@ -174,7 +174,7 @@ fn start_openai_embedding_stub(
     let expected_query = expected_query.to_string();
 
     let handle = thread::spawn(move || {
-        let (mut stream, _) = (0..50)
+        let (mut stream, _) = (0..250)
             .find_map(|_| match listener.accept() {
                 Ok(pair) => Some(pair),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
