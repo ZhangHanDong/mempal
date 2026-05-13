@@ -3,7 +3,14 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use super::types::{RuntimeAdoptionEvent, RuntimeAdoptionSignal};
+use super::{
+    anchor,
+    types::{
+        AnchorKind, BootstrapIdentityParts, MemoryDomain, MemoryKind, Provenance,
+        RuntimeAdoptionEvent, RuntimeAdoptionSignal,
+    },
+    utils::build_bootstrap_drawer_id_from_parts,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeAdoptionGuidance {
@@ -91,6 +98,41 @@ pub struct Phase3ReadinessReport {
     pub required_feature: String,
     pub review: RuntimeAdoptionReviewReport,
     pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResearchEvidenceDrawerPlan {
+    pub drawer_id: String,
+    pub finding_index: usize,
+    pub source_file: String,
+    pub created: bool,
+    pub skipped: bool,
+    #[serde(skip)]
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResearchCandidateInsightPlan {
+    pub statement: String,
+    pub supporting_refs: Vec<String>,
+    pub suggested_command: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ResearchIngestPlanReport {
+    pub valid: bool,
+    pub writes: bool,
+    pub report_id: String,
+    pub title: String,
+    pub source_count: usize,
+    pub finding_count: usize,
+    pub candidate_insight_count: usize,
+    pub planned_evidence_count: usize,
+    pub created_count: usize,
+    pub skipped_count: usize,
+    pub errors: Vec<String>,
+    pub evidence_drawers: Vec<ResearchEvidenceDrawerPlan>,
+    pub candidate_insights: Vec<ResearchCandidateInsightPlan>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -186,7 +228,10 @@ pub fn runtime_adoption_guidance() -> RuntimeAdoptionGuidance {
                 track: "research_adapter".to_string(),
                 when: "external research report validation or ingestion planning affected behavior"
                     .to_string(),
-                feature_examples: vec!["research_validate_plan".to_string()],
+                feature_examples: vec![
+                    "research_validate_plan".to_string(),
+                    "research_ingest_plan".to_string(),
+                ],
             },
         ],
     }
@@ -436,6 +481,192 @@ pub fn card_context_default_readiness(events: &[RuntimeAdoptionEvent]) -> Phase3
         required_feature: "include_cards".to_string(),
         review,
         reasons,
+    }
+}
+
+pub fn build_research_ingest_plan_from_value(value: &Value) -> ResearchIngestPlanReport {
+    let mut errors = Vec::new();
+    let report_id = required_json_string(value, "report_id", &mut errors);
+    let title = required_json_string(value, "title", &mut errors);
+    let source_count = value
+        .get("sources")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if source_count == 0 {
+        errors.push("sources must contain at least one item".to_string());
+    }
+    let findings = value
+        .get("findings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if findings.is_empty() {
+        errors.push("findings must contain at least one item".to_string());
+    }
+    let candidate_values = value
+        .get("candidate_insights")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let evidence_drawers = findings
+        .iter()
+        .enumerate()
+        .map(|(index, finding)| {
+            let content = research_evidence_content_from_value(
+                report_id.as_str(),
+                title.as_str(),
+                value.get("sources"),
+                finding,
+                index,
+            );
+            let drawer_id = research_evidence_drawer_id(&content);
+            ResearchEvidenceDrawerPlan {
+                drawer_id,
+                finding_index: index,
+                source_file: format!("research://{}#finding-{index}", report_id),
+                created: false,
+                skipped: false,
+                content,
+            }
+        })
+        .collect::<Vec<_>>();
+    let supporting_refs = evidence_drawers
+        .iter()
+        .map(|plan| plan.drawer_id.clone())
+        .collect::<Vec<_>>();
+    let candidate_insights = candidate_values
+        .iter()
+        .filter_map(|candidate| candidate_statement(candidate).map(str::to_string))
+        .map(|statement| ResearchCandidateInsightPlan {
+            suggested_command: research_distill_command(&statement, &supporting_refs),
+            statement,
+            supporting_refs: supporting_refs.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    ResearchIngestPlanReport {
+        valid: errors.is_empty(),
+        writes: false,
+        report_id,
+        title,
+        source_count,
+        finding_count: findings.len(),
+        candidate_insight_count: candidate_values.len(),
+        planned_evidence_count: evidence_drawers.len(),
+        created_count: 0,
+        skipped_count: 0,
+        errors,
+        evidence_drawers,
+        candidate_insights,
+    }
+}
+
+fn research_evidence_content_from_value(
+    report_id: &str,
+    title: &str,
+    sources: Option<&Value>,
+    finding: &Value,
+    finding_index: usize,
+) -> String {
+    let summary = finding_summary(finding);
+    let sources = sources
+        .map(|value| serde_json::to_string_pretty(value).unwrap_or_else(|_| "[]".to_string()))
+        .unwrap_or_else(|| "[]".to_string());
+    let raw_finding = serde_json::to_string_pretty(finding).unwrap_or_else(|_| finding.to_string());
+    format!(
+        "# Research finding: {title}\n\nreport_id: {report_id}\nfinding_index: {finding_index}\n\nsummary: {summary}\n\nsources:\n```json\n{sources}\n```\n\nraw_finding:\n```json\n{raw_finding}\n```\n"
+    )
+}
+
+fn finding_summary(finding: &Value) -> String {
+    if let Some(raw) = finding.as_str() {
+        return raw.trim().to_string();
+    }
+    for field in ["summary", "statement", "content", "text"] {
+        if let Some(raw) = finding.get(field).and_then(Value::as_str)
+            && !raw.trim().is_empty()
+        {
+            return raw.trim().to_string();
+        }
+    }
+    serde_json::to_string(finding).unwrap_or_else(|_| finding.to_string())
+}
+
+fn candidate_statement(candidate: &Value) -> Option<&str> {
+    if let Some(raw) = candidate.as_str()
+        && !raw.trim().is_empty()
+    {
+        return Some(raw.trim());
+    }
+    for field in ["statement", "summary", "content", "text"] {
+        if let Some(raw) = candidate.get(field).and_then(Value::as_str)
+            && !raw.trim().is_empty()
+        {
+            return Some(raw.trim());
+        }
+    }
+    None
+}
+
+fn research_evidence_drawer_id(content: &str) -> String {
+    let memory_kind = MemoryKind::Evidence;
+    let domain = MemoryDomain::Project;
+    let anchor_kind = AnchorKind::Repo;
+    let provenance = Provenance::Research;
+    let empty_refs: &[String] = &[];
+    build_bootstrap_drawer_id_from_parts(
+        "mempal",
+        Some("research"),
+        content,
+        BootstrapIdentityParts {
+            memory_kind: &memory_kind,
+            domain: &domain,
+            field: "research",
+            anchor_kind: &anchor_kind,
+            anchor_id: anchor::LEGACY_REPO_ANCHOR_ID,
+            parent_anchor_id: None,
+            provenance: Some(&provenance),
+            statement: None,
+            tier: None,
+            status: None,
+            supporting_refs: empty_refs,
+            counterexample_refs: empty_refs,
+            teaching_refs: empty_refs,
+            verification_refs: empty_refs,
+            scope_constraints: None,
+            trigger_hints: None,
+        },
+    )
+}
+
+fn research_distill_command(statement: &str, supporting_refs: &[String]) -> Vec<String> {
+    let mut command = vec![
+        "mempal".to_string(),
+        "knowledge".to_string(),
+        "distill".to_string(),
+        "--tier".to_string(),
+        "qi".to_string(),
+        "--statement".to_string(),
+        statement.to_string(),
+        "--content".to_string(),
+        statement.to_string(),
+        "--field".to_string(),
+        "research".to_string(),
+    ];
+    for supporting_ref in supporting_refs {
+        push_command_arg(&mut command, "--supporting-ref", supporting_ref);
+    }
+    command
+}
+
+fn required_json_string(value: &Value, field: &'static str, errors: &mut Vec<String>) -> String {
+    match value.get(field).and_then(Value::as_str) {
+        Some(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => {
+            errors.push(format!("{field} is required"));
+            String::new()
+        }
     }
 }
 

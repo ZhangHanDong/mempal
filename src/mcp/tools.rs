@@ -1,6 +1,7 @@
 use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::phase3::{
-    Phase3ReadinessReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
+    Phase3ReadinessReport, ResearchCandidateInsightPlan, ResearchEvidenceDrawerPlan,
+    ResearchIngestPlanReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
     RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport,
     RuntimeAdoptionSignalCounts, RuntimeAdoptionSignalGuidance, RuntimeAdoptionTrackGuidance,
 };
@@ -351,6 +352,8 @@ pub struct Phase3Response {
     pub gate: Option<Phase3GateDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub research_plan: Option<ResearchAdapterPlanDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub research_ingest_plan: Option<ResearchIngestPlanDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -603,6 +606,89 @@ pub struct ResearchAdapterPlanDto {
     pub finding_count: usize,
     pub candidate_insight_count: usize,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ResearchIngestPlanDto {
+    pub valid: bool,
+    pub writes: bool,
+    pub report_id: String,
+    pub title: String,
+    pub source_count: usize,
+    pub finding_count: usize,
+    pub candidate_insight_count: usize,
+    pub planned_evidence_count: usize,
+    pub created_count: usize,
+    pub skipped_count: usize,
+    pub errors: Vec<String>,
+    pub evidence_drawers: Vec<ResearchEvidenceDrawerPlanDto>,
+    pub candidate_insights: Vec<ResearchCandidateInsightPlanDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ResearchEvidenceDrawerPlanDto {
+    pub drawer_id: String,
+    pub finding_index: usize,
+    pub source_file: String,
+    pub created: bool,
+    pub skipped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ResearchCandidateInsightPlanDto {
+    pub statement: String,
+    pub supporting_refs: Vec<String>,
+    pub suggested_command: Vec<String>,
+}
+
+impl From<ResearchIngestPlanReport> for ResearchIngestPlanDto {
+    fn from(report: ResearchIngestPlanReport) -> Self {
+        Self {
+            valid: report.valid,
+            writes: report.writes,
+            report_id: report.report_id,
+            title: report.title,
+            source_count: report.source_count,
+            finding_count: report.finding_count,
+            candidate_insight_count: report.candidate_insight_count,
+            planned_evidence_count: report.planned_evidence_count,
+            created_count: report.created_count,
+            skipped_count: report.skipped_count,
+            errors: report.errors,
+            evidence_drawers: report
+                .evidence_drawers
+                .into_iter()
+                .map(ResearchEvidenceDrawerPlanDto::from)
+                .collect(),
+            candidate_insights: report
+                .candidate_insights
+                .into_iter()
+                .map(ResearchCandidateInsightPlanDto::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<ResearchEvidenceDrawerPlan> for ResearchEvidenceDrawerPlanDto {
+    fn from(plan: ResearchEvidenceDrawerPlan) -> Self {
+        Self {
+            drawer_id: plan.drawer_id,
+            finding_index: plan.finding_index,
+            source_file: plan.source_file,
+            created: plan.created,
+            skipped: plan.skipped,
+        }
+    }
+}
+
+impl From<ResearchCandidateInsightPlan> for ResearchCandidateInsightPlanDto {
+    fn from(plan: ResearchCandidateInsightPlan) -> Self {
+        Self {
+            statement: plan.statement,
+            supporting_refs: plan.supporting_refs,
+            suggested_command: plan.suggested_command,
+        }
+    }
 }
 
 impl From<RuntimeAdoptionEvent> for RuntimeAdoptionEventDto {

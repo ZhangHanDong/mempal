@@ -17,24 +17,22 @@ use mempal::core::{
     config::Config,
     db::Database,
     phase3::{
-        Phase3ReadinessReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
-        RuntimeAdoptionRecordPlanInput, RuntimeAdoptionRecordQualityReport,
-        RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport, card_context_default_readiness,
-        check_runtime_adoption_record, prepare_runtime_adoption_record,
-        review_runtime_adoption_events, runtime_adoption_guidance,
+        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionGuidance,
+        RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
+        RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
+        RuntimeAdoptionReviewReport, build_research_ingest_plan_from_value,
+        card_context_default_readiness, check_runtime_adoption_record,
+        prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
-        AnchorKind, BootstrapIdentityParts, Drawer, KnowledgeCard, KnowledgeCardEvent,
-        KnowledgeCardFilter, KnowledgeEventType, KnowledgeEvidenceLink, KnowledgeEvidenceRole,
-        KnowledgeStatus, KnowledgeTier, MemoryDomain, MemoryKind, Provenance, RuntimeAdoptionEvent,
+        AnchorKind, Drawer, KnowledgeCard, KnowledgeCardEvent, KnowledgeCardFilter,
+        KnowledgeEventType, KnowledgeEvidenceLink, KnowledgeEvidenceRole, KnowledgeStatus,
+        KnowledgeTier, MemoryDomain, MemoryKind, Provenance, RuntimeAdoptionEvent,
         RuntimeAdoptionFilter, RuntimeAdoptionSignal, RuntimeAdoptionTrack, SourceType,
         TaxonomyEntry, TriggerHints, TunnelEndpoint,
     },
-    utils::{
-        build_bootstrap_drawer_id_from_parts, build_triple_id, current_timestamp,
-        format_tunnel_endpoint,
-    },
+    utils::{build_triple_id, current_timestamp, format_tunnel_endpoint},
 };
 use mempal::embed::{ConfiguredEmbedderFactory, Embedder};
 use mempal::field_taxonomy::{FieldTaxonomyEntry, field_taxonomy};
@@ -2758,41 +2756,6 @@ struct ResearchAdapterPlanReport {
     errors: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-struct ResearchEvidenceDrawerPlan {
-    drawer_id: String,
-    finding_index: usize,
-    source_file: String,
-    created: bool,
-    skipped: bool,
-    #[serde(skip)]
-    content: String,
-}
-
-#[derive(Debug, Serialize)]
-struct ResearchCandidateInsightPlan {
-    statement: String,
-    supporting_refs: Vec<String>,
-    suggested_command: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ResearchIngestPlanReport {
-    valid: bool,
-    writes: bool,
-    report_id: String,
-    title: String,
-    source_count: usize,
-    finding_count: usize,
-    candidate_insight_count: usize,
-    planned_evidence_count: usize,
-    created_count: usize,
-    skipped_count: usize,
-    errors: Vec<String>,
-    evidence_drawers: Vec<ResearchEvidenceDrawerPlan>,
-    candidate_insights: Vec<ResearchCandidateInsightPlan>,
-}
-
 fn validate_research_adapter_plan(path: &Path) -> Result<ResearchAdapterPlanReport> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read research report {}", path.display()))?;
@@ -2911,162 +2874,7 @@ fn build_research_ingest_plan(path: &Path) -> Result<ResearchIngestPlanReport> {
         .with_context(|| format!("failed to read research report {}", path.display()))?;
     let value: serde_json::Value = serde_json::from_str(&raw)
         .with_context(|| format!("failed to parse research report {}", path.display()))?;
-    let mut errors = Vec::new();
-    let report_id = required_string(&value, "report_id", &mut errors);
-    let title = required_string(&value, "title", &mut errors);
-    let source_count = value
-        .get("sources")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
-    if source_count == 0 {
-        errors.push("sources must contain at least one item".to_string());
-    }
-    let findings = value
-        .get("findings")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if findings.is_empty() {
-        errors.push("findings must contain at least one item".to_string());
-    }
-    let candidate_values = value
-        .get("candidate_insights")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    let evidence_drawers = findings
-        .iter()
-        .enumerate()
-        .map(|(index, finding)| {
-            let content = research_evidence_content_from_value(
-                report_id.as_str(),
-                title.as_str(),
-                value.get("sources"),
-                finding,
-                index,
-            )?;
-            let drawer_id = research_evidence_drawer_id(&content);
-            Ok(ResearchEvidenceDrawerPlan {
-                drawer_id,
-                finding_index: index,
-                source_file: format!("research://{}#finding-{index}", report_id),
-                created: false,
-                skipped: false,
-                content,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let supporting_refs = evidence_drawers
-        .iter()
-        .map(|plan| plan.drawer_id.clone())
-        .collect::<Vec<_>>();
-    let candidate_insights = candidate_values
-        .iter()
-        .filter_map(|candidate| candidate_statement(candidate).map(str::to_string))
-        .map(|statement| ResearchCandidateInsightPlan {
-            suggested_command: research_distill_command(&statement, &supporting_refs),
-            statement,
-            supporting_refs: supporting_refs.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    Ok(ResearchIngestPlanReport {
-        valid: errors.is_empty(),
-        writes: false,
-        report_id,
-        title,
-        source_count,
-        finding_count: findings.len(),
-        candidate_insight_count: candidate_values.len(),
-        planned_evidence_count: evidence_drawers.len(),
-        created_count: 0,
-        skipped_count: 0,
-        errors,
-        evidence_drawers,
-        candidate_insights,
-    })
-}
-
-fn research_evidence_content_from_value(
-    report_id: &str,
-    title: &str,
-    sources: Option<&serde_json::Value>,
-    finding: &serde_json::Value,
-    finding_index: usize,
-) -> Result<String> {
-    let summary = finding_summary(finding)?;
-    let sources = sources
-        .map(serde_json::to_string_pretty)
-        .transpose()
-        .context("failed to serialize research sources")?
-        .unwrap_or_else(|| "[]".to_string());
-    let raw_finding =
-        serde_json::to_string_pretty(finding).context("failed to serialize research finding")?;
-    Ok(format!(
-        "# Research finding: {title}\n\nreport_id: {report_id}\nfinding_index: {finding_index}\n\nsummary: {summary}\n\nsources:\n```json\n{sources}\n```\n\nraw_finding:\n```json\n{raw_finding}\n```\n"
-    ))
-}
-
-fn finding_summary(finding: &serde_json::Value) -> Result<String> {
-    if let Some(raw) = finding.as_str() {
-        return Ok(raw.trim().to_string());
-    }
-    for field in ["summary", "statement", "content", "text"] {
-        if let Some(raw) = finding.get(field).and_then(serde_json::Value::as_str)
-            && !raw.trim().is_empty()
-        {
-            return Ok(raw.trim().to_string());
-        }
-    }
-    serde_json::to_string(finding).context("failed to serialize research finding summary")
-}
-
-fn candidate_statement(candidate: &serde_json::Value) -> Option<&str> {
-    if let Some(raw) = candidate.as_str()
-        && !raw.trim().is_empty()
-    {
-        return Some(raw.trim());
-    }
-    for field in ["statement", "summary", "content", "text"] {
-        if let Some(raw) = candidate.get(field).and_then(serde_json::Value::as_str)
-            && !raw.trim().is_empty()
-        {
-            return Some(raw.trim());
-        }
-    }
-    None
-}
-
-fn research_evidence_drawer_id(content: &str) -> String {
-    let memory_kind = MemoryKind::Evidence;
-    let domain = MemoryDomain::Project;
-    let anchor_kind = AnchorKind::Repo;
-    let provenance = Provenance::Research;
-    let empty_refs: &[String] = &[];
-    build_bootstrap_drawer_id_from_parts(
-        "mempal",
-        Some("research"),
-        content,
-        BootstrapIdentityParts {
-            memory_kind: &memory_kind,
-            domain: &domain,
-            field: "research",
-            anchor_kind: &anchor_kind,
-            anchor_id: anchor::LEGACY_REPO_ANCHOR_ID,
-            parent_anchor_id: None,
-            provenance: Some(&provenance),
-            statement: None,
-            tier: None,
-            status: None,
-            supporting_refs: empty_refs,
-            counterexample_refs: empty_refs,
-            teaching_refs: empty_refs,
-            verification_refs: empty_refs,
-            scope_constraints: None,
-            trigger_hints: None,
-        },
-    )
+    Ok(build_research_ingest_plan_from_value(&value))
 }
 
 fn research_evidence_drawer(
@@ -3106,27 +2914,6 @@ fn research_evidence_drawer(
         scope_constraints: None,
         trigger_hints: None,
     }
-}
-
-fn research_distill_command(statement: &str, supporting_refs: &[String]) -> Vec<String> {
-    let mut command = vec![
-        "mempal".to_string(),
-        "knowledge".to_string(),
-        "distill".to_string(),
-        "--tier".to_string(),
-        "qi".to_string(),
-        "--statement".to_string(),
-        statement.to_string(),
-        "--content".to_string(),
-        statement.to_string(),
-        "--field".to_string(),
-        "research".to_string(),
-    ];
-    for supporting_ref in supporting_refs {
-        command.push("--supporting-ref".to_string());
-        command.push(supporting_ref.clone());
-    }
-    command
 }
 
 fn required_string(

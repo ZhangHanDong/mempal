@@ -1366,6 +1366,14 @@ suggestions backed by the planned evidence refs; P67 does not create knowledge
 drawers, promote research output, add a schema migration, or expose MCP write
 access.
 
+P68 exposes the P67 dry-run planning semantics through MCP as
+`mempal_phase3 action=research_ingest_plan`. The action accepts an inline
+`report` JSON object, returns planned research evidence drawer refs plus
+candidate `mempal knowledge distill` suggestions, and always reports
+`writes=false`. It shares the same pure planner as the CLI but deliberately does
+not expose `--execute`, create drawers or vectors, mutate runtime adoption
+events, or promote research output into knowledge.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."
