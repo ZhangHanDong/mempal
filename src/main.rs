@@ -26,7 +26,8 @@ use mempal::core::{
         capture_runtime_adoption_record_input, card_context_default_proposal,
         card_context_default_readiness, check_runtime_adoption_record, evaluator_advice,
         prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
-        review_runtime_adoption_events, runtime_adoption_guidance, should_write_checked_record,
+        review_runtime_adoption_events, runtime_adoption_guidance,
+        runtime_adoption_instrumentation_policy, should_write_checked_record,
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
@@ -639,6 +640,10 @@ enum Phase3EvaluatorCommands {
 #[allow(clippy::large_enum_variant)] // `record` intentionally carries the full event payload.
 enum Phase3AdoptionCommands {
     Guidance {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    InstrumentationPolicy {
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -2438,6 +2443,12 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
         Phase3AdoptionCommands::Guidance { format } => {
             print_runtime_adoption_guidance(&runtime_adoption_guidance(), &format)
         }
+        Phase3AdoptionCommands::InstrumentationPolicy { format } => {
+            print_runtime_adoption_instrumentation_policy(
+                &runtime_adoption_instrumentation_policy(),
+                &format,
+            )
+        }
         Phase3AdoptionCommands::PrepareRecord {
             track,
             signal,
@@ -2983,6 +2994,44 @@ fn print_runtime_adoption_guidance(guidance: &RuntimeAdoptionGuidance, format: &
                 "{}",
                 serde_json::to_string_pretty(guidance)
                     .context("failed to serialize runtime adoption guidance")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
+    }
+}
+
+fn print_runtime_adoption_instrumentation_policy(
+    policy: &mempal::core::phase3::RuntimeAdoptionInstrumentationPolicy,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("version={}", policy.version);
+            println!("writes={}", policy.writes);
+            println!("default_mode={}", policy.default_mode);
+            for mode in &policy.allowed_modes {
+                println!(
+                    "allowed_mode={} requires_execute={} requires_checked_capture={}",
+                    mode.mode, mode.requires_execute, mode.requires_checked_capture
+                );
+            }
+            for mode in &policy.forbidden_modes {
+                println!("forbidden_mode={mode}");
+            }
+            for requirement in &policy.requirements {
+                println!("requirement={requirement}");
+            }
+            for requirement in &policy.rollback_requirements {
+                println!("rollback_requirement={requirement}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(policy)
+                    .context("failed to serialize runtime adoption instrumentation policy")?
             );
             Ok(())
         }

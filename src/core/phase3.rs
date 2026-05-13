@@ -35,6 +35,25 @@ pub struct RuntimeAdoptionTrackGuidance {
     pub feature_examples: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeAdoptionInstrumentationPolicy {
+    pub version: u32,
+    pub writes: bool,
+    pub default_mode: String,
+    pub allowed_modes: Vec<RuntimeAdoptionInstrumentationMode>,
+    pub forbidden_modes: Vec<String>,
+    pub requirements: Vec<String>,
+    pub rollback_requirements: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimeAdoptionInstrumentationMode {
+    pub mode: String,
+    pub description: String,
+    pub requires_execute: bool,
+    pub requires_checked_capture: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RuntimeAdoptionRecordPlan {
     pub writes: bool,
@@ -307,6 +326,42 @@ pub fn runtime_adoption_guidance() -> RuntimeAdoptionGuidance {
                     "research_ingest_plan".to_string(),
                 ],
             },
+        ],
+    }
+}
+
+pub fn runtime_adoption_instrumentation_policy() -> RuntimeAdoptionInstrumentationPolicy {
+    RuntimeAdoptionInstrumentationPolicy {
+        version: 1,
+        writes: false,
+        default_mode: "manual_only".to_string(),
+        allowed_modes: vec![
+            RuntimeAdoptionInstrumentationMode {
+                mode: "manual_only".to_string(),
+                description: "agents explicitly call guidance, capture, or record_checked after observing a concrete runtime outcome".to_string(),
+                requires_execute: false,
+                requires_checked_capture: true,
+            },
+            RuntimeAdoptionInstrumentationMode {
+                mode: "opt_in_wrapper".to_string(),
+                description: "a user-enabled wrapper may prepare capture inputs around a tool call, but writes still require execute=true and checked capture quality gates".to_string(),
+                requires_execute: true,
+                requires_checked_capture: true,
+            },
+        ],
+        forbidden_modes: vec![
+            "implicit_background_capture".to_string(),
+            "silent_event_append".to_string(),
+            "quality_gate_bypass".to_string(),
+        ],
+        requirements: vec![
+            "live instrumentation is opt-in; users must have an opt-out before any capture is written".to_string(),
+            "wrappers must preserve source surface, outcome, query/context identifiers, and relevant metadata".to_string(),
+            "writes must go through existing capture or record_checked quality gates".to_string(),
+        ],
+        rollback_requirements: vec![
+            "rollback criteria must be recorded before any future default-on instrumentation proposal".to_string(),
+            "rollback signals must be captured when instrumentation degrades task behavior or creates noisy evidence".to_string(),
         ],
     }
 }

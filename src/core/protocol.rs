@@ -213,9 +213,13 @@ You have persistent project memory via mempal. Follow these rules in every sessi
 17. RECORD PHASE-3 RUNTIME ADOPTION EVIDENCE
    Use mempal_phase3 to record and inspect runtime adoption evidence before
    proposing stronger defaults or new authority. The tool supports
-   guidance/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
+   guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
    actions over Phase-3 runtime_adoption_events. Start with action=guidance
    when unsure whether a runtime outcome should be recorded. Use
+   action=instrumentation_policy before building live tool instrumentation:
+   live instrumentation is opt-in, must preserve user opt-out, and must route
+   writes through checked capture or record_checked instead of silently
+   appending events. Use
    action=prepare_record to validate and assemble exact record inputs before
    writing; prepare_record is read-only and does not append events. Use
    action=capture when you have a concrete runtime outcome but do not want to
@@ -257,7 +261,7 @@ TOOLS:
   mempal_knowledge_policy — read-only Stage-1 promotion policy thresholds
   mempal_knowledge_gate — read-only knowledge promotion readiness check
   mempal_knowledge_cards — Phase-2 knowledge card list/get/retrieve/events/gate/promote/demote
-  mempal_phase3       — Phase-3 runtime adoption evidence guidance/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
+  mempal_phase3       — Phase-3 runtime adoption evidence guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan
   mempal_knowledge_promote — gate-enforced knowledge lifecycle promotion
   mempal_knowledge_demote — evidence-backed knowledge demotion or retirement
   mempal_knowledge_publish_anchor — metadata-only outward anchor publication

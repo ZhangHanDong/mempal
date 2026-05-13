@@ -2,6 +2,7 @@ use crate::context::{ContextItem, ContextPack, ContextSection};
 use crate::core::phase3::{
     Phase3ReadinessReport, ResearchCandidateInsightPlan, ResearchEvidenceDrawerPlan,
     ResearchIngestPlanReport, RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance,
+    RuntimeAdoptionInstrumentationMode, RuntimeAdoptionInstrumentationPolicy,
     RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
     RuntimeAdoptionReviewReport, RuntimeAdoptionSignalCounts, RuntimeAdoptionSignalGuidance,
     RuntimeAdoptionTrackGuidance,
@@ -347,6 +348,8 @@ pub struct Phase3Response {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guidance: Option<RuntimeAdoptionGuidanceDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub instrumentation_policy: Option<RuntimeAdoptionInstrumentationPolicyDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub record_plan: Option<RuntimeAdoptionRecordPlanDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record_quality: Option<RuntimeAdoptionRecordQualityDto>,
@@ -395,6 +398,25 @@ pub struct RuntimeAdoptionTrackGuidanceDto {
     pub track: String,
     pub when: String,
     pub feature_examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionInstrumentationPolicyDto {
+    pub version: u32,
+    pub writes: bool,
+    pub default_mode: String,
+    pub allowed_modes: Vec<RuntimeAdoptionInstrumentationModeDto>,
+    pub forbidden_modes: Vec<String>,
+    pub requirements: Vec<String>,
+    pub rollback_requirements: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct RuntimeAdoptionInstrumentationModeDto {
+    pub mode: String,
+    pub description: String,
+    pub requires_execute: bool,
+    pub requires_checked_capture: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -657,6 +679,31 @@ impl From<RuntimeAdoptionTrackGuidance> for RuntimeAdoptionTrackGuidanceDto {
             track: guidance.track,
             when: guidance.when,
             feature_examples: guidance.feature_examples,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionInstrumentationPolicy> for RuntimeAdoptionInstrumentationPolicyDto {
+    fn from(policy: RuntimeAdoptionInstrumentationPolicy) -> Self {
+        Self {
+            version: policy.version,
+            writes: policy.writes,
+            default_mode: policy.default_mode,
+            allowed_modes: policy.allowed_modes.into_iter().map(Into::into).collect(),
+            forbidden_modes: policy.forbidden_modes,
+            requirements: policy.requirements,
+            rollback_requirements: policy.rollback_requirements,
+        }
+    }
+}
+
+impl From<RuntimeAdoptionInstrumentationMode> for RuntimeAdoptionInstrumentationModeDto {
+    fn from(mode: RuntimeAdoptionInstrumentationMode) -> Self {
+        Self {
+            mode: mode.mode,
+            description: mode.description,
+            requires_execute: mode.requires_execute,
+            requires_checked_capture: mode.requires_checked_capture,
         }
     }
 }

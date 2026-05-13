@@ -693,6 +693,90 @@ fn test_cli_phase3_adoption_guidance_rejects_invalid_format() {
 }
 
 #[test]
+fn test_cli_phase3_adoption_instrumentation_policy_json_is_read_only() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "instrumentation-policy",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "instrumentation policy failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let policy: Value = serde_json::from_slice(&output.stdout).expect("policy json");
+    assert_eq!(policy["writes"], false);
+    assert_eq!(policy["version"], 1);
+    assert_eq!(policy["default_mode"], "manual_only");
+    assert!(
+        policy["allowed_modes"]
+            .as_array()
+            .expect("allowed modes")
+            .iter()
+            .any(|mode| mode["mode"] == "opt_in_wrapper"
+                && mode["requires_execute"] == true
+                && mode["requires_checked_capture"] == true)
+    );
+    assert!(
+        policy["forbidden_modes"]
+            .as_array()
+            .expect("forbidden modes")
+            .iter()
+            .any(|mode| mode == "implicit_background_capture")
+    );
+    assert!(
+        policy["requirements"]
+            .as_array()
+            .expect("requirements")
+            .iter()
+            .any(|requirement| requirement
+                .as_str()
+                .expect("requirement")
+                .contains("opt-out"))
+    );
+    assert!(
+        policy["rollback_requirements"]
+            .as_array()
+            .expect("rollback requirements")
+            .iter()
+            .any(|requirement| requirement
+                .as_str()
+                .expect("rollback requirement")
+                .contains("rollback"))
+    );
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_adoption_instrumentation_policy_rejects_invalid_format() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "instrumentation-policy",
+            "--format",
+            "yaml",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported phase3 adoption format"));
+}
+
+#[test]
 fn test_cli_phase3_adoption_prepare_record_json_is_read_only() {
     let home = setup_cli_home();
     let output = run_mempal(

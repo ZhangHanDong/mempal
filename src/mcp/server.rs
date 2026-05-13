@@ -12,7 +12,7 @@ use crate::core::{
         card_context_default_proposal, card_context_default_readiness,
         check_runtime_adoption_record, evaluator_advice, prepare_runtime_adoption_capture,
         prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
-        should_write_checked_record,
+        runtime_adoption_instrumentation_policy, should_write_checked_record,
     },
     types::{
         AnchorKind, BootstrapIdentityParts, Drawer, ExplicitTunnel, KnowledgeCardFilter,
@@ -1350,7 +1350,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_phase3",
-        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; default_proposal combines readiness with rollback criteria without changing defaults; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; instrumentation_policy defines opt-in live instrumentation boundaries without writing; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; default_proposal combines readiness with rollback criteria without changing defaults; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
     )]
     async fn mempal_phase3(
         &self,
@@ -1362,6 +1362,24 @@ impl MempalMcpServer {
         match action {
             "guidance" => Ok(Json(Phase3Response {
                 guidance: Some(runtime_adoption_guidance().into()),
+                instrumentation_policy: None,
+                record_plan: None,
+                record_quality: None,
+                record_checked: None,
+                review_report: None,
+                readiness_report: None,
+                event: None,
+                events: Vec::new(),
+                stats: None,
+                gate: None,
+                research_plan: None,
+                research_ingest_plan: None,
+                evaluator_advice: None,
+                default_proposal: None,
+            })),
+            "instrumentation_policy" => Ok(Json(Phase3Response {
+                guidance: None,
+                instrumentation_policy: Some(runtime_adoption_instrumentation_policy().into()),
                 record_plan: None,
                 record_quality: None,
                 record_checked: None,
@@ -1401,6 +1419,7 @@ impl MempalMcpServer {
                 });
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: Some(plan.into()),
                     record_quality: None,
                     record_checked: None,
@@ -1484,6 +1503,7 @@ impl MempalMcpServer {
                 }
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: Some(capture.record_plan.into()),
                     record_quality: Some(capture.record_quality.into()),
                     record_checked: capture.record_checked.map(Into::into),
@@ -1520,6 +1540,7 @@ impl MempalMcpServer {
                 .map_err(|error| ErrorData::invalid_params(error, None))?;
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1568,6 +1589,7 @@ impl MempalMcpServer {
                 };
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1608,6 +1630,7 @@ impl MempalMcpServer {
                 };
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: Some(check_runtime_adoption_record(&input).into()),
                     record_checked: None,
@@ -1679,6 +1702,7 @@ impl MempalMcpServer {
                 };
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: Some(
@@ -1743,6 +1767,7 @@ impl MempalMcpServer {
                 );
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1788,6 +1813,7 @@ impl MempalMcpServer {
                 };
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1838,6 +1864,7 @@ impl MempalMcpServer {
                 })?;
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1871,6 +1898,7 @@ impl MempalMcpServer {
                     })?;
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1907,6 +1935,7 @@ impl MempalMcpServer {
                     })?;
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1928,6 +1957,7 @@ impl MempalMcpServer {
                 let gate = phase3_gate_report(&db, candidate)?;
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1949,6 +1979,7 @@ impl MempalMcpServer {
                 })?;
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1970,6 +2001,7 @@ impl MempalMcpServer {
                 })?;
                 Ok(Json(Phase3Response {
                     guidance: None,
+                    instrumentation_policy: None,
                     record_plan: None,
                     record_quality: None,
                     record_checked: None,
@@ -1989,7 +2021,7 @@ impl MempalMcpServer {
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported phase3 action: {other}; actions are guidance, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                    "unsupported phase3 action: {other}; actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
                 ),
                 None,
             )),
@@ -4310,7 +4342,7 @@ mod tests {
             .expect_err("invalid action should fail");
         assert!(
             error.to_string().contains(
-                "actions are guidance, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                "actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
             )
         );
 
@@ -4369,6 +4401,49 @@ mod tests {
                     .feature_examples
                     .contains(&"include_cards".to_string())
         }));
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(db.drawer_count().expect("drawers"), baseline.0);
+        assert_eq!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len(),
+            baseline.1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_phase3_instrumentation_policy_action_is_read_only() {
+        let (_tempdir, db_path, server) = setup_server();
+        let baseline = {
+            let db = Database::open(&db_path).expect("open db");
+            (
+                db.drawer_count().expect("drawers"),
+                db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                    .expect("events")
+                    .len(),
+            )
+        };
+
+        let response = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "instrumentation_policy"
+            }))
+            .await
+            .expect("instrumentation policy");
+        let policy = response
+            .instrumentation_policy
+            .expect("instrumentation policy");
+        assert!(!policy.writes);
+        assert_eq!(policy.default_mode, "manual_only");
+        assert!(policy.allowed_modes.iter().any(|mode| {
+            mode.mode == "opt_in_wrapper" && mode.requires_execute && mode.requires_checked_capture
+        }));
+        assert!(
+            policy
+                .forbidden_modes
+                .contains(&"implicit_background_capture".to_string())
+        );
 
         let db = Database::open(&db_path).expect("reopen db");
         assert_eq!(db.drawer_count().expect("drawers"), baseline.0);
@@ -4768,16 +4843,19 @@ mod tests {
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(description.contains("Phase-3 runtime adoption evidence"));
         assert!(description.contains(
-            "Actions: guidance/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
+            "Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
         ));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=guidance"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=instrumentation_policy"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=readiness"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=capture"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=evaluator_advise"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=default_proposal"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("record_checked"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("research_ingest_plan"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("live instrumentation is opt-in"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("checked capture"));
         assert!(
             crate::core::protocol::MEMORY_PROTOCOL
                 .contains("used when guidance was actually consumed")

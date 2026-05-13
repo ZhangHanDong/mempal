@@ -1544,9 +1544,18 @@ spec is explicitly incomplete and must be fixed before implementation or merge.
 
 Updated recommended next P candidates after reserving P76 for governance:
 
-- P77 live adoption instrumentation boundary: define whether hooks/tool wrappers
-  may semi-automatically create checked adoption captures, with opt-out and
-  rollback rules.
+P77 live adoption instrumentation boundary adds a read-only policy surface for
+the live instrumentation gap. `mempal phase3 adoption instrumentation-policy`
+and `mempal_phase3 action=instrumentation_policy` return `writes=false`,
+`default_mode=manual_only`, allow only `opt_in_wrapper` as the semi-automatic
+mode, and explicitly forbid `implicit_background_capture`, silent event append,
+and quality gate bypass. This does not install hooks or wrappers; it defines the
+safe boundary future instrumentation must obey: opt-in, user opt-out, checked
+capture/record_checked writes, and rollback evidence when instrumentation
+degrades behavior.
+
+Updated recommended next P candidates after completing P77:
+
 - P78 card context default-on runtime flag: implement an explicit, reversible
   default-on switch only after a P74 proposal is ready.
 - P79 rollback executor contract: turn rollback criteria into a testable policy
