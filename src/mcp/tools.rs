@@ -318,6 +318,12 @@ pub struct Phase3Request {
     pub id: Option<String>,
     pub surface: Option<String>,
     pub outcome: Option<String>,
+    pub subject_kind: Option<String>,
+    pub subject_id: Option<String>,
+    pub proposed_action: Option<String>,
+    pub evidence_refs: Option<Vec<String>>,
+    pub counterexample_refs: Option<Vec<String>>,
+    pub risk_notes: Option<Vec<String>>,
     pub track: Option<String>,
     pub signal: Option<String>,
     pub feature: Option<String>,
@@ -361,6 +367,8 @@ pub struct Phase3Response {
     pub research_plan: Option<ResearchAdapterPlanDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub research_ingest_plan: Option<ResearchIngestPlanDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evaluator_advice: Option<EvaluatorAdviceDto>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -457,6 +465,45 @@ pub struct Phase3ReadinessReportDto {
     pub required_feature: String,
     pub review: RuntimeAdoptionReviewReportDto,
     pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct EvaluatorAdviceDto {
+    pub writes: bool,
+    pub evaluator_id: String,
+    pub subject_kind: String,
+    pub subject_id: String,
+    pub proposed_action: String,
+    pub recommendation: String,
+    pub lifecycle_authority: bool,
+    pub deterministic_gate_required: bool,
+    pub requires_human_review: bool,
+    pub evidence_refs: Vec<String>,
+    pub counterexample_refs: Vec<String>,
+    pub risk_notes: Vec<String>,
+    pub reasons: Vec<String>,
+    pub adoption_capture: RuntimeAdoptionRecordPlanDto,
+}
+
+impl From<crate::core::phase3::EvaluatorAdviceReport> for EvaluatorAdviceDto {
+    fn from(report: crate::core::phase3::EvaluatorAdviceReport) -> Self {
+        Self {
+            writes: report.writes,
+            evaluator_id: report.evaluator_id,
+            subject_kind: report.subject_kind,
+            subject_id: report.subject_id,
+            proposed_action: report.proposed_action,
+            recommendation: report.recommendation,
+            lifecycle_authority: report.lifecycle_authority,
+            deterministic_gate_required: report.deterministic_gate_required,
+            requires_human_review: report.requires_human_review,
+            evidence_refs: report.evidence_refs,
+            counterexample_refs: report.counterexample_refs,
+            risk_notes: report.risk_notes,
+            reasons: report.reasons,
+            adoption_capture: report.adoption_capture.into(),
+        }
+    }
 }
 
 impl From<RuntimeAdoptionRecordPlan> for RuntimeAdoptionRecordPlanDto {

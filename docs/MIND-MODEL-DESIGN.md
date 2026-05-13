@@ -1447,8 +1447,13 @@ Future P candidates:
   `capture` surfaces that map `surface/outcome` observations into existing
   checked runtime adoption records. It is dry-run by default, writes only with
   explicit execute, and does not add background instrumentation.
-- P73 candidate: evaluator advisory API contract with replayable outputs and no
-  lifecycle authority.
+- P73 evaluator advisory API: implemented as deterministic CLI/MCP advice
+  surfaces through `mempal phase3 evaluator advise` and
+  `mempal_phase3 action=evaluator_advise`. Advice output is replayable from
+  request fields, returns `writes=false`, `lifecycle_authority=false`,
+  `deterministic_gate_required=true`, reasons, and a `surface=evaluator`
+  adoption capture plan. It cannot mutate lifecycle state, satisfy reviewer
+  requirements, bypass gates, or call LLM/network evaluators.
 - P74 candidate: card-context default-on proposal gated by accumulated P66
   readiness evidence plus rollback criteria.
 

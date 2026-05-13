@@ -70,6 +70,36 @@ pub struct RuntimeAdoptionCaptureReport {
     pub record_checked: Option<RuntimeAdoptionCheckedRecordReport>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvaluatorAdviceInput {
+    pub evaluator_id: String,
+    pub subject_kind: String,
+    pub subject_id: String,
+    pub proposed_action: String,
+    pub evidence_refs: Vec<String>,
+    pub counterexample_refs: Vec<String>,
+    pub risk_notes: Vec<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EvaluatorAdviceReport {
+    pub writes: bool,
+    pub evaluator_id: String,
+    pub subject_kind: String,
+    pub subject_id: String,
+    pub proposed_action: String,
+    pub recommendation: String,
+    pub lifecycle_authority: bool,
+    pub deterministic_gate_required: bool,
+    pub requires_human_review: bool,
+    pub evidence_refs: Vec<String>,
+    pub counterexample_refs: Vec<String>,
+    pub risk_notes: Vec<String>,
+    pub reasons: Vec<String>,
+    pub adoption_capture: RuntimeAdoptionRecordPlan,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeAdoptionReviewFilters {
     pub track: Option<String>,
@@ -369,6 +399,92 @@ pub fn prepare_runtime_adoption_capture(
     }
 }
 
+pub fn evaluator_advice(input: EvaluatorAdviceInput) -> Result<EvaluatorAdviceReport, String> {
+    if is_blank(&input.evaluator_id) {
+        return Err("evaluator-id is required".to_string());
+    }
+    if is_blank(&input.subject_kind) {
+        return Err("subject-kind is required".to_string());
+    }
+    if is_blank(&input.subject_id) {
+        return Err("subject-id is required".to_string());
+    }
+    if is_blank(&input.proposed_action) {
+        return Err("proposed-action is required".to_string());
+    }
+
+    let evidence_refs = normalize_non_empty(input.evidence_refs);
+    let counterexample_refs = normalize_non_empty(input.counterexample_refs);
+    let risk_notes = normalize_non_empty(input.risk_notes);
+    let subject_kind = input.subject_kind.trim().to_string();
+    let proposed_action = input.proposed_action.trim().to_string();
+    let requires_human_review = subject_kind == "dao_tian" && proposed_action.contains("canonical");
+
+    let mut reasons = Vec::new();
+    reasons.push("evaluator output is advisory-only and has no lifecycle authority".to_string());
+    reasons
+        .push("deterministic promotion gates remain required before lifecycle changes".to_string());
+    if requires_human_review {
+        reasons.push("dao_tian canonicalization requires human review".to_string());
+    }
+
+    let recommendation = if !counterexample_refs.is_empty() || !risk_notes.is_empty() {
+        reasons
+            .push("counterexample refs or risk notes block supportive recommendation".to_string());
+        "do_not_promote"
+    } else if evidence_refs.is_empty() {
+        reasons.push("supporting evidence refs are required before promotion advice".to_string());
+        "needs_evidence"
+    } else if requires_human_review {
+        "requires_human_review"
+    } else {
+        reasons.push(
+            "supporting evidence refs are present and no risk blockers were supplied".to_string(),
+        );
+        "advisory_support"
+    }
+    .to_string();
+
+    let adoption_capture = prepare_runtime_adoption_record(RuntimeAdoptionRecordPlanInput {
+        id: None,
+        track: "evaluator".to_string(),
+        signal: "used".to_string(),
+        feature: "advisory_gate".to_string(),
+        query: Some(format!(
+            "{subject_kind}:{} {proposed_action}",
+            input.subject_id.trim()
+        )),
+        context_hash: None,
+        card_id: None,
+        evaluator_id: Some(input.evaluator_id.trim().to_string()),
+        research_report_id: None,
+        note: input.note,
+        metadata: Some(evaluator_advice_metadata(
+            &subject_kind,
+            input.subject_id.trim(),
+            &proposed_action,
+            &recommendation,
+        )),
+    });
+
+    Ok(EvaluatorAdviceReport {
+        writes: false,
+        evaluator_id: input.evaluator_id.trim().to_string(),
+        subject_kind,
+        subject_id: input.subject_id.trim().to_string(),
+        proposed_action,
+        recommendation,
+        lifecycle_authority: false,
+        deterministic_gate_required: true,
+        requires_human_review,
+        evidence_refs,
+        counterexample_refs,
+        risk_notes,
+        reasons,
+        adoption_capture,
+    })
+}
+
 pub fn check_runtime_adoption_record(
     input: &RuntimeAdoptionRecordPlanInput,
 ) -> RuntimeAdoptionRecordQualityReport {
@@ -419,6 +535,40 @@ pub fn check_runtime_adoption_record(
         errors,
         warnings,
     }
+}
+
+fn normalize_non_empty(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn evaluator_advice_metadata(
+    subject_kind: &str,
+    subject_id: &str,
+    proposed_action: &str,
+    recommendation: &str,
+) -> Value {
+    let mut metadata = Map::new();
+    metadata.insert(
+        "subject_kind".to_string(),
+        Value::String(subject_kind.to_string()),
+    );
+    metadata.insert(
+        "subject_id".to_string(),
+        Value::String(subject_id.to_string()),
+    );
+    metadata.insert(
+        "proposed_action".to_string(),
+        Value::String(proposed_action.to_string()),
+    );
+    metadata.insert(
+        "recommendation".to_string(),
+        Value::String(recommendation.to_string()),
+    );
+    Value::Object(metadata)
 }
 
 fn capture_surface_mapping(surface: &str) -> Result<(String, String), String> {

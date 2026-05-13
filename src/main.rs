@@ -17,15 +17,15 @@ use mempal::core::{
     config::Config,
     db::Database,
     phase3::{
-        Phase3ReadinessReport, ResearchIngestPlanReport, RuntimeAdoptionCaptureInput,
-        RuntimeAdoptionCaptureReport, RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance,
-        RuntimeAdoptionRecordPlan, RuntimeAdoptionRecordPlanInput,
-        RuntimeAdoptionRecordQualityReport, RuntimeAdoptionReviewFilters,
-        RuntimeAdoptionReviewReport, build_research_ingest_plan_from_value,
-        capture_runtime_adoption_record_input, card_context_default_readiness,
-        check_runtime_adoption_record, prepare_runtime_adoption_capture,
-        prepare_runtime_adoption_record, review_runtime_adoption_events, runtime_adoption_guidance,
-        should_write_checked_record,
+        EvaluatorAdviceInput, EvaluatorAdviceReport, Phase3ReadinessReport,
+        ResearchIngestPlanReport, RuntimeAdoptionCaptureInput, RuntimeAdoptionCaptureReport,
+        RuntimeAdoptionCheckedRecordReport, RuntimeAdoptionGuidance, RuntimeAdoptionRecordPlan,
+        RuntimeAdoptionRecordPlanInput, RuntimeAdoptionRecordQualityReport,
+        RuntimeAdoptionReviewFilters, RuntimeAdoptionReviewReport,
+        build_research_ingest_plan_from_value, capture_runtime_adoption_record_input,
+        card_context_default_readiness, check_runtime_adoption_record, evaluator_advice,
+        prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
+        review_runtime_adoption_events, runtime_adoption_guidance, should_write_checked_record,
     },
     protocol::{DEFAULT_IDENTITY_HINT, MEMORY_PROTOCOL},
     types::{
@@ -575,6 +575,10 @@ enum Phase3Commands {
         #[command(subcommand)]
         command: Phase3AdoptionCommands,
     },
+    Evaluator {
+        #[command(subcommand)]
+        command: Phase3EvaluatorCommands,
+    },
     Gate {
         candidate: String,
         #[arg(long, default_value = "plain")]
@@ -594,6 +598,30 @@ enum Phase3Commands {
         path: PathBuf,
         #[arg(long)]
         execute: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum Phase3EvaluatorCommands {
+    Advise {
+        #[arg(long = "evaluator-id")]
+        evaluator_id: Option<String>,
+        #[arg(long = "subject-kind")]
+        subject_kind: String,
+        #[arg(long = "subject-id")]
+        subject_id: String,
+        #[arg(long = "proposed-action")]
+        proposed_action: String,
+        #[arg(long = "evidence-ref")]
+        evidence_refs: Vec<String>,
+        #[arg(long = "counterexample-ref")]
+        counterexample_refs: Vec<String>,
+        #[arg(long = "risk-note")]
+        risk_notes: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -2317,6 +2345,7 @@ async fn knowledge_card_command(
 async fn phase3_command(db: &Database, config: &Config, command: Phase3Commands) -> Result<()> {
     match command {
         Phase3Commands::Adoption { command } => phase3_adoption_command(db, command),
+        Phase3Commands::Evaluator { command } => phase3_evaluator_command(command),
         Phase3Commands::Gate { candidate, format } => {
             let report = phase3_gate_report(db, &candidate)?;
             print_phase3_gate_report(&report, &format)
@@ -2334,6 +2363,35 @@ async fn phase3_command(db: &Database, config: &Config, command: Phase3Commands)
             execute,
             format,
         } => research_ingest_plan_command(db, config, &path, execute, &format).await,
+    }
+}
+
+fn phase3_evaluator_command(command: Phase3EvaluatorCommands) -> Result<()> {
+    match command {
+        Phase3EvaluatorCommands::Advise {
+            evaluator_id,
+            subject_kind,
+            subject_id,
+            proposed_action,
+            evidence_refs,
+            counterexample_refs,
+            risk_notes,
+            note,
+            format,
+        } => {
+            let report = evaluator_advice(EvaluatorAdviceInput {
+                evaluator_id: evaluator_id.unwrap_or_default(),
+                subject_kind,
+                subject_id,
+                proposed_action,
+                evidence_refs,
+                counterexample_refs,
+                risk_notes,
+                note,
+            })
+            .map_err(anyhow::Error::msg)?;
+            print_evaluator_advice(&report, &format)
+        }
     }
 }
 
@@ -3307,6 +3365,38 @@ fn print_phase3_readiness_report(report: &Phase3ReadinessReport, format: &str) -
             Ok(())
         }
         other => bail!("unsupported phase3 readiness format: {other}"),
+    }
+}
+
+fn print_evaluator_advice(report: &EvaluatorAdviceReport, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("evaluator_id={}", report.evaluator_id);
+            println!("subject_kind={}", report.subject_kind);
+            println!("subject_id={}", report.subject_id);
+            println!("proposed_action={}", report.proposed_action);
+            println!("recommendation={}", report.recommendation);
+            println!("lifecycle_authority={}", report.lifecycle_authority);
+            println!(
+                "deterministic_gate_required={}",
+                report.deterministic_gate_required
+            );
+            println!("requires_human_review={}", report.requires_human_review);
+            for reason in &report.reasons {
+                println!("reason={reason}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize evaluator advice")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 evaluator format: {other}"),
     }
 }
 

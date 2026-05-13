@@ -1141,6 +1141,180 @@ fn test_cli_phase3_evaluator_gate_exists_and_is_read_only() {
 }
 
 #[test]
+fn test_cli_phase3_evaluator_advise_supportive_read_only() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "evaluator",
+            "advise",
+            "--evaluator-id",
+            "eval_policy",
+            "--subject-kind",
+            "dao_ren",
+            "--subject-id",
+            "k1",
+            "--proposed-action",
+            "promote",
+            "--evidence-ref",
+            "e1",
+            "--evidence-ref",
+            "e2",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "advise failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("advice json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["lifecycle_authority"], false);
+    assert_eq!(report["deterministic_gate_required"], true);
+    assert_eq!(report["recommendation"], "advisory_support");
+    assert_eq!(
+        report["adoption_capture"]["record_payload"]["track"],
+        "evaluator"
+    );
+    assert_eq!(
+        report["adoption_capture"]["record_payload"]["feature"],
+        "advisory_gate"
+    );
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("list events");
+    assert!(events.is_empty());
+}
+
+#[test]
+fn test_cli_phase3_evaluator_advise_dao_tian_requires_human_review() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "evaluator",
+            "advise",
+            "--evaluator-id",
+            "eval_policy",
+            "--subject-kind",
+            "dao_tian",
+            "--subject-id",
+            "k1",
+            "--proposed-action",
+            "canonical",
+            "--evidence-ref",
+            "e1",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "advise failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("advice json");
+    assert_eq!(report["requires_human_review"], true);
+    assert_eq!(report["recommendation"], "requires_human_review");
+    let reasons = report["reasons"].as_array().expect("reasons");
+    assert!(reasons.iter().any(|reason| {
+        reason
+            .as_str()
+            .is_some_and(|value| value.contains("dao_tian canonicalization requires human review"))
+    }));
+}
+
+#[test]
+fn test_cli_phase3_evaluator_advise_needs_evidence_and_blocks_risk() {
+    let home = setup_cli_home();
+    let weak = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "evaluator",
+            "advise",
+            "--evaluator-id",
+            "eval_policy",
+            "--subject-kind",
+            "dao_ren",
+            "--subject-id",
+            "k1",
+            "--proposed-action",
+            "promote",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        weak.status.success(),
+        "weak advise failed: {}",
+        String::from_utf8_lossy(&weak.stderr)
+    );
+    let weak_report: Value = serde_json::from_slice(&weak.stdout).expect("weak advice json");
+    assert_eq!(weak_report["recommendation"], "needs_evidence");
+
+    let risky = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "evaluator",
+            "advise",
+            "--evaluator-id",
+            "eval_policy",
+            "--subject-kind",
+            "dao_ren",
+            "--subject-id",
+            "k1",
+            "--proposed-action",
+            "promote",
+            "--evidence-ref",
+            "e1",
+            "--counterexample-ref",
+            "c1",
+            "--risk-note",
+            "contradiction risk",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(
+        risky.status.success(),
+        "risky advise failed: {}",
+        String::from_utf8_lossy(&risky.stderr)
+    );
+    let risky_report: Value = serde_json::from_slice(&risky.stdout).expect("risky advice json");
+    assert_eq!(risky_report["recommendation"], "do_not_promote");
+}
+
+#[test]
+fn test_cli_phase3_evaluator_advise_rejects_missing_evaluator() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "evaluator",
+            "advise",
+            "--subject-kind",
+            "dao_ren",
+            "--subject-id",
+            "k1",
+            "--proposed-action",
+            "promote",
+        ],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("evaluator-id is required"));
+}
+
+#[test]
 fn test_cli_phase3_adoption_record_rejects_invalid_track() {
     let home = setup_cli_home();
     let output = run_mempal(

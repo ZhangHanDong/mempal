@@ -6,10 +6,10 @@ use crate::core::{
     anchor::{self, DerivedAnchor},
     db::Database,
     phase3::{
-        RuntimeAdoptionCaptureInput, RuntimeAdoptionCheckedRecordReport,
+        EvaluatorAdviceInput, RuntimeAdoptionCaptureInput, RuntimeAdoptionCheckedRecordReport,
         RuntimeAdoptionRecordPlanInput, RuntimeAdoptionReviewFilters,
         build_research_ingest_plan_from_value, capture_runtime_adoption_record_input,
-        card_context_default_readiness, check_runtime_adoption_record,
+        card_context_default_readiness, check_runtime_adoption_record, evaluator_advice,
         prepare_runtime_adoption_capture, prepare_runtime_adoption_record,
         review_runtime_adoption_events, runtime_adoption_guidance, should_write_checked_record,
     },
@@ -1349,7 +1349,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_phase3",
-        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/prepare_record/capture/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/prepare_record/capture/evaluator_advise/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
     )]
     async fn mempal_phase3(
         &self,
@@ -1372,6 +1372,7 @@ impl MempalMcpServer {
                 gate: None,
                 research_plan: None,
                 research_ingest_plan: None,
+                evaluator_advice: None,
             })),
             "prepare_record" => {
                 let track = parse_runtime_adoption_track(required_string(
@@ -1409,6 +1410,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "capture" => {
@@ -1490,6 +1492,42 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
+                }))
+            }
+            "evaluator_advise" => {
+                let report = evaluator_advice(EvaluatorAdviceInput {
+                    evaluator_id: required_string(request.evaluator_id.as_deref(), "evaluator_id")?
+                        .to_string(),
+                    subject_kind: required_string(request.subject_kind.as_deref(), "subject_kind")?
+                        .to_string(),
+                    subject_id: required_string(request.subject_id.as_deref(), "subject_id")?
+                        .to_string(),
+                    proposed_action: required_string(
+                        request.proposed_action.as_deref(),
+                        "proposed_action",
+                    )?
+                    .to_string(),
+                    evidence_refs: request.evidence_refs.unwrap_or_default(),
+                    counterexample_refs: request.counterexample_refs.unwrap_or_default(),
+                    risk_notes: request.risk_notes.unwrap_or_default(),
+                    note: trim_to_owned(request.note.as_deref()),
+                })
+                .map_err(|error| ErrorData::invalid_params(error, None))?;
+                Ok(Json(Phase3Response {
+                    guidance: None,
+                    record_plan: None,
+                    record_quality: None,
+                    record_checked: None,
+                    review_report: None,
+                    readiness_report: None,
+                    event: None,
+                    events: Vec::new(),
+                    stats: None,
+                    gate: None,
+                    research_plan: None,
+                    research_ingest_plan: None,
+                    evaluator_advice: Some(report.into()),
                 }))
             }
             "check_record" => {
@@ -1528,6 +1566,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "record_checked" => {
@@ -1605,6 +1644,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "review" => {
@@ -1659,6 +1699,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "readiness" => {
@@ -1702,6 +1743,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "record" => {
@@ -1750,6 +1792,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "list" => {
@@ -1784,6 +1827,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "stats" => {
@@ -1815,6 +1859,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "gate" => {
@@ -1834,6 +1879,7 @@ impl MempalMcpServer {
                     gate: Some(gate),
                     research_plan: None,
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "research_validate_plan" => {
@@ -1853,6 +1899,7 @@ impl MempalMcpServer {
                     gate: None,
                     research_plan: Some(validate_research_adapter_plan_value(&report)),
                     research_ingest_plan: None,
+                    evaluator_advice: None,
                 }))
             }
             "research_ingest_plan" => {
@@ -1874,11 +1921,12 @@ impl MempalMcpServer {
                     research_ingest_plan: Some(ResearchIngestPlanDto::from(
                         build_research_ingest_plan_from_value(&report),
                     )),
+                    evaluator_advice: None,
                 }))
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported phase3 action: {other}; actions are guidance, prepare_record, capture, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                    "unsupported phase3 action: {other}; actions are guidance, prepare_record, capture, evaluator_advise, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
                 ),
                 None,
             )),
@@ -4199,7 +4247,7 @@ mod tests {
             .expect_err("invalid action should fail");
         assert!(
             error.to_string().contains(
-                "actions are guidance, prepare_record, capture, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                "actions are guidance, prepare_record, capture, evaluator_advise, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
             )
         );
 
@@ -4418,6 +4466,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_mcp_phase3_evaluator_advise_action_is_read_only() {
+        let (_tempdir, db_path, server) = setup_server();
+
+        let response = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "evaluator_advise",
+                "evaluator_id": "eval_policy",
+                "subject_kind": "dao_ren",
+                "subject_id": "k1",
+                "proposed_action": "promote",
+                "evidence_refs": ["e1", "e2"]
+            }))
+            .await
+            .expect("evaluator advice");
+        let advice = response.evaluator_advice.expect("evaluator advice");
+        assert!(!advice.writes);
+        assert!(!advice.lifecycle_authority);
+        assert!(advice.deterministic_gate_required);
+        assert_eq!(advice.recommendation, "advisory_support");
+        assert_eq!(advice.adoption_capture.record_payload["track"], "evaluator");
+
+        let db = Database::open(&db_path).expect("open db");
+        assert!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn test_mcp_phase3_record_checked_quality_gated() {
         let (_tempdir, db_path, server) = setup_server();
 
@@ -4577,12 +4655,13 @@ mod tests {
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(description.contains("Phase-3 runtime adoption evidence"));
         assert!(description.contains(
-            "Actions: guidance/prepare_record/capture/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
+            "Actions: guidance/prepare_record/capture/evaluator_advise/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
         ));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=guidance"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=readiness"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=capture"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=evaluator_advise"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("record_checked"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("research_ingest_plan"));
         assert!(
