@@ -240,7 +240,14 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    to evaluate rollback evidence for the card-context default. The CLI executor
    is read-only unless `--execute` is supplied; when executed, it only sets local
    config `context.include_cards_default=false` and does not append runtime
-   adoption events or alter knowledge lifecycle state. Use
+   adoption events or alter knowledge lifecycle state. Agents must not
+   autonomously promote, demote, or otherwise mutate durable knowledge lifecycle
+   state. Agents must not autonomously promote knowledge.
+   human/operator-triggered lifecycle mutation remains required through
+   explicit promote/demote commands with deterministic gates
+   and evidence refs. Evaluator advice remains advisory: it can support review
+   but cannot satisfy reviewer authority, bypass gates, or create autonomous
+   lifecycle authority. Use
    action=check_record to evaluate event quality before writing; check_record is
    advisory, read-only, and reports errors/warnings without blocking record. Use
    action=record_checked for quality-gated writes: ready records write,

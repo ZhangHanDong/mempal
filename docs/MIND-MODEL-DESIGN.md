@@ -1581,9 +1581,31 @@ Updated recommended next P candidates after completing P78:
 
 Updated recommended next P candidates after completing P79:
 
-- P80 autonomous promotion boundary audit: decide whether autonomous promotion is
-  actually desired, or explicitly declare human-gated governance as the final
-  design boundary.
+P80 autonomous promotion boundary audit resolves the last ambiguous "gap" from
+P70/P75 as a governance boundary rather than a missing implementation.
+Autonomous promotion is out of scope for the current complete self-evolution
+design. mempal can autonomously preserve evidence, prepare candidate knowledge,
+evaluate gates, produce evaluator advice, assemble context, propose default
+changes, and execute explicit rollback controls, but lifecycle authority remains
+human-gated.
+P80 decision: autonomous promotion is out of scope.
+
+human-gated lifecycle authority is the final governance boundary: promotion and
+demotion of Stage-1 knowledge drawers or Phase-2 knowledge cards must remain
+explicit human/operator-triggered lifecycle mutation surfaces. Deterministic
+gates, evidence refs, reviewer rules, evaluator advice, runtime adoption
+evidence, and research findings can support the decision, but none of them can
+silently convert a candidate into promoted knowledge. This boundary keeps the
+system self-evolving in the evidence/proposal/context/adoption loop while
+avoiding an agent that can grant itself durable knowledge authority.
+
+Updated recommended next P candidate after completing P80:
+
+- P81 self-evolution completion audit: re-evaluate the active objective against
+  the actual artifacts after P77-P80. If the governed, human-gated definition is
+  accepted as the intended objective, the audit can close the goal; if the goal
+  still requires fully autonomous lifecycle mutation, that requirement must be
+  reopened as a separate explicit spec rather than inferred.
 
 ## Closing Summary
 
