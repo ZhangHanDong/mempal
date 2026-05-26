@@ -44,6 +44,10 @@ pub struct InboxMessage {
     pub pushed_at: String,
     pub from: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
 }
 
 /// Resolve ~/.mempal using the HOME env var. Matches the existing
@@ -143,6 +147,8 @@ pub fn push(
         pushed_at,
         from: caller.dir_name().to_string(),
         content,
+        thread_id: None,
+        channel: None,
     };
     let line = serde_json::to_string(&msg)?;
     // writeln! appends exactly 1 byte for `\n`
@@ -425,6 +431,8 @@ mod tests {
             pushed_at: rfc3339(),
             from: Tool::Claude.dir_name().to_string(),
             content: String::new(),
+            thread_id: None,
+            channel: None,
         };
         let empty_line_bytes = serde_json::to_string(&probe).unwrap().len() + 1;
         assert!(
@@ -502,6 +510,8 @@ mod tests {
             pushed_at: rfc3339(),
             from: Tool::Claude.dir_name().to_string(),
             content: String::new(),
+            thread_id: None,
+            channel: None,
         };
         let probe_empty_line_bytes = serde_json::to_string(&probe).unwrap().len() as u64 + 1;
 
@@ -740,11 +750,15 @@ mod tests {
                 pushed_at: "2026-04-15T01:00:00Z".into(),
                 from: "codex".into(),
                 content: "first".into(),
+                thread_id: None,
+                channel: None,
             },
             InboxMessage {
                 pushed_at: "2026-04-15T01:01:00Z".into(),
                 from: "codex".into(),
                 content: "second".into(),
+                thread_id: None,
+                channel: None,
             },
         ];
         let out = format_plain(Tool::Codex, &msgs);
@@ -761,6 +775,8 @@ mod tests {
             pushed_at: "2026-04-15T01:00:00Z".into(),
             from: "claude".into(),
             content: "test\nwith\nnewlines and \"quotes\"".into(),
+            thread_id: None,
+            channel: None,
         }];
         let out = format_codex_hook_json(Tool::Claude, &msgs).unwrap();
 

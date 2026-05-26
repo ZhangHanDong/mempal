@@ -3,11 +3,18 @@
 //! See `docs/specs/2026-04-13-cowork-peek-and-decide.md` (P6 peek) and
 //! `docs/specs/2026-04-14-p8-cowork-inbox-push.md` (P8 push).
 
+pub mod bus;
 pub mod claude;
 pub mod codex;
 pub mod inbox;
 pub mod peek;
 
+pub use bus::{
+    AgentRecord, AgentRegistry, AgentStatus, AgentStatusSummary, BusError, BusEvent,
+    CoworkCaptureReport, CoworkCaptureRequest, CreateSessionRequest, DeliveryReport,
+    DeliveryStatus, DoctorReport, HandoffFilters, HandoffSummary, RegisterAgentRequest,
+    SendOperation, SendReport, SendRequest, TeamSession, TmuxPeek, TmuxProbeReport,
+};
 pub use inbox::{
     InboxError, InboxMessage, MAX_MESSAGE_SIZE, MAX_PENDING_MESSAGES, MAX_TOTAL_INBOX_BYTES,
 };

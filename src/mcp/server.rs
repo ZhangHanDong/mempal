@@ -26,7 +26,10 @@ use crate::core::{
         knowledge_source_file, source_file_or_synthetic,
     },
 };
-use crate::cowork::{PeekError, PeekRequest as CoworkPeekRequest, Tool, peek_partner};
+use crate::cowork::{
+    AgentRecord, AgentStatus, BusError, DeliveryReport, InboxMessage, PeekError,
+    PeekRequest as CoworkPeekRequest, Tool, peek_partner,
+};
 use crate::embed::EmbedderFactory;
 use crate::field_taxonomy::field_taxonomy;
 use crate::ingest::{
@@ -64,8 +67,12 @@ use rmcp::{
 use serde_json::Value;
 
 use super::tools::{
-    ContextRequest, ContextResponse, CoworkPushRequest, CoworkPushResponse, DeleteRequest,
-    DeleteResponse, DuplicateWarning, FactCheckRequest, FactCheckResponse, FieldTaxonomyEntryDto,
+    ContextRequest, ContextResponse, CoworkBusAgentDto, CoworkBusCaptureDto, CoworkBusChannelDto,
+    CoworkBusDeliveryDto, CoworkBusDeliveryStatusDto, CoworkBusDoctorDto, CoworkBusEventDto,
+    CoworkBusHandoffAgentDto, CoworkBusHandoffDto, CoworkBusHandoffFiltersDto, CoworkBusMessageDto,
+    CoworkBusRequest, CoworkBusResponse, CoworkBusSessionDto, CoworkBusTmuxPeekDto,
+    CoworkBusTmuxProbeDto, CoworkPushRequest, CoworkPushResponse, DeleteRequest, DeleteResponse,
+    DuplicateWarning, FactCheckRequest, FactCheckResponse, FieldTaxonomyEntryDto,
     FieldTaxonomyResponse, IngestRequest, IngestResponse, KgRequest, KgResponse, KgStatsDto,
     KnowledgeCardDto, KnowledgeCardEventDto, KnowledgeCardsRequest, KnowledgeCardsResponse,
     KnowledgeDemoteRequest, KnowledgeDemoteResponse, KnowledgeDistillRequest,
@@ -2803,6 +2810,505 @@ impl MempalMcpServer {
     }
 
     #[tool(
+        name = "mempal_cowork_bus",
+        description = "Multi-agent cowork bus for concrete agent instances in one project. \
+                       Actions: register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/handoff/capture. Uses explicit agent_id \
+                       values such as claude-main, codex-a, codex-b, per-agent inbox files, \
+                       and append-only events under ~/.mempal/cowork-bus/<project>. This is separate from legacy \
+                       mempal_cowork_push partner routing and does not infer concrete instances \
+                       from MCP client names. Most actions are file-backed runtime ops; action=capture writes \
+                       evidence only when execute=true."
+    )]
+    async fn mempal_cowork_bus(
+        &self,
+        Parameters(request): Parameters<CoworkBusRequest>,
+    ) -> std::result::Result<Json<CoworkBusResponse>, ErrorData> {
+        use crate::cowork::bus::{self, RegisterAgentRequest, SendRequest};
+
+        let mempal_home = crate::cowork::inbox::mempal_home();
+        let cwd = PathBuf::from(&request.cwd);
+        let action = request.action.as_str();
+
+        match action {
+            "register" => {
+                let agent_id = required_bus_field(request.agent_id, "agent_id", action)?;
+                let tool = required_bus_field(request.tool, "tool", action)?;
+                let record = bus::register_agent(
+                    &mempal_home,
+                    &cwd,
+                    RegisterAgentRequest {
+                        agent_id,
+                        tool,
+                        transport: request.transport.unwrap_or_else(|| "inbox".to_string()),
+                        tmux_target: request.tmux_target,
+                    },
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: vec![agent_record_to_dto(record)],
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "list" => {
+                let statuses =
+                    bus::list_agent_status_at(&mempal_home, &cwd, request.now.as_deref())
+                        .map_err(bus_error_to_mcp)?
+                        .into_iter()
+                        .map(agent_status_to_dto)
+                        .collect();
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: statuses,
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "send" | "broadcast" => {
+                let from = required_bus_field(request.from, "from", action)?;
+                if request.to.is_empty() {
+                    return Err(ErrorData::invalid_params(
+                        format!("action `{action}` requires at least one `to` agent_id"),
+                        None,
+                    ));
+                }
+                if action == "send" && request.to.len() != 1 {
+                    return Err(ErrorData::invalid_params(
+                        "action `send` requires exactly one `to`; use broadcast for fanout",
+                        None,
+                    ));
+                }
+                let message = required_bus_field(request.message, "message", action)?;
+                let report = bus::send(
+                    &mempal_home,
+                    &cwd,
+                    SendRequest {
+                        from,
+                        targets: request.to,
+                        message,
+                        operation: if action == "send" {
+                            bus::SendOperation::Send
+                        } else {
+                            bus::SendOperation::Broadcast
+                        },
+                        thread_id: request.thread_id,
+                        channel: request.channel,
+                    },
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: report.delivered.into_iter().map(delivery_to_dto).collect(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "drain" => {
+                let agent_id = required_bus_field(request.agent_id, "agent_id", action)?;
+                let messages = bus::drain_agent(&mempal_home, &cwd, &agent_id)
+                    .map_err(bus_error_to_mcp)?
+                    .into_iter()
+                    .map(message_to_dto)
+                    .collect();
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages,
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "events" => {
+                let events = bus::list_events(&mempal_home, &cwd, request.limit)
+                    .map_err(bus_error_to_mcp)?
+                    .into_iter()
+                    .map(event_to_dto)
+                    .collect();
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events,
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "deliveries" => {
+                let deliveries =
+                    bus::list_delivery_statuses(&mempal_home, &cwd, request.agent_id.as_deref())
+                        .map_err(bus_error_to_mcp)?
+                        .into_iter()
+                        .map(delivery_status_to_dto)
+                        .collect();
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries,
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "ack" => {
+                let agent_id = required_bus_field(request.agent_id, "agent_id", action)?;
+                let message_id = required_bus_field(request.message_id, "message_id", action)?;
+                let status = bus::ack_delivery(&mempal_home, &cwd, &agent_id, &message_id)
+                    .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: vec![delivery_status_to_dto(status)],
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "heartbeat" => {
+                let agent_id = required_bus_field(request.agent_id, "agent_id", action)?;
+                let record =
+                    bus::heartbeat_agent(&mempal_home, &cwd, &agent_id, request.seen_at.as_deref())
+                        .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: vec![agent_record_to_dto(record)],
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "channel_set" => {
+                let channel = required_bus_field(request.channel, "channel", action)?;
+                if request.agents.is_empty() {
+                    return Err(ErrorData::invalid_params(
+                        "action `channel_set` requires at least one `agents` entry",
+                        None,
+                    ));
+                }
+                let channel = bus::set_channel(&mempal_home, &cwd, &channel, request.agents)
+                    .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: vec![channel_to_dto(channel)],
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "channel_list" => {
+                let channels = bus::list_channels(&mempal_home, &cwd)
+                    .map_err(bus_error_to_mcp)?
+                    .into_iter()
+                    .map(channel_to_dto)
+                    .collect();
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels,
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "channel_send" => {
+                let from = required_bus_field(request.from, "from", action)?;
+                let channel = required_bus_field(request.channel, "channel", action)?;
+                let message = required_bus_field(request.message, "message", action)?;
+                let report = bus::send_channel(
+                    &mempal_home,
+                    &cwd,
+                    from,
+                    channel,
+                    message,
+                    request.thread_id,
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: report.delivered.into_iter().map(delivery_to_dto).collect(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "tmux_peek" => {
+                let agent_id = required_bus_field(request.agent_id, "agent_id", action)?;
+                let peek = bus::tmux_peek_agent(
+                    &mempal_home,
+                    &cwd,
+                    &agent_id,
+                    request.lines.unwrap_or(80),
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: Some(tmux_peek_to_dto(peek)),
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "doctor" => {
+                let report = bus::doctor(
+                    &mempal_home,
+                    &cwd,
+                    request.now.as_deref(),
+                    request.probe_tmux.unwrap_or(false),
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: Some(doctor_to_dto(report)),
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "session_create" => {
+                let session_id = required_bus_field(request.session_id, "session_id", action)?;
+                let title = required_bus_field(request.title, "title", action)?;
+                if request.agents.is_empty() {
+                    return Err(ErrorData::invalid_params(
+                        "action `session_create` requires at least one `agents` entry",
+                        None,
+                    ));
+                }
+                let session = bus::create_session(
+                    &mempal_home,
+                    &cwd,
+                    bus::CreateSessionRequest {
+                        session_id,
+                        title,
+                        goal: request.goal,
+                        agents: request.agents,
+                        channels: if let Some(channel) = request.channel {
+                            vec![channel]
+                        } else {
+                            Vec::new()
+                        },
+                        thread_id: request.thread_id,
+                    },
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: vec![session_to_dto(session)],
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "session_list" => {
+                let sessions = bus::list_sessions(&mempal_home, &cwd)
+                    .map_err(bus_error_to_mcp)?
+                    .into_iter()
+                    .map(session_to_dto)
+                    .collect();
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions,
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "session_status" => {
+                let session_id = required_bus_field(request.session_id, "session_id", action)?;
+                let status = required_bus_field(request.status, "status", action)?;
+                let session = bus::update_session_status(&mempal_home, &cwd, &session_id, &status)
+                    .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: vec![session_to_dto(session)],
+                    handoff: None,
+                    capture: None,
+                }))
+            }
+            "handoff" => {
+                let summary = bus::build_handoff_summary(
+                    &mempal_home,
+                    &cwd,
+                    bus::HandoffFilters {
+                        thread_id: request.thread_id,
+                        channel: request.channel,
+                        session_id: request.session_id,
+                        limit: request.limit,
+                    },
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: Some(handoff_to_dto(summary)),
+                    capture: None,
+                }))
+            }
+            "capture" => {
+                let execute = request.execute.unwrap_or(false);
+                let db = if execute { Some(self.open_db()?) } else { None };
+                let report = bus::capture_handoff_to_memory(
+                    db.as_ref(),
+                    &mempal_home,
+                    &cwd,
+                    bus::CoworkCaptureRequest {
+                        summary_source: request
+                            .summary_source
+                            .unwrap_or_else(|| "handoff".to_string()),
+                        wing: request.wing.unwrap_or_else(|| "cowork-capture".to_string()),
+                        room: request.room,
+                        thread_id: request.thread_id,
+                        channel: request.channel,
+                        session_id: request.session_id,
+                        note: request.note,
+                        execute,
+                    },
+                )
+                .map_err(bus_error_to_mcp)?;
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: Vec::new(),
+                    handoff: None,
+                    capture: Some(capture_to_dto(report)),
+                }))
+            }
+            other => Err(ErrorData::invalid_params(
+                format!(
+                    "unknown action `{other}`: expected register|list|send|broadcast|drain|events|deliveries|ack|heartbeat|channel_set|channel_list|channel_send|tmux_peek|doctor|session_create|session_list|session_status|handoff|capture"
+                ),
+                None,
+            )),
+        }
+    }
+
+    #[tool(
         name = "mempal_fact_check",
         description = "Detect contradictions in text against KG triples + known entities. \
                        Returns SimilarNameConflict (similar-name typos), RelationContradiction \
@@ -2849,6 +3355,244 @@ fn current_rfc3339() -> String {
     let secs = now;
     // Reuse cowork::peek::format_rfc3339 is pub; call it to stay consistent.
     crate::cowork::peek::format_rfc3339(UNIX_EPOCH + std::time::Duration::from_secs(secs as u64))
+}
+
+fn required_bus_field(
+    value: Option<String>,
+    field: &str,
+    action: &str,
+) -> std::result::Result<String, ErrorData> {
+    value.ok_or_else(|| {
+        ErrorData::invalid_params(format!("action `{action}` requires `{field}`"), None)
+    })
+}
+
+fn bus_error_to_mcp(error: BusError) -> ErrorData {
+    match error {
+        BusError::InvalidAgentId(_)
+        | BusError::InvalidTool(_)
+        | BusError::UnsupportedTransport(_)
+        | BusError::InvalidChannel(_)
+        | BusError::InvalidThreadId(_)
+        | BusError::UnknownChannel(_)
+        | BusError::EmptyChannel(_)
+        | BusError::TmuxTargetRequired
+        | BusError::TmuxFailed(_)
+        | BusError::TmuxCaptureFailed(_)
+        | BusError::TmuxProbeFailed(_)
+        | BusError::NotTmuxAgent(_)
+        | BusError::InvalidLineCount(_)
+        | BusError::InvalidSessionId(_)
+        | BusError::EmptySession(_)
+        | BusError::UnknownSession(_)
+        | BusError::InvalidSessionStatus(_)
+        | BusError::UnsupportedCaptureSource(_)
+        | BusError::MissingCaptureDatabase
+        | BusError::InvalidTimestamp(_)
+        | BusError::UnknownSource(_)
+        | BusError::UnknownTarget(_)
+        | BusError::UnknownAgent(_)
+        | BusError::UnknownDelivery(_)
+        | BusError::DeliveryTargetMismatch { .. }
+        | BusError::CannotAckFailed(_)
+        | BusError::SelfSend(_)
+        | BusError::MessageTooLarge(_)
+        | BusError::InboxFull { .. } => ErrorData::invalid_params(error.to_string(), None),
+        BusError::LegacyInbox(_) | BusError::Io(_) | BusError::Json(_) | BusError::Db(_) => {
+            ErrorData::internal_error(error.to_string(), None)
+        }
+    }
+}
+
+fn agent_record_to_dto(record: AgentRecord) -> CoworkBusAgentDto {
+    CoworkBusAgentDto {
+        agent_id: record.agent_id,
+        tool: record.tool,
+        transport: record.transport,
+        tmux_target: record.tmux_target,
+        registered_at: record.registered_at,
+        updated_at: record.updated_at,
+        presence: if record.last_seen_at.is_some() {
+            "online".to_string()
+        } else {
+            "never_seen".to_string()
+        },
+        last_seen_at: record.last_seen_at,
+        pending_count: 0,
+        pending_bytes: 0,
+    }
+}
+
+fn agent_status_to_dto(status: AgentStatus) -> CoworkBusAgentDto {
+    CoworkBusAgentDto {
+        agent_id: status.record.agent_id,
+        tool: status.record.tool,
+        transport: status.record.transport,
+        tmux_target: status.record.tmux_target,
+        registered_at: status.record.registered_at,
+        updated_at: status.record.updated_at,
+        last_seen_at: status.record.last_seen_at,
+        presence: status.presence,
+        pending_count: status.pending_count,
+        pending_bytes: status.pending_bytes,
+    }
+}
+
+fn delivery_to_dto(delivery: DeliveryReport) -> CoworkBusDeliveryDto {
+    CoworkBusDeliveryDto {
+        message_id: delivery.message_id,
+        target_agent_id: delivery.target_agent_id,
+        transport: delivery.transport,
+        inbox_path: delivery
+            .inbox_path
+            .map(|path| path.to_string_lossy().to_string()),
+        inbox_size_after: delivery.inbox_size_after,
+        tmux_target: delivery.tmux_target,
+        thread_id: delivery.thread_id,
+        channel: delivery.channel,
+    }
+}
+
+fn delivery_status_to_dto(
+    status: crate::cowork::bus::DeliveryStatus,
+) -> CoworkBusDeliveryStatusDto {
+    CoworkBusDeliveryStatusDto {
+        message_id: status.message_id,
+        event_type: status.event_type,
+        status: status.status,
+        from: status.from,
+        target_agent_id: status.target_agent_id,
+        transport: status.transport,
+        message_preview: status.message_preview,
+        thread_id: status.thread_id,
+        channel: status.channel,
+        delivered_at: status.delivered_at,
+        updated_at: status.updated_at,
+        acked_by: status.acked_by,
+    }
+}
+
+fn message_to_dto(message: InboxMessage) -> CoworkBusMessageDto {
+    CoworkBusMessageDto {
+        pushed_at: message.pushed_at,
+        from: message.from,
+        content: message.content,
+        thread_id: message.thread_id,
+        channel: message.channel,
+    }
+}
+
+fn event_to_dto(event: crate::cowork::bus::BusEvent) -> CoworkBusEventDto {
+    CoworkBusEventDto {
+        event_id: event.event_id,
+        occurred_at: event.occurred_at,
+        event_type: event.event_type,
+        status: event.status,
+        actor_agent_id: event.actor_agent_id,
+        target_agent_ids: event.target_agent_ids,
+        transport: event.transport,
+        message_preview: event.message_preview,
+        thread_id: event.details.get("thread_id").cloned(),
+        channel: event.details.get("channel").cloned(),
+        details: event.details,
+    }
+}
+
+fn channel_to_dto(channel: crate::cowork::bus::ChannelRecord) -> CoworkBusChannelDto {
+    CoworkBusChannelDto {
+        channel: channel.channel,
+        agents: channel.agents,
+        updated_at: channel.updated_at,
+    }
+}
+
+fn tmux_peek_to_dto(peek: crate::cowork::bus::TmuxPeek) -> CoworkBusTmuxPeekDto {
+    CoworkBusTmuxPeekDto {
+        agent_id: peek.agent_id,
+        tmux_target: peek.tmux_target,
+        lines: peek.lines,
+        content: peek.content,
+    }
+}
+
+fn doctor_to_dto(report: crate::cowork::bus::DoctorReport) -> CoworkBusDoctorDto {
+    CoworkBusDoctorDto {
+        status: report.status,
+        agent_count: report.agent_count,
+        channel_count: report.channel_count,
+        session_count: report.session_count,
+        stale_agents: report.stale_agents,
+        never_seen_agents: report.never_seen_agents,
+        pending_deliveries: report.pending_deliveries,
+        warnings: report.warnings,
+        tmux: report
+            .tmux
+            .into_iter()
+            .map(|probe| CoworkBusTmuxProbeDto {
+                agent_id: probe.agent_id,
+                tmux_target: probe.tmux_target,
+                status: probe.status,
+                detail: probe.detail,
+            })
+            .collect(),
+    }
+}
+
+fn session_to_dto(session: crate::cowork::bus::TeamSession) -> CoworkBusSessionDto {
+    CoworkBusSessionDto {
+        session_id: session.session_id,
+        title: session.title,
+        goal: session.goal,
+        agents: session.agents,
+        channels: session.channels,
+        thread_id: session.thread_id,
+        status: session.status,
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+    }
+}
+
+fn handoff_to_dto(summary: crate::cowork::bus::HandoffSummary) -> CoworkBusHandoffDto {
+    CoworkBusHandoffDto {
+        filters: CoworkBusHandoffFiltersDto {
+            thread_id: summary.filters.thread_id,
+            channel: summary.filters.channel,
+            session_id: summary.filters.session_id,
+            limit: summary.filters.limit,
+        },
+        sessions: summary.sessions.into_iter().map(session_to_dto).collect(),
+        agents: summary
+            .agents
+            .into_iter()
+            .map(|agent| CoworkBusHandoffAgentDto {
+                agent_id: agent.agent_id,
+                tool: agent.tool,
+                presence: agent.presence,
+                pending_count: agent.pending_count,
+            })
+            .collect(),
+        pending_deliveries: summary
+            .pending_deliveries
+            .into_iter()
+            .map(delivery_status_to_dto)
+            .collect(),
+        recent_events: summary
+            .recent_events
+            .into_iter()
+            .map(event_to_dto)
+            .collect(),
+    }
+}
+
+fn capture_to_dto(report: crate::cowork::bus::CoworkCaptureReport) -> CoworkBusCaptureDto {
+    CoworkBusCaptureDto {
+        writes: report.writes,
+        drawer_id: report.drawer_id,
+        wing: report.wing,
+        room: report.room,
+        source: report.source,
+        content: report.content,
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -6408,7 +7152,7 @@ mod tests {
     // mapping. They complement the integration tests in tests/cowork_inbox.rs,
     // which only cover the CLI and inbox layers.
 
-    use super::super::tools::CoworkPushRequest;
+    use super::super::tools::{CoworkBusRequest, CoworkPushRequest};
     use tokio::sync::Mutex as TokioMutex;
 
     // Tests below mutate $HOME env var to point mempal_home() at a tempdir.
@@ -6436,6 +7180,98 @@ mod tests {
         (mempal_home, repo, guard)
     }
 
+    async fn mcp_bus_register(server: &MempalMcpServer, repo: &Path, agent_id: &str, tool: &str) {
+        let response = server
+            .mempal_cowork_bus(Parameters(CoworkBusRequest {
+                action: "register".to_string(),
+                cwd: repo.to_string_lossy().into_owned(),
+                agent_id: Some(agent_id.to_string()),
+                tool: Some(tool.to_string()),
+                transport: None,
+                tmux_target: None,
+                from: None,
+                to: Vec::new(),
+                agents: Vec::new(),
+                message: None,
+                thread_id: None,
+                channel: None,
+                message_id: None,
+                limit: None,
+                now: None,
+                seen_at: None,
+                lines: None,
+                probe_tmux: None,
+                session_id: None,
+                title: None,
+                goal: None,
+                status: None,
+                summary_source: None,
+                wing: None,
+                room: None,
+                note: None,
+                execute: None,
+            }))
+            .await
+            .unwrap_or_else(|e| panic!("register {agent_id} failed: {e}"));
+        assert_eq!(response.0.action, "register");
+    }
+
+    fn bus_request(action: &str, repo: &Path) -> CoworkBusRequest {
+        CoworkBusRequest {
+            action: action.to_string(),
+            cwd: repo.to_string_lossy().into_owned(),
+            agent_id: None,
+            tool: None,
+            transport: None,
+            tmux_target: None,
+            from: None,
+            to: Vec::new(),
+            agents: Vec::new(),
+            message: None,
+            thread_id: None,
+            channel: None,
+            message_id: None,
+            limit: None,
+            now: None,
+            seen_at: None,
+            lines: None,
+            probe_tmux: None,
+            session_id: None,
+            title: None,
+            goal: None,
+            status: None,
+            summary_source: None,
+            wing: None,
+            room: None,
+            note: None,
+            execute: None,
+        }
+    }
+
+    fn install_fake_tmux_for_mcp(tempdir: &TempDir, exit_code: i32) -> PathBuf {
+        let bin_dir = tempdir.path().join("fake-bin");
+        std::fs::create_dir_all(&bin_dir).expect("fake bin");
+        let log_path = tempdir.path().join("tmux.log");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$TMUX_LOG\"\nif [ \"$1\" = \"capture-pane\" ]; then printf 'mcp pane line\\n'; fi\nexit {exit_code}\n"
+        );
+        let tmux_path = bin_dir.join("tmux");
+        std::fs::write(&tmux_path, script).expect("write fake tmux");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&tmux_path).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&tmux_path, perms).unwrap();
+        }
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{old_path}", bin_dir.display()));
+            std::env::set_var("TMUX_LOG", &log_path);
+        }
+        log_path
+    }
+
     #[tokio::test]
     async fn test_mcp_push_without_client_info_rejects_auto_target() {
         let (tempdir, _db_path, server) = setup_server();
@@ -6459,6 +7295,542 @@ mod tests {
         assert!(
             err.to_string().contains("cannot infer"),
             "expected inference error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_register_and_list() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+        mcp_bus_register(&server, &repo, "codex-b", "codex").await;
+
+        let response = server
+            .mempal_cowork_bus(Parameters(bus_request("list", &repo)))
+            .await
+            .expect("list bus");
+        let ids: Vec<String> = response
+            .0
+            .agents
+            .iter()
+            .map(|agent| agent.agent_id.clone())
+            .collect();
+        assert_eq!(ids, vec!["claude-main", "codex-a", "codex-b"]);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_send_drains_only_target() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+        mcp_bus_register(&server, &repo, "codex-b", "codex").await;
+
+        let mut send = bus_request("send", &repo);
+        send.from = Some("claude-main".to_string());
+        send.to = vec!["codex-a".to_string()];
+        send.message = Some("review mcp bus routing".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(send))
+            .await
+            .expect("send bus message");
+        assert_eq!(response.0.delivered.len(), 1);
+        assert_eq!(response.0.delivered[0].target_agent_id, "codex-a");
+
+        let mut drain_a = bus_request("drain", &repo);
+        drain_a.agent_id = Some("codex-a".to_string());
+        let response_a = server
+            .mempal_cowork_bus(Parameters(drain_a))
+            .await
+            .expect("drain codex-a");
+        assert_eq!(response_a.0.messages.len(), 1);
+        assert_eq!(response_a.0.messages[0].content, "review mcp bus routing");
+
+        let mut drain_b = bus_request("drain", &repo);
+        drain_b.agent_id = Some("codex-b".to_string());
+        let response_b = server
+            .mempal_cowork_bus(Parameters(drain_b))
+            .await
+            .expect("drain codex-b");
+        assert!(response_b.0.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_broadcast_fans_out() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+        mcp_bus_register(&server, &repo, "codex-b", "codex").await;
+
+        let mut broadcast = bus_request("broadcast", &repo);
+        broadcast.from = Some("claude-main".to_string());
+        broadcast.to = vec!["codex-a".to_string(), "codex-b".to_string()];
+        broadcast.message = Some("pull latest before continuing".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(broadcast))
+            .await
+            .expect("broadcast bus message");
+        assert_eq!(response.0.delivered.len(), 2);
+
+        for agent_id in ["codex-a", "codex-b"] {
+            let mut drain = bus_request("drain", &repo);
+            drain.agent_id = Some(agent_id.to_string());
+            let response = server
+                .mempal_cowork_bus(Parameters(drain))
+                .await
+                .expect("drain target");
+            assert_eq!(response.0.messages.len(), 1);
+            assert_eq!(
+                response.0.messages[0].content,
+                "pull latest before continuing"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_send_to_tmux_transport_invokes_tmux() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        let log_path = install_fake_tmux_for_mcp(&tempdir, 0);
+
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        let mut register_tmux = bus_request("register", &repo);
+        register_tmux.agent_id = Some("codex-a".to_string());
+        register_tmux.tool = Some("codex".to_string());
+        register_tmux.transport = Some("tmux".to_string());
+        register_tmux.tmux_target = Some("mempal:0.1".to_string());
+        server
+            .mempal_cowork_bus(Parameters(register_tmux))
+            .await
+            .expect("register tmux target");
+
+        let mut send = bus_request("send", &repo);
+        send.from = Some("claude-main".to_string());
+        send.to = vec!["codex-a".to_string()];
+        send.message = Some("mcp tmux hello".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(send))
+            .await
+            .expect("send to tmux target");
+        assert_eq!(response.0.delivered.len(), 1);
+        assert_eq!(response.0.delivered[0].target_agent_id, "codex-a");
+        assert_eq!(response.0.delivered[0].transport, "tmux");
+
+        let log = std::fs::read_to_string(log_path).expect("tmux log");
+        assert!(log.contains("send-keys"), "{log}");
+        assert!(log.contains("mempal:0.1"), "{log}");
+        assert!(
+            log.contains("[mempal bus from claude-main to codex-a] mcp tmux hello"),
+            "{log}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_events_lists_log() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut send = bus_request("send", &repo);
+        send.from = Some("claude-main".to_string());
+        send.to = vec!["codex-a".to_string()];
+        send.message = Some("event replay through mcp".to_string());
+        server
+            .mempal_cowork_bus(Parameters(send))
+            .await
+            .expect("send bus message");
+
+        let mut events = bus_request("events", &repo);
+        events.limit = Some(2);
+        let response = server
+            .mempal_cowork_bus(Parameters(events))
+            .await
+            .expect("list events");
+        assert_eq!(response.0.action, "events");
+        assert_eq!(response.0.events.len(), 2);
+        assert!(
+            response
+                .0
+                .events
+                .iter()
+                .any(|event| event.event_type == "send" && event.status == "delivered")
+        );
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "cowork bus events must not write the db-backed memory store"
+        );
+
+        let mut drain = bus_request("drain", &repo);
+        drain.agent_id = Some("codex-a".to_string());
+        let drained = server
+            .mempal_cowork_bus(Parameters(drain))
+            .await
+            .expect("drain after event replay");
+        assert_eq!(drained.0.messages.len(), 1);
+        assert_eq!(drained.0.messages[0].content, "event replay through mcp");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_deliveries_and_ack() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut send = bus_request("send", &repo);
+        send.from = Some("claude-main".to_string());
+        send.to = vec!["codex-a".to_string()];
+        send.message = Some("ack through mcp".to_string());
+        let sent = server
+            .mempal_cowork_bus(Parameters(send))
+            .await
+            .expect("send bus message");
+        let message_id = sent.0.delivered[0].message_id.clone();
+
+        let mut ack = bus_request("ack", &repo);
+        ack.agent_id = Some("codex-a".to_string());
+        ack.message_id = Some(message_id.clone());
+        let acked = server
+            .mempal_cowork_bus(Parameters(ack))
+            .await
+            .expect("ack delivery");
+        assert_eq!(acked.0.deliveries.len(), 1);
+        assert_eq!(acked.0.deliveries[0].status, "acked");
+
+        let mut deliveries = bus_request("deliveries", &repo);
+        deliveries.agent_id = Some("codex-a".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(deliveries))
+            .await
+            .expect("delivery statuses");
+        assert_eq!(response.0.deliveries.len(), 1);
+        assert_eq!(response.0.deliveries[0].message_id, message_id);
+        assert_eq!(response.0.deliveries[0].status, "acked");
+        assert_eq!(
+            response.0.deliveries[0].acked_by.as_deref(),
+            Some("codex-a")
+        );
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "cowork delivery status must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_heartbeat_and_presence() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut heartbeat = bus_request("heartbeat", &repo);
+        heartbeat.agent_id = Some("codex-a".to_string());
+        heartbeat.seen_at = Some("2026-05-25T00:00:00Z".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(heartbeat))
+            .await
+            .expect("heartbeat");
+        assert_eq!(response.0.action, "heartbeat");
+        assert_eq!(
+            response.0.agents[0].last_seen_at.as_deref(),
+            Some("2026-05-25T00:00:00Z")
+        );
+
+        let mut list = bus_request("list", &repo);
+        list.now = Some("2026-05-25T00:05:00Z".to_string());
+        let listed = server
+            .mempal_cowork_bus(Parameters(list))
+            .await
+            .expect("list presence");
+        assert_eq!(listed.0.agents[0].agent_id, "codex-a");
+        assert_eq!(listed.0.agents[0].presence, "online");
+        assert_eq!(
+            listed.0.agents[0].last_seen_at.as_deref(),
+            Some("2026-05-25T00:00:00Z")
+        );
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "cowork presence must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_channel_send() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+        mcp_bus_register(&server, &repo, "codex-b", "codex").await;
+
+        let mut set = bus_request("channel_set", &repo);
+        set.channel = Some("review".to_string());
+        set.agents = vec!["codex-a".to_string(), "codex-b".to_string()];
+        let set_response = server
+            .mempal_cowork_bus(Parameters(set))
+            .await
+            .expect("set channel");
+        assert_eq!(set_response.0.channels.len(), 1);
+        assert_eq!(set_response.0.channels[0].channel, "review");
+
+        let mut send = bus_request("channel_send", &repo);
+        send.from = Some("claude-main".to_string());
+        send.channel = Some("review".to_string());
+        send.thread_id = Some("p90-review".to_string());
+        send.message = Some("mcp channel send".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(send))
+            .await
+            .expect("send channel");
+        assert_eq!(response.0.delivered.len(), 2);
+        assert!(
+            response
+                .0
+                .delivered
+                .iter()
+                .all(|delivery| delivery.channel.as_deref() == Some("review"))
+        );
+        assert!(
+            response
+                .0
+                .delivered
+                .iter()
+                .all(|delivery| delivery.thread_id.as_deref() == Some("p90-review"))
+        );
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "cowork channels must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_tmux_peek() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        let log_path = install_fake_tmux_for_mcp(&tempdir, 0);
+
+        let mut register_tmux = bus_request("register", &repo);
+        register_tmux.agent_id = Some("codex-a".to_string());
+        register_tmux.tool = Some("codex".to_string());
+        register_tmux.transport = Some("tmux".to_string());
+        register_tmux.tmux_target = Some("mempal:0.1".to_string());
+        server
+            .mempal_cowork_bus(Parameters(register_tmux))
+            .await
+            .expect("register tmux target");
+
+        let mut peek = bus_request("tmux_peek", &repo);
+        peek.agent_id = Some("codex-a".to_string());
+        peek.lines = Some(20);
+        let response = server
+            .mempal_cowork_bus(Parameters(peek))
+            .await
+            .expect("tmux peek");
+        let peek = response.0.tmux_peek.expect("peek payload");
+        assert_eq!(peek.agent_id, "codex-a");
+        assert_eq!(peek.tmux_target, "mempal:0.1");
+        assert_eq!(peek.lines, 20);
+        assert!(peek.content.contains("mcp pane line"));
+        let log = std::fs::read_to_string(log_path).expect("tmux log");
+        assert!(log.contains("capture-pane"), "{log}");
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "tmux peek must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_doctor() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut send = bus_request("send", &repo);
+        send.from = Some("claude-main".to_string());
+        send.to = vec!["codex-a".to_string()];
+        send.message = Some("doctor pending".to_string());
+        server
+            .mempal_cowork_bus(Parameters(send))
+            .await
+            .expect("send");
+
+        let response = server
+            .mempal_cowork_bus(Parameters(bus_request("doctor", &repo)))
+            .await
+            .expect("doctor");
+        let doctor = response.0.doctor.expect("doctor payload");
+        assert_eq!(doctor.pending_deliveries, 1);
+        assert_eq!(doctor.status, "warning");
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "doctor must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_sessions() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut create = bus_request("session_create", &repo);
+        create.session_id = Some("review-1".to_string());
+        create.title = Some("Review 1".to_string());
+        create.agents = vec!["claude-main".to_string(), "codex-a".to_string()];
+        create.thread_id = Some("review-1".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(create))
+            .await
+            .expect("create session");
+        assert_eq!(response.0.sessions[0].session_id, "review-1");
+
+        let response = server
+            .mempal_cowork_bus(Parameters(bus_request("session_list", &repo)))
+            .await
+            .expect("list sessions");
+        assert_eq!(response.0.sessions.len(), 1);
+        assert_eq!(
+            response.0.sessions[0].thread_id.as_deref(),
+            Some("review-1")
+        );
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "sessions must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_handoff() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut create = bus_request("session_create", &repo);
+        create.session_id = Some("review-1".to_string());
+        create.title = Some("Review 1".to_string());
+        create.agents = vec!["claude-main".to_string(), "codex-a".to_string()];
+        server
+            .mempal_cowork_bus(Parameters(create))
+            .await
+            .expect("create session");
+
+        let mut send = bus_request("send", &repo);
+        send.from = Some("claude-main".to_string());
+        send.to = vec!["codex-a".to_string()];
+        send.message = Some("handoff pending".to_string());
+        server
+            .mempal_cowork_bus(Parameters(send))
+            .await
+            .expect("send");
+
+        let response = server
+            .mempal_cowork_bus(Parameters(bus_request("handoff", &repo)))
+            .await
+            .expect("handoff");
+        let handoff = response.0.handoff.expect("handoff payload");
+        assert_eq!(handoff.sessions.len(), 1);
+        assert_eq!(handoff.pending_deliveries.len(), 1);
+        assert!(
+            !mempal_home.join("palace.db").exists(),
+            "handoff must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_capture() {
+        let (tempdir, db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+
+        let mut dry_run = bus_request("capture", &repo);
+        dry_run.summary_source = Some("handoff".to_string());
+        let response = server
+            .mempal_cowork_bus(Parameters(dry_run))
+            .await
+            .expect("capture dry run");
+        let capture = response.0.capture.expect("capture payload");
+        assert!(!capture.writes);
+        assert!(!db_path.exists(), "dry-run capture must not open palace.db");
+
+        let mut execute = bus_request("capture", &repo);
+        execute.summary_source = Some("handoff".to_string());
+        execute.execute = Some(true);
+        let response = server
+            .mempal_cowork_bus(Parameters(execute))
+            .await
+            .expect("capture execute");
+        let capture = response.0.capture.expect("capture payload");
+        assert!(capture.writes);
+        let drawer_id = capture.drawer_id.expect("drawer id");
+        let db = Database::open(&db_path).expect("open db");
+        assert!(
+            db.get_drawer(&drawer_id)
+                .expect("get drawer")
+                .expect("drawer exists")
+                .content
+                .contains("Cowork Handoff Capture")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_rejects_invalid_action_and_addressing() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (_mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut bad_id = bus_request("register", &repo);
+        bad_id.agent_id = Some("bad/id".to_string());
+        bad_id.tool = Some("codex".to_string());
+        let err = match server.mempal_cowork_bus(Parameters(bad_id)).await {
+            Err(error) => error,
+            Ok(_) => panic!("bad agent id must fail"),
+        };
+        assert!(err.to_string().contains("invalid agent id"));
+
+        let mut self_send = bus_request("send", &repo);
+        self_send.from = Some("codex-a".to_string());
+        self_send.to = vec!["codex-a".to_string()];
+        self_send.message = Some("self".to_string());
+        let err = match server.mempal_cowork_bus(Parameters(self_send)).await {
+            Err(error) => error,
+            Ok(_) => panic!("self-send must fail"),
+        };
+        assert!(err.to_string().contains("cannot send to self"));
+
+        let err = match server
+            .mempal_cowork_bus(Parameters(bus_request("unknown", &repo)))
+            .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("unknown action must fail"),
+        };
+        assert!(err.to_string().contains("unknown action"));
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_cowork_bus() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_cowork_bus")
+            .expect("mempal_cowork_bus tool exists");
+        let description = tool.description.as_deref().unwrap_or_default();
+        assert!(description.contains("Multi-agent cowork bus"));
+        assert!(description.contains("agent_id"));
+        assert!(description.contains("register/list/send/broadcast/drain"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_cowork_bus"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("concrete agent_id"));
+        assert!(
+            crate::core::protocol::MEMORY_PROTOCOL
+                .contains("separate from legacy mempal_cowork_push")
         );
     }
 

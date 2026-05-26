@@ -1479,6 +1479,283 @@ pub struct CoworkPushResponse {
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct CoworkBusRequest {
+    /// Action to execute. P85+ uses one MCP tool so agents do not need many
+    /// separate tool names for the same multi-agent bus.
+    pub action: String,
+
+    /// Absolute filesystem path of the project cwd. Internally normalized to
+    /// git repo root so all agents in one project share the same bus registry.
+    pub cwd: String,
+
+    /// Concrete target/current agent id for register/drain actions.
+    #[serde(default)]
+    pub agent_id: Option<String>,
+
+    /// Tool family/name for register action, e.g. "claude" or "codex".
+    #[serde(default)]
+    pub tool: Option<String>,
+
+    /// Transport metadata for register action. Defaults to "inbox".
+    #[serde(default)]
+    pub transport: Option<String>,
+
+    /// Optional tmux target for `transport=tmux`.
+    #[serde(default)]
+    pub tmux_target: Option<String>,
+
+    /// Concrete source agent id for send/broadcast actions.
+    #[serde(default)]
+    pub from: Option<String>,
+
+    /// Concrete target agent ids for send/broadcast actions.
+    #[serde(default)]
+    pub to: Vec<String>,
+
+    /// Concrete agent ids for channel_set action.
+    #[serde(default)]
+    pub agents: Vec<String>,
+
+    /// Message body for send/broadcast actions.
+    #[serde(default)]
+    pub message: Option<String>,
+
+    /// Optional thread id metadata for send/broadcast/channel_send actions.
+    #[serde(default)]
+    pub thread_id: Option<String>,
+
+    /// Optional channel name for send/broadcast metadata and channel actions.
+    #[serde(default)]
+    pub channel: Option<String>,
+
+    /// Delivery event id for action "ack".
+    #[serde(default)]
+    pub message_id: Option<String>,
+
+    /// Optional max number of latest events for action "events".
+    #[serde(default)]
+    pub limit: Option<usize>,
+
+    /// Optional RFC3339 timestamp for deterministic list presence checks.
+    #[serde(default)]
+    pub now: Option<String>,
+
+    /// Optional RFC3339 timestamp for action "heartbeat".
+    #[serde(default)]
+    pub seen_at: Option<String>,
+
+    /// Optional line count for action "tmux_peek".
+    #[serde(default)]
+    pub lines: Option<usize>,
+
+    /// Optional tmux reachability probe for action "doctor".
+    #[serde(default)]
+    pub probe_tmux: Option<bool>,
+
+    /// Session id for session and handoff/capture actions.
+    #[serde(default)]
+    pub session_id: Option<String>,
+
+    /// Session title for action "session_create".
+    #[serde(default)]
+    pub title: Option<String>,
+
+    /// Session goal for action "session_create".
+    #[serde(default)]
+    pub goal: Option<String>,
+
+    /// Session status for action "session_status".
+    #[serde(default)]
+    pub status: Option<String>,
+
+    /// Capture summary source for action "capture".
+    #[serde(default)]
+    pub summary_source: Option<String>,
+
+    /// Evidence wing for action "capture".
+    #[serde(default)]
+    pub wing: Option<String>,
+
+    /// Evidence room for action "capture".
+    #[serde(default)]
+    pub room: Option<String>,
+
+    /// Optional note for action "capture".
+    #[serde(default)]
+    pub note: Option<String>,
+
+    /// Explicit write switch for action "capture".
+    #[serde(default)]
+    pub execute: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusResponse {
+    pub action: String,
+    pub agents: Vec<CoworkBusAgentDto>,
+    pub delivered: Vec<CoworkBusDeliveryDto>,
+    pub messages: Vec<CoworkBusMessageDto>,
+    pub events: Vec<CoworkBusEventDto>,
+    pub deliveries: Vec<CoworkBusDeliveryStatusDto>,
+    pub channels: Vec<CoworkBusChannelDto>,
+    pub tmux_peek: Option<CoworkBusTmuxPeekDto>,
+    pub doctor: Option<CoworkBusDoctorDto>,
+    pub sessions: Vec<CoworkBusSessionDto>,
+    pub handoff: Option<CoworkBusHandoffDto>,
+    pub capture: Option<CoworkBusCaptureDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusAgentDto {
+    pub agent_id: String,
+    pub tool: String,
+    pub transport: String,
+    pub tmux_target: Option<String>,
+    pub registered_at: String,
+    pub updated_at: String,
+    pub last_seen_at: Option<String>,
+    pub presence: String,
+    pub pending_count: usize,
+    pub pending_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusDeliveryDto {
+    pub message_id: String,
+    pub target_agent_id: String,
+    pub transport: String,
+    pub inbox_path: Option<String>,
+    pub inbox_size_after: Option<u64>,
+    pub tmux_target: Option<String>,
+    pub thread_id: Option<String>,
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusMessageDto {
+    pub pushed_at: String,
+    pub from: String,
+    pub content: String,
+    pub thread_id: Option<String>,
+    pub channel: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusEventDto {
+    pub event_id: String,
+    pub occurred_at: String,
+    pub event_type: String,
+    pub status: String,
+    pub actor_agent_id: Option<String>,
+    pub target_agent_ids: Vec<String>,
+    pub transport: Option<String>,
+    pub message_preview: Option<String>,
+    pub thread_id: Option<String>,
+    pub channel: Option<String>,
+    pub details: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusDeliveryStatusDto {
+    pub message_id: String,
+    pub event_type: String,
+    pub status: String,
+    pub from: String,
+    pub target_agent_id: String,
+    pub transport: String,
+    pub message_preview: Option<String>,
+    pub thread_id: Option<String>,
+    pub channel: Option<String>,
+    pub delivered_at: String,
+    pub updated_at: String,
+    pub acked_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusChannelDto {
+    pub channel: String,
+    pub agents: Vec<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusTmuxPeekDto {
+    pub agent_id: String,
+    pub tmux_target: String,
+    pub lines: usize,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusDoctorDto {
+    pub status: String,
+    pub agent_count: usize,
+    pub channel_count: usize,
+    pub session_count: usize,
+    pub stale_agents: usize,
+    pub never_seen_agents: usize,
+    pub pending_deliveries: usize,
+    pub warnings: Vec<String>,
+    pub tmux: Vec<CoworkBusTmuxProbeDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusTmuxProbeDto {
+    pub agent_id: String,
+    pub tmux_target: String,
+    pub status: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusSessionDto {
+    pub session_id: String,
+    pub title: String,
+    pub goal: Option<String>,
+    pub agents: Vec<String>,
+    pub channels: Vec<String>,
+    pub thread_id: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusHandoffDto {
+    pub filters: CoworkBusHandoffFiltersDto,
+    pub sessions: Vec<CoworkBusSessionDto>,
+    pub agents: Vec<CoworkBusHandoffAgentDto>,
+    pub pending_deliveries: Vec<CoworkBusDeliveryStatusDto>,
+    pub recent_events: Vec<CoworkBusEventDto>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusHandoffFiltersDto {
+    pub thread_id: Option<String>,
+    pub channel: Option<String>,
+    pub session_id: Option<String>,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusHandoffAgentDto {
+    pub agent_id: String,
+    pub tool: String,
+    pub presence: String,
+    pub pending_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct CoworkBusCaptureDto {
+    pub writes: bool,
+    pub drawer_id: Option<String>,
+    pub wing: String,
+    pub room: Option<String>,
+    pub source: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct FactCheckRequest {
     /// Text to check for contradictions against KG triples + known entities.
     pub text: String,

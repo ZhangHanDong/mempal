@@ -134,6 +134,22 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p79-rollback-executor-policy.spec.md` | 完成 | P79 rollback executor policy：`phase3 rollback-control card-context` / `mempal_phase3 action=rollback_control` 将 rollback evidence 转成可执行的默认关闭策略 |
 | `specs/p80-autonomous-promotion-boundary-audit.spec.md` | 完成 | P80 autonomous promotion boundary audit：明确 autonomous promotion 当前出界，human-gated lifecycle authority 是最终治理边界 |
 | `specs/p81-self-evolution-completion-audit.spec.md` | 完成 | P81 self-evolution completion audit：按 P80 human-gated 边界审计完整自进化 agent 系统目标并确认完成 |
+| `specs/p82-opt-in-runtime-instrumentation-wrapper.spec.md` | 完成 | P82 opt-in runtime instrumentation wrapper：`mempal phase3 adoption wrap` 显式包裹一次 child command，并通过 P72/P69 checked capture 记录 runtime adoption evidence |
+| `specs/p83-cognitive-brief.spec.md` | 完成 | P83 cognitive brief：`mempal brief` 生成 deterministic citation-first brief，组织 key facts / evidence / cards / uncertainty / next actions，不调用 LLM、不写 DB |
+| `specs/p84-multi-agent-cowork-bus.spec.md` | 完成 | P84 multi-agent cowork bus：`agent_id` registry + per-agent inbox + CLI send/broadcast/drain/status，支持同项目多 agent 实例隔离通信 |
+| `specs/p85-mcp-multi-agent-cowork-bus.spec.md` | 完成 | P85 MCP multi-agent cowork bus：`mempal_cowork_bus` 暴露 register/list/send/broadcast/drain，让 agent runtime 使用 concrete `agent_id` 总线 |
+| `specs/p86-tmux-cowork-transport.spec.md` | 完成 | P86 tmux cowork transport：`transport=tmux` 显式使用 `tmux send-keys` 投递到 concrete agent pane，不经 shell、不 fallback 到 inbox |
+| `specs/p87-cowork-bus-event-log.spec.md` | 完成 | P87 cowork bus event log：`events.jsonl` append-only 记录 register/send/broadcast/drain/tmux failure，并通过 `cowork-events` / `mempal_cowork_bus action=events` 回放 |
+| `specs/p88-cowork-delivery-ack-status.spec.md` | 完成 | P88 cowork delivery ack/status：delivery event id 作为 `message_id`，通过 `cowork-deliveries` / `cowork-ack` 和 MCP `deliveries` / `ack` 回放 pending/drained/acked/failed |
+| `specs/p89-cowork-agent-presence.spec.md` | 完成 | P89 cowork agent presence：显式 `cowork-heartbeat` / MCP `heartbeat` 更新 `last_seen_at`，`cowork-agents` / MCP `list` 推导 online/stale/never_seen |
+| `specs/p90-cowork-threads-channels.spec.md` | 完成 | P90 cowork threads/channels：send/broadcast/channel_send 支持 `thread_id` / `channel` 元数据，`cowork-channel-set` / MCP `channel_set` 管理 channel membership |
+| `specs/p91-tmux-live-peek.spec.md` | 完成 | P91 tmux live peek：`cowork-tmux-peek` / MCP `tmux_peek` 只读捕获已注册 tmux agent pane，不写 events/inbox/registry/DB |
+| `specs/p92-multi-agent-runbook.spec.md` | 完成 | P92 multi-agent cowork runbook：`docs/COWORK-RUNBOOK.md` + `cowork-runbook` read-only CLI 固化三方/多方 agent 操作流程 |
+| `specs/p93-cowork-doctor.spec.md` | 完成 | P93 cowork doctor：`cowork-doctor` / MCP `doctor` 只读诊断 registry、presence、pending deliveries、sessions、channels、可选 tmux probe |
+| `specs/p94-cowork-team-session.spec.md` | 完成 | P94 cowork team session：runtime `sessions.json` + CLI/MCP session create/list/status，不写 palace.db |
+| `specs/p95-cowork-handoff-summary.spec.md` | 完成 | P95 cowork handoff summary：`cowork-handoff` / MCP `handoff` 汇总 sessions、agents、pending deliveries、recent events，支持 thread/channel/session filter |
+| `specs/p96-cowork-memory-capture.spec.md` | 完成 | P96 cowork memory capture：`cowork-capture` / MCP `capture` 显式把 handoff summary 写入 evidence drawer，默认 dry-run |
+| `specs/p97-maintenance-runbook.spec.md` | 完成 | P97 maintenance runbook：`docs/MAINTENANCE-RUNBOOK.md` + `maintenance-runbook` read-only CLI 固化 research->evidence->knowledge/card->context/adoption/cowork capture 维护流程 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -220,6 +236,22 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-13-p79-rollback-executor-policy.md` — P79 rollback executor policy（已完成）
 - `docs/plans/2026-05-13-p80-autonomous-promotion-boundary-audit.md` — P80 autonomous promotion boundary audit（已完成）
 - `docs/plans/2026-05-13-p81-self-evolution-completion-audit.md` — P81 self-evolution completion audit（已完成）
+- `docs/plans/2026-05-25-p82-opt-in-runtime-instrumentation-wrapper.md` — P82 opt-in runtime instrumentation wrapper（已完成）
+- `docs/plans/2026-05-25-p83-cognitive-brief.md` — P83 cognitive brief（已完成）
+- `docs/plans/2026-05-25-p84-multi-agent-cowork-bus.md` — P84 multi-agent cowork bus（已完成）
+- `docs/plans/2026-05-25-p85-mcp-multi-agent-cowork-bus.md` — P85 MCP multi-agent cowork bus（已完成）
+- `docs/plans/2026-05-25-p86-tmux-cowork-transport.md` — P86 tmux cowork transport（已完成）
+- `docs/plans/2026-05-25-p87-cowork-bus-event-log.md` — P87 cowork bus event log（已完成）
+- `docs/plans/2026-05-25-p88-cowork-delivery-ack-status.md` — P88 cowork delivery ack/status（已完成）
+- `docs/plans/2026-05-25-p89-cowork-agent-presence.md` — P89 cowork agent presence（已完成）
+- `docs/plans/2026-05-25-p90-cowork-threads-channels.md` — P90 cowork threads/channels（已完成）
+- `docs/plans/2026-05-25-p91-tmux-live-peek.md` — P91 tmux live peek（已完成）
+- `docs/plans/2026-05-26-p92-multi-agent-runbook.md` — P92 multi-agent cowork runbook（已完成）
+- `docs/plans/2026-05-26-p93-cowork-doctor.md` — P93 cowork doctor（已完成）
+- `docs/plans/2026-05-26-p94-cowork-team-session.md` — P94 cowork team session（已完成）
+- `docs/plans/2026-05-26-p95-cowork-handoff-summary.md` — P95 cowork handoff summary（已完成）
+- `docs/plans/2026-05-26-p96-cowork-memory-capture.md` — P96 cowork memory capture（已完成）
+- `docs/plans/2026-05-26-p97-maintenance-runbook.md` — P97 maintenance runbook（已完成）
 
 ### Spec 使用方式
 
@@ -240,7 +272,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
 - **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，17 条规则
 
-## MCP 工具（19 个）
+## MCP 工具（21 个）
 
 | 工具 | 作用 |
 |------|------|
@@ -263,6 +295,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_tunnels` | 跨 Wing 链接发现 |
 | `mempal_peek_partner` | 读 partner agent 当前 session（live，不存储） |
 | `mempal_cowork_push` | 主动投递 ephemeral handoff 到 partner inbox（at-next-submit 交付） |
+| `mempal_cowork_bus` | 多 agent concrete `agent_id` 总线：register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/handoff/capture，支持 opt-in `transport=tmux`、event replay、delivery ack/status、presence、group channels、read-only tmux pane peek、诊断、session、handoff summary、显式 handoff-to-evidence capture（P85/P86/P87/P88/P89/P90/P91/P93/P94/P95/P96） |
 | `mempal_fact_check` | 离线矛盾检测（SimilarNameConflict / RelationContradiction / StaleFact）—— P9 |
 
 ## mempal 检索纪律

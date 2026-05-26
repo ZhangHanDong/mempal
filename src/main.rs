@@ -3,6 +3,7 @@ use std::env;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 #[cfg(feature = "rest")]
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use clap::{Parser, Subcommand};
 use mempal::aaak::{AaakCodec, AaakMeta};
 #[cfg(feature = "rest")]
 use mempal::api::{ApiState, DEFAULT_REST_ADDR, serve as serve_rest_api};
+use mempal::brief::{BriefRequest, CognitiveBrief, assemble_brief};
 use mempal::context::{ContextPack, ContextRequest, assemble_context};
 use mempal::core::{
     anchor,
@@ -151,6 +153,21 @@ enum Commands {
         #[arg(long = "dao-tian-limit", default_value_t = 1)]
         dao_tian_limit: usize,
     },
+    Brief {
+        query: String,
+        #[arg(long, default_value = "general")]
+        field: String,
+        #[arg(long, default_value = "project")]
+        domain: String,
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+        #[arg(long, default_value_t = 12)]
+        max_items: usize,
+        #[arg(long = "dao-tian-limit", default_value_t = 1)]
+        dao_tian_limit: usize,
+    },
     WakeUp {
         #[arg(long)]
         format: Option<String>,
@@ -258,11 +275,230 @@ enum Commands {
         #[arg(long)]
         cwd: PathBuf,
     },
+    /// Print the multi-agent cowork runbook.
+    CoworkRunbook {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     /// Install cowork hooks: Claude Code (project-level .claude/hooks)
     /// and optionally Codex (global ~/.codex/hooks.json merge).
     CoworkInstallHooks {
         #[arg(long, default_value_t = false)]
         global_codex: bool,
+    },
+    /// Register or update a concrete agent instance in the multi-agent cowork
+    /// bus.
+    CoworkRegister {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        tool: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, default_value = "inbox")]
+        transport: String,
+        #[arg(long)]
+        tmux_target: Option<String>,
+    },
+    /// Send one ephemeral message to one concrete agent id.
+    CoworkSend {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        message: String,
+        #[arg(long)]
+        thread_id: Option<String>,
+        #[arg(long)]
+        channel: Option<String>,
+    },
+    /// Fan out one ephemeral message to several concrete agent ids.
+    CoworkBroadcast {
+        #[arg(long)]
+        from: String,
+        #[arg(long = "to", required = true)]
+        to: Vec<String>,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        message: String,
+        #[arg(long)]
+        thread_id: Option<String>,
+        #[arg(long)]
+        channel: Option<String>,
+    },
+    /// Drain one concrete agent id's multi-agent bus inbox.
+    CoworkAgentDrain {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// List registered concrete agents and their per-agent inbox state.
+    CoworkAgents {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        now: Option<String>,
+    },
+    /// Replay append-only multi-agent cowork bus events.
+    CoworkEvents {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// Acknowledge one delivery message id for a concrete agent.
+    CoworkAck {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        message_id: String,
+    },
+    /// Replay delivery status derived from the multi-agent cowork event log.
+    CoworkDeliveries {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        agent_id: Option<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// Update one concrete agent's explicit heartbeat timestamp.
+    CoworkHeartbeat {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        seen_at: Option<String>,
+    },
+    /// Replace one channel membership list with concrete agent ids.
+    CoworkChannelSet {
+        #[arg(long)]
+        channel: String,
+        #[arg(long = "agent", required = true)]
+        agent: Vec<String>,
+        #[arg(long)]
+        cwd: PathBuf,
+    },
+    /// Send one message to all current members of a channel.
+    CoworkChannelSend {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        channel: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        message: String,
+        #[arg(long)]
+        thread_id: Option<String>,
+    },
+    /// Read-only capture of a registered tmux agent pane.
+    CoworkTmuxPeek {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, default_value_t = 80)]
+        lines: usize,
+    },
+    /// Diagnose multi-agent cowork bus runtime state.
+    CoworkDoctor {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        now: Option<String>,
+        #[arg(long)]
+        probe_tmux: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// Create or replace a runtime team session.
+    CoworkSessionCreate {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        goal: Option<String>,
+        #[arg(long = "agent", required = true)]
+        agent: Vec<String>,
+        #[arg(long = "channel")]
+        channel: Vec<String>,
+        #[arg(long)]
+        thread_id: Option<String>,
+    },
+    /// List runtime team sessions.
+    CoworkSessions {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// Update a runtime team session status.
+    CoworkSessionStatus {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        status: String,
+    },
+    /// Build a deterministic multi-agent handoff summary.
+    CoworkHandoff {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        thread_id: Option<String>,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// Explicitly capture a cowork handoff summary into evidence memory.
+    CoworkCapture {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, default_value = "handoff")]
+        summary_source: String,
+        #[arg(long, default_value = "cowork-capture")]
+        wing: String,
+        #[arg(long)]
+        room: Option<String>,
+        #[arg(long)]
+        thread_id: Option<String>,
+        #[arg(long)]
+        channel: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// Print the governed maintenance runbook.
+    MaintenanceRunbook {
+        #[arg(long, default_value = "plain")]
+        format: String,
     },
 }
 
@@ -722,6 +958,36 @@ enum Phase3AdoptionCommands {
         #[arg(long, default_value = "plain")]
         format: String,
     },
+    Wrap {
+        #[arg(long)]
+        surface: String,
+        #[arg(long, default_value = "auto")]
+        outcome: String,
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long = "context-hash")]
+        context_hash: Option<String>,
+        #[arg(long = "card-id")]
+        card_id: Option<String>,
+        #[arg(long = "evaluator-id")]
+        evaluator_id: Option<String>,
+        #[arg(long = "research-report-id")]
+        research_report_id: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long = "metadata-json")]
+        metadata_json: Option<String>,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long = "allow-warnings")]
+        allow_warnings: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
     CheckRecord {
         #[arg(long)]
         track: String,
@@ -910,8 +1176,190 @@ async fn run() -> Result<()> {
         Commands::CoworkStatus { cwd } => {
             return cowork_status_command(cwd);
         }
+        Commands::CoworkRunbook { format } => {
+            return static_runbook_command(
+                "Multi-Agent Cowork Runbook",
+                include_str!("../docs/COWORK-RUNBOOK.md"),
+                &format,
+            );
+        }
         Commands::CoworkInstallHooks { global_codex } => {
             return cowork_install_hooks_command(global_codex);
+        }
+        Commands::CoworkRegister {
+            agent_id,
+            tool,
+            cwd,
+            transport,
+            tmux_target,
+        } => {
+            return cowork_register_command(agent_id, tool, cwd, transport, tmux_target);
+        }
+        Commands::CoworkSend {
+            from,
+            to,
+            cwd,
+            message,
+            thread_id,
+            channel,
+        } => {
+            return cowork_send_command(
+                from,
+                vec![to],
+                cwd,
+                message,
+                mempal::cowork::bus::SendOperation::Send,
+                thread_id,
+                channel,
+            );
+        }
+        Commands::CoworkBroadcast {
+            from,
+            to,
+            cwd,
+            message,
+            thread_id,
+            channel,
+        } => {
+            return cowork_send_command(
+                from,
+                to,
+                cwd,
+                message,
+                mempal::cowork::bus::SendOperation::Broadcast,
+                thread_id,
+                channel,
+            );
+        }
+        Commands::CoworkAgentDrain {
+            agent_id,
+            cwd,
+            format,
+        } => {
+            return cowork_agent_drain_command(agent_id, cwd, format);
+        }
+        Commands::CoworkAgents { cwd, now } => {
+            return cowork_agents_command(cwd, now);
+        }
+        Commands::CoworkEvents { cwd, limit, format } => {
+            return cowork_events_command(cwd, limit, format);
+        }
+        Commands::CoworkAck {
+            agent_id,
+            cwd,
+            message_id,
+        } => {
+            return cowork_ack_command(agent_id, cwd, message_id);
+        }
+        Commands::CoworkDeliveries {
+            cwd,
+            agent_id,
+            format,
+        } => {
+            return cowork_deliveries_command(cwd, agent_id, format);
+        }
+        Commands::CoworkHeartbeat {
+            agent_id,
+            cwd,
+            seen_at,
+        } => {
+            return cowork_heartbeat_command(agent_id, cwd, seen_at);
+        }
+        Commands::CoworkChannelSet {
+            channel,
+            agent,
+            cwd,
+        } => {
+            return cowork_channel_set_command(channel, agent, cwd);
+        }
+        Commands::CoworkChannelSend {
+            from,
+            channel,
+            cwd,
+            message,
+            thread_id,
+        } => {
+            return cowork_channel_send_command(from, channel, cwd, message, thread_id);
+        }
+        Commands::CoworkTmuxPeek {
+            agent_id,
+            cwd,
+            lines,
+        } => {
+            return cowork_tmux_peek_command(agent_id, cwd, lines);
+        }
+        Commands::CoworkDoctor {
+            cwd,
+            now,
+            probe_tmux,
+            format,
+        } => {
+            return cowork_doctor_command(cwd, now, probe_tmux, format);
+        }
+        Commands::CoworkSessionCreate {
+            cwd,
+            session_id,
+            title,
+            goal,
+            agent,
+            channel,
+            thread_id,
+        } => {
+            return cowork_session_create_command(
+                cwd, session_id, title, goal, agent, channel, thread_id,
+            );
+        }
+        Commands::CoworkSessions { cwd, format } => {
+            return cowork_sessions_command(cwd, format);
+        }
+        Commands::CoworkSessionStatus {
+            cwd,
+            session_id,
+            status,
+        } => {
+            return cowork_session_status_command(cwd, session_id, status);
+        }
+        Commands::CoworkHandoff {
+            cwd,
+            thread_id,
+            channel,
+            session_id,
+            limit,
+            format,
+        } => {
+            return cowork_handoff_command(cwd, thread_id, channel, session_id, limit, format);
+        }
+        Commands::CoworkCapture {
+            cwd,
+            summary_source,
+            wing,
+            room,
+            thread_id,
+            channel,
+            session_id,
+            note,
+            execute,
+            format,
+        } => {
+            return cowork_capture_command(CoworkCaptureCommandArgs {
+                cwd,
+                summary_source,
+                wing,
+                room,
+                thread_id,
+                channel,
+                session_id,
+                note,
+                execute,
+                format,
+            });
+        }
+        Commands::MaintenanceRunbook { format } => {
+            return static_runbook_command(
+                "Maintenance Runbook",
+                include_str!("../docs/MAINTENANCE-RUNBOOK.md"),
+                &format,
+            );
         }
         // All other commands fall through to the db-backed dispatch below.
         _ => {}
@@ -1012,6 +1460,30 @@ async fn run() -> Result<()> {
             )
             .await
         }
+        Commands::Brief {
+            query,
+            field,
+            domain,
+            cwd,
+            format,
+            max_items,
+            dao_tian_limit,
+        } => {
+            brief_command(
+                &db,
+                &config,
+                BriefCommandArgs {
+                    query,
+                    field,
+                    domain,
+                    cwd,
+                    format,
+                    max_items,
+                    dao_tian_limit,
+                },
+            )
+            .await
+        }
         Commands::Delete { drawer_id } => delete_command(&db, &drawer_id),
         Commands::Purge { before } => purge_command(&db, before.as_deref()),
         Commands::WakeUp { format } => wake_up_command(&db, format.as_deref()),
@@ -1040,7 +1512,27 @@ async fn run() -> Result<()> {
         // Cowork commands were already dispatched above and returned early.
         Commands::CoworkDrain { .. }
         | Commands::CoworkStatus { .. }
-        | Commands::CoworkInstallHooks { .. } => unreachable!(),
+        | Commands::CoworkRunbook { .. }
+        | Commands::CoworkInstallHooks { .. }
+        | Commands::CoworkRegister { .. }
+        | Commands::CoworkSend { .. }
+        | Commands::CoworkBroadcast { .. }
+        | Commands::CoworkAgentDrain { .. }
+        | Commands::CoworkAgents { .. }
+        | Commands::CoworkEvents { .. }
+        | Commands::CoworkAck { .. }
+        | Commands::CoworkDeliveries { .. }
+        | Commands::CoworkHeartbeat { .. }
+        | Commands::CoworkChannelSet { .. }
+        | Commands::CoworkChannelSend { .. }
+        | Commands::CoworkTmuxPeek { .. }
+        | Commands::CoworkDoctor { .. }
+        | Commands::CoworkSessionCreate { .. }
+        | Commands::CoworkSessions { .. }
+        | Commands::CoworkSessionStatus { .. }
+        | Commands::CoworkHandoff { .. }
+        | Commands::CoworkCapture { .. }
+        | Commands::MaintenanceRunbook { .. } => unreachable!(),
     }
 }
 
@@ -1063,6 +1555,16 @@ struct ContextCommandArgs {
     include_evidence: bool,
     include_cards: bool,
     no_include_cards: bool,
+    max_items: usize,
+    dao_tian_limit: usize,
+}
+
+struct BriefCommandArgs {
+    query: String,
+    field: String,
+    domain: String,
+    cwd: Option<PathBuf>,
+    format: String,
     max_items: usize,
     dao_tian_limit: usize,
 }
@@ -1307,6 +1809,49 @@ async fn context_command(db: &Database, config: &Config, args: ContextCommandArg
     Ok(())
 }
 
+async fn brief_command(db: &Database, config: &Config, args: BriefCommandArgs) -> Result<()> {
+    if args.max_items == 0 {
+        bail!("--max-items must be greater than 0");
+    }
+    if !matches!(args.format.as_str(), "plain" | "json") {
+        bail!("unsupported brief format: {}", args.format);
+    }
+    let domain = parse_domain(&args.domain)?;
+    let cwd = match args.cwd {
+        Some(cwd) => cwd,
+        None => env::current_dir().context("failed to read current directory")?,
+    };
+
+    let embedder = build_embedder(config).await?;
+    let brief = assemble_brief(
+        db,
+        &*embedder,
+        BriefRequest {
+            query: args.query,
+            domain,
+            field: args.field,
+            cwd,
+            max_items: args.max_items,
+            dao_tian_limit: args.dao_tian_limit,
+        },
+    )
+    .await?;
+
+    match args.format.as_str() {
+        "plain" => print_brief_plain(&brief),
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&brief)
+                    .context("failed to serialize cognitive brief")?
+            );
+        }
+        _ => unreachable!("brief format was validated before embedding"),
+    }
+
+    Ok(())
+}
+
 fn parse_domain(value: &str) -> Result<MemoryDomain> {
     match value {
         "project" => Ok(MemoryDomain::Project),
@@ -1494,6 +2039,96 @@ fn build_cli_search_result(result: mempal::core::types::SearchResult) -> CliSear
         anchor_kind: anchor_kind_slug(&result.anchor_kind).to_string(),
         anchor_id: result.anchor_id,
         parent_anchor_id: result.parent_anchor_id,
+    }
+}
+
+fn print_brief_plain(brief: &CognitiveBrief) {
+    println!("## Summary");
+    println!("{}", brief.summary.narrative);
+
+    println!("## Key Facts");
+    if brief.key_facts.is_empty() {
+        println!("- none");
+    } else {
+        for fact in &brief.key_facts {
+            println!("- {}", fact.text);
+            println!("  drawer: {}", fact.citation.drawer_id);
+            println!("  source: {}", fact.citation.source_file);
+        }
+    }
+
+    println!("## Evidence");
+    if brief.evidence.is_empty() {
+        println!("- none");
+    } else {
+        for evidence in &brief.evidence {
+            println!("- {}", evidence.text);
+            println!("  drawer: {}", evidence.citation.drawer_id);
+            println!("  source: {}", evidence.citation.source_file);
+        }
+    }
+
+    println!("## Cards");
+    if brief.cards.is_empty() {
+        println!("- none");
+    } else {
+        for card in &brief.cards {
+            println!("- {}", card.text);
+            println!("  card: {}", card.card_id);
+            println!("  drawer: {}", card.citation.drawer_id);
+            println!("  source: {}", card.citation.source_file);
+            for citation in &card.evidence_citations {
+                println!(
+                    "  evidence: {} role={}",
+                    citation.evidence_drawer_id,
+                    knowledge_evidence_role_slug(&citation.role)
+                );
+            }
+        }
+    }
+
+    println!("## Entities");
+    if brief.entities.is_empty() {
+        println!("- none");
+    } else {
+        for entity in &brief.entities {
+            println!("- {entity}");
+        }
+    }
+
+    println!("## Unresolved");
+    if brief.unresolved_items.is_empty() {
+        println!("- none");
+    } else {
+        for item in &brief.unresolved_items {
+            println!("- {}", item.text);
+            println!("  drawer: {}", item.citation.drawer_id);
+            println!("  source: {}", item.citation.source_file);
+        }
+    }
+
+    println!("## Uncertainty");
+    if brief.uncertainty.is_empty() {
+        println!("- none");
+    } else {
+        for item in &brief.uncertainty {
+            println!("- {}: {}", item.kind, item.message);
+            for citation in &item.citations {
+                println!(
+                    "  citation: {} {}",
+                    citation.drawer_id, citation.source_file
+                );
+            }
+        }
+    }
+
+    println!("## Next Actions");
+    if brief.next_actions.is_empty() {
+        println!("- none");
+    } else {
+        for action in &brief.next_actions {
+            println!("- {action}");
+        }
     }
 }
 
@@ -2690,6 +3325,47 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             }
             print_runtime_adoption_capture(&report, &format)
         }
+        Phase3AdoptionCommands::Wrap {
+            surface,
+            outcome,
+            query,
+            context_hash,
+            card_id,
+            evaluator_id,
+            research_report_id,
+            note,
+            metadata_json,
+            id,
+            execute,
+            allow_warnings,
+            format,
+            command,
+        } => {
+            let report = phase3_adoption_wrap_command(
+                db,
+                RuntimeAdoptionWrapArgs {
+                    surface,
+                    outcome,
+                    query,
+                    context_hash,
+                    card_id,
+                    evaluator_id,
+                    research_report_id,
+                    note,
+                    metadata_json,
+                    id,
+                    execute,
+                    allow_warnings,
+                    command,
+                },
+            )?;
+            let exit_code = report.child_exit_code;
+            print_runtime_adoption_wrap(&report, &format)?;
+            if exit_code != 0 {
+                std::process::exit(exit_code);
+            }
+            Ok(())
+        }
         Phase3AdoptionCommands::CheckRecord {
             track,
             signal,
@@ -2916,6 +3592,116 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
     }
 }
 
+struct RuntimeAdoptionWrapArgs {
+    surface: String,
+    outcome: String,
+    query: Option<String>,
+    context_hash: Option<String>,
+    card_id: Option<String>,
+    evaluator_id: Option<String>,
+    research_report_id: Option<String>,
+    note: Option<String>,
+    metadata_json: Option<String>,
+    id: Option<String>,
+    execute: bool,
+    allow_warnings: bool,
+    command: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct RuntimeAdoptionWrapReport {
+    writes: bool,
+    execute: bool,
+    surface: String,
+    outcome: String,
+    child_exit_code: i32,
+    child_stdout: String,
+    child_stderr: String,
+    capture: RuntimeAdoptionCaptureReport,
+}
+
+fn phase3_adoption_wrap_command(
+    db: &Database,
+    args: RuntimeAdoptionWrapArgs,
+) -> Result<RuntimeAdoptionWrapReport> {
+    let (program, argv) = args
+        .command
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("child command is required after `--`"))?;
+    let output = ProcessCommand::new(program)
+        .args(argv)
+        .output()
+        .with_context(|| format!("failed to execute child command `{program}`"))?;
+    let child_exit_code = output.status.code().unwrap_or(1);
+    let outcome = match args.outcome.as_str() {
+        "auto" => {
+            if child_exit_code == 0 {
+                "accepted".to_string()
+            } else {
+                "rejected".to_string()
+            }
+        }
+        other => other.to_string(),
+    };
+    let metadata = args
+        .metadata_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .context("failed to parse --metadata-json")?;
+    let record_input = capture_runtime_adoption_record_input(RuntimeAdoptionCaptureInput {
+        id: args.id,
+        surface: args.surface.clone(),
+        outcome: outcome.clone(),
+        query: args.query,
+        context_hash: args.context_hash,
+        card_id: args.card_id,
+        evaluator_id: args.evaluator_id,
+        research_report_id: args.research_report_id,
+        note: args.note,
+        metadata,
+    })
+    .map_err(anyhow::Error::msg)?;
+    let mut capture = prepare_runtime_adoption_capture(
+        args.surface.clone(),
+        outcome.clone(),
+        args.execute,
+        record_input.clone(),
+    );
+    if args.execute {
+        let track = parse_runtime_adoption_track(&record_input.track)?;
+        let signal = parse_runtime_adoption_signal(&record_input.signal)?;
+        let should_write =
+            should_write_checked_record(&capture.record_quality, args.allow_warnings);
+        let event = if should_write {
+            let event = runtime_adoption_event_from_input(record_input, track, signal);
+            db.insert_runtime_adoption_event(&event)
+                .context("failed to insert runtime adoption event")?;
+            Some(event)
+        } else {
+            None
+        };
+        capture.writes = event.is_some();
+        capture.record_checked = Some(RuntimeAdoptionCheckedRecordReport {
+            writes: event.is_some(),
+            blocked: event.is_none(),
+            record_quality: capture.record_quality.clone(),
+            event,
+        });
+    }
+
+    Ok(RuntimeAdoptionWrapReport {
+        writes: capture.writes,
+        execute: args.execute,
+        surface: args.surface,
+        outcome,
+        child_exit_code,
+        child_stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        child_stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        capture,
+    })
+}
+
 fn runtime_adoption_event_from_input(
     input: RuntimeAdoptionRecordPlanInput,
     track: RuntimeAdoptionTrack,
@@ -3021,6 +3807,47 @@ fn print_runtime_adoption_capture(
                 "{}",
                 serde_json::to_string_pretty(report)
                     .context("failed to serialize runtime adoption capture report")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption format: {other}"),
+    }
+}
+
+fn print_runtime_adoption_wrap(report: &RuntimeAdoptionWrapReport, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("writes={}", report.writes);
+            println!("execute={}", report.execute);
+            println!("surface={}", report.surface);
+            println!("outcome={}", report.outcome);
+            println!("child_exit_code={}", report.child_exit_code);
+            if !report.child_stdout.is_empty() {
+                println!("child_stdout={}", report.child_stdout);
+            }
+            if !report.child_stderr.is_empty() {
+                println!("child_stderr={}", report.child_stderr);
+            }
+            println!("quality={}", report.capture.record_quality.quality);
+            if let Some(checked) = report.capture.record_checked.as_ref() {
+                println!("blocked={}", checked.blocked);
+                if let Some(event) = checked.event.as_ref() {
+                    println!("event_id={}", event.id);
+                }
+            }
+            for error in &report.capture.record_quality.errors {
+                println!("error={error}");
+            }
+            for warning in &report.capture.record_quality.warnings {
+                println!("warning={warning}");
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize runtime adoption wrap report")?
             );
             Ok(())
         }
@@ -4721,6 +5548,456 @@ fn expand_home(path: &str) -> PathBuf {
     }
 
     PathBuf::from(path)
+}
+
+fn cowork_register_command(
+    agent_id: String,
+    tool: String,
+    cwd: PathBuf,
+    transport: String,
+    tmux_target: Option<String>,
+) -> Result<()> {
+    use mempal::cowork::bus::{self, RegisterAgentRequest};
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let record = bus::register_agent(
+        &mempal_home,
+        &cwd,
+        RegisterAgentRequest {
+            agent_id,
+            tool,
+            transport,
+            tmux_target,
+        },
+    )?;
+    println!(
+        "registered agent {} tool={} transport={}",
+        record.agent_id, record.tool, record.transport
+    );
+    if let Some(tmux_target) = record.tmux_target {
+        println!("tmux_target={tmux_target}");
+    }
+    Ok(())
+}
+
+fn cowork_send_command(
+    from: String,
+    to: Vec<String>,
+    cwd: PathBuf,
+    message: String,
+    operation: mempal::cowork::bus::SendOperation,
+    thread_id: Option<String>,
+    channel: Option<String>,
+) -> Result<()> {
+    use mempal::cowork::bus::{self, SendRequest};
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let report = bus::send(
+        &mempal_home,
+        &cwd,
+        SendRequest {
+            from,
+            targets: to,
+            message,
+            operation,
+            thread_id,
+            channel,
+        },
+    )?;
+    print_delivery_report(report.delivered);
+    Ok(())
+}
+
+fn print_delivery_report(deliveries: Vec<mempal::cowork::bus::DeliveryReport>) {
+    for delivery in deliveries {
+        let thread = delivery
+            .thread_id
+            .as_ref()
+            .map(|thread_id| format!(" thread={thread_id}"))
+            .unwrap_or_default();
+        let channel = delivery
+            .channel
+            .as_ref()
+            .map(|channel| format!(" channel={channel}"))
+            .unwrap_or_default();
+        match delivery.transport.as_str() {
+            "inbox" => println!(
+                "sent to {} message_id={} transport=inbox{}{} inbox={} bytes={}",
+                delivery.target_agent_id,
+                delivery.message_id,
+                thread,
+                channel,
+                delivery
+                    .inbox_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                delivery.inbox_size_after.unwrap_or_default()
+            ),
+            "tmux" => println!(
+                "sent to {} message_id={} transport=tmux{}{} tmux_target={}",
+                delivery.target_agent_id,
+                delivery.message_id,
+                thread,
+                channel,
+                delivery.tmux_target.unwrap_or_default()
+            ),
+            other => println!("sent to {} transport={other}", delivery.target_agent_id),
+        }
+    }
+}
+
+fn cowork_agent_drain_command(agent_id: String, cwd: PathBuf, format: String) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let messages = bus::drain_agent(&mempal_home, &cwd, &agent_id)?;
+    if messages.is_empty() {
+        return Ok(());
+    }
+    match format.as_str() {
+        "plain" => {
+            print!("{}", bus::format_agent_plain(&agent_id, &messages));
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
+fn cowork_agents_command(cwd: PathBuf, now: Option<String>) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let statuses = bus::list_agent_status_at(&mempal_home, &cwd, now.as_deref())?;
+    println!("Project: {}", cwd.display());
+    println!();
+    if statuses.is_empty() {
+        println!("no registered agents");
+        return Ok(());
+    }
+    for status in statuses {
+        let record = status.record;
+        println!(
+            "{}: tool={} transport={} presence={} last_seen_at={} pending={} bytes={}",
+            record.agent_id,
+            record.tool,
+            record.transport,
+            status.presence,
+            record.last_seen_at.as_deref().unwrap_or("-"),
+            status.pending_count,
+            status.pending_bytes
+        );
+        if let Some(tmux_target) = record.tmux_target {
+            println!("  tmux_target={tmux_target}");
+        }
+        for msg in status.preview {
+            println!("  from {} @ {}: {}", msg.from, msg.pushed_at, msg.content);
+        }
+    }
+    Ok(())
+}
+
+fn cowork_heartbeat_command(agent_id: String, cwd: PathBuf, seen_at: Option<String>) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let record = bus::heartbeat_agent(&mempal_home, &cwd, &agent_id, seen_at.as_deref())?;
+    println!(
+        "heartbeat agent_id={} last_seen_at={}",
+        record.agent_id,
+        record.last_seen_at.unwrap_or_default()
+    );
+    Ok(())
+}
+
+fn cowork_channel_set_command(channel: String, agents: Vec<String>, cwd: PathBuf) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let record = bus::set_channel(&mempal_home, &cwd, &channel, agents)?;
+    println!(
+        "channel {} agents={}",
+        record.channel,
+        record.agents.join(",")
+    );
+    Ok(())
+}
+
+fn cowork_channel_send_command(
+    from: String,
+    channel: String,
+    cwd: PathBuf,
+    message: String,
+    thread_id: Option<String>,
+) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let report = bus::send_channel(&mempal_home, &cwd, from, channel, message, thread_id)?;
+    print_delivery_report(report.delivered);
+    Ok(())
+}
+
+fn cowork_tmux_peek_command(agent_id: String, cwd: PathBuf, lines: usize) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let peek = bus::tmux_peek_agent(&mempal_home, &cwd, &agent_id, lines)?;
+    print!("{}", peek.content);
+    Ok(())
+}
+
+fn static_runbook_command(title: &str, content: &str, format: &str) -> Result<()> {
+    match format {
+        "plain" => {
+            print!("{content}");
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "title": title,
+                    "content": content,
+                }))?
+            );
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
+fn cowork_doctor_command(
+    cwd: PathBuf,
+    now: Option<String>,
+    probe_tmux: bool,
+    format: String,
+) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let report = bus::doctor(&mempal_home, &cwd, now.as_deref(), probe_tmux)?;
+    match format.as_str() {
+        "plain" => {
+            print!("{}", bus::format_doctor_plain(&report));
+            Ok(())
+        }
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
+fn cowork_session_create_command(
+    cwd: PathBuf,
+    session_id: String,
+    title: String,
+    goal: Option<String>,
+    agents: Vec<String>,
+    channels: Vec<String>,
+    thread_id: Option<String>,
+) -> Result<()> {
+    use mempal::cowork::bus::{self, CreateSessionRequest};
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let session = bus::create_session(
+        &mempal_home,
+        &cwd,
+        CreateSessionRequest {
+            session_id,
+            title,
+            goal,
+            agents,
+            channels,
+            thread_id,
+        },
+    )?;
+    println!(
+        "session {} status={} agents={}",
+        session.session_id,
+        session.status,
+        session.agents.join(",")
+    );
+    Ok(())
+}
+
+fn cowork_sessions_command(cwd: PathBuf, format: String) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let sessions = bus::list_sessions(&mempal_home, &cwd)?;
+    match format.as_str() {
+        "plain" => {
+            print!("{}", bus::format_sessions_plain(&sessions));
+            Ok(())
+        }
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&sessions)?);
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
+fn cowork_session_status_command(cwd: PathBuf, session_id: String, status: String) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let session = bus::update_session_status(&mempal_home, &cwd, &session_id, &status)?;
+    println!("session {} status={}", session.session_id, session.status);
+    Ok(())
+}
+
+fn cowork_handoff_command(
+    cwd: PathBuf,
+    thread_id: Option<String>,
+    channel: Option<String>,
+    session_id: Option<String>,
+    limit: Option<usize>,
+    format: String,
+) -> Result<()> {
+    use mempal::cowork::bus::{self, HandoffFilters};
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let summary = bus::build_handoff_summary(
+        &mempal_home,
+        &cwd,
+        HandoffFilters {
+            thread_id,
+            channel,
+            session_id,
+            limit,
+        },
+    )?;
+    match format.as_str() {
+        "plain" => {
+            print!("{}", bus::format_handoff_plain(&summary));
+            Ok(())
+        }
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
+struct CoworkCaptureCommandArgs {
+    cwd: PathBuf,
+    summary_source: String,
+    wing: String,
+    room: Option<String>,
+    thread_id: Option<String>,
+    channel: Option<String>,
+    session_id: Option<String>,
+    note: Option<String>,
+    execute: bool,
+    format: String,
+}
+
+fn cowork_capture_command(args: CoworkCaptureCommandArgs) -> Result<()> {
+    use mempal::cowork::bus::{self, CoworkCaptureRequest};
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let db = if args.execute {
+        let config = Config::load().context("failed to load config")?;
+        Some(Database::open(&expand_home(&config.db_path)).context("failed to open database")?)
+    } else {
+        None
+    };
+    let report = bus::capture_handoff_to_memory(
+        db.as_ref(),
+        &mempal_home,
+        &args.cwd,
+        CoworkCaptureRequest {
+            summary_source: args.summary_source,
+            wing: args.wing,
+            room: args.room,
+            thread_id: args.thread_id,
+            channel: args.channel,
+            session_id: args.session_id,
+            note: args.note,
+            execute: args.execute,
+        },
+    )?;
+    match args.format.as_str() {
+        "plain" => {
+            print!("{}", bus::format_capture_plain(&report));
+            Ok(())
+        }
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
+fn cowork_events_command(cwd: PathBuf, limit: Option<usize>, format: String) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let events = bus::list_events(&mempal_home, &cwd, limit)?;
+    match format.as_str() {
+        "plain" => {
+            print!("{}", bus::format_events_plain(&events));
+            Ok(())
+        }
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&events)?);
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
+fn cowork_ack_command(agent_id: String, cwd: PathBuf, message_id: String) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let status = bus::ack_delivery(&mempal_home, &cwd, &agent_id, &message_id)?;
+    println!(
+        "acked message_id={} agent_id={} status={}",
+        status.message_id, status.target_agent_id, status.status
+    );
+    Ok(())
+}
+
+fn cowork_deliveries_command(cwd: PathBuf, agent_id: Option<String>, format: String) -> Result<()> {
+    use mempal::cowork::bus;
+    use mempal::cowork::inbox;
+
+    let mempal_home = inbox::mempal_home();
+    let deliveries = bus::list_delivery_statuses(&mempal_home, &cwd, agent_id.as_deref())?;
+    match format.as_str() {
+        "plain" => {
+            print!("{}", bus::format_delivery_statuses_plain(&deliveries));
+            Ok(())
+        }
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&deliveries)?);
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
 }
 
 /// `mempal cowork-drain` — called by UserPromptSubmit hooks. Always exits

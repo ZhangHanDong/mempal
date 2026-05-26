@@ -1676,6 +1676,396 @@ human/operator-triggered lifecycle command, that is a new objective and must be
 opened as a separate P-level spec with its own evidence, rollback, safety, and
 acceptance criteria.
 
+## Post-P81 Opt-In Instrumentation
+
+P82 implements the first concrete `opt_in_wrapper` allowed by P77. CLI
+`mempal phase3 adoption wrap` explicitly runs one child command after `--`,
+observes its exit status, maps `0` to `accepted` and non-zero to `rejected`
+unless `--outcome` overrides the mapping, and returns a wrapper report with the
+child exit code plus the nested capture report.
+
+P82 preserves the governed runtime boundary:
+
+- no hooks, daemons, background workers, or silent capture are installed
+- no MCP-side shell command execution is added
+- no runtime adoption event is written unless `--execute` is supplied
+- all writes reuse P72 capture mapping and P69 checked-record quality gates
+- warning-quality captures remain blocked unless `--allow-warnings` is supplied
+- non-zero child exits are propagated after the wrapper report is emitted
+
+This makes runtime evidence capture less manual while keeping instrumentation
+explicit, opt-in, quality-gated, and reversible through existing rollback
+evidence policies.
+
+## Cognitive Brief
+
+P83 adds `mempal brief`, the first deterministic cognitive brief surface. It
+does not replace `mempal search` or `mempal context`; it uses the existing
+context assembly path with evidence and cards enabled, then organizes the result
+into a citation-first report.
+
+The P83 brief contains:
+
+- key facts from governed knowledge/context items
+- cited evidence items
+- active knowledge cards and their linked evidence citations
+- simple entity cues extracted from cited text
+- unresolved-item cues such as action items, blockers, or remaining work
+- uncertainty signals such as missing evidence, missing governed knowledge,
+  missing cards, unresolved work, or conflict/stale language
+- deterministic next actions
+
+P83 deliberately avoids LLM synthesis, MCP command execution, schema changes,
+fact-check side effects, dream-cycle maintenance, or runtime adoption writes.
+Its purpose is to make the system "read for you" in a safe first step: organize
+cited memory into an actionable brief while preserving uncertainty instead of
+hallucinating confidence.
+
+## Multi-Agent Cowork Bus
+
+P84 upgrades cowork from a two-tool Claude/Codex pair protocol into a
+project-scoped multi-agent bus. The old P8 path routes to tool-family inboxes
+such as `claude` or `codex`; that is insufficient when one project has one
+Claude Code instance and multiple Codex instances, because both Codex instances
+race on the same shared `codex` inbox.
+
+The P84 bus introduces stable `agent_id` addressing:
+
+- `cowork-register` records concrete instances such as `claude-main`,
+  `codex-a`, and `codex-b`
+- `cowork-send` targets one concrete `agent_id`
+- `cowork-broadcast` fans out independent inbox copies to multiple targets
+- `cowork-agent-drain` drains one concrete agent inbox
+- `cowork-agents` lists registered agents and pending per-agent inbox state
+
+State lives under `~/.mempal/cowork-bus/<encoded_project_identity>/`, outside
+`palace.db`. P84 remains ephemeral and file-backed: it does not write drawers,
+cards, runtime adoption events, audit entries, or schema state. The legacy
+`cowork-drain --target claude|codex` and `mempal_cowork_push` path remains
+available unchanged for backward compatibility.
+
+P84 stores optional transport metadata but only inbox delivery is active. tmux
+send/capture is intentionally left to the next P-level task so that instance
+identity and per-agent routing are proven before adding a more invasive
+terminal-injection transport.
+
+## MCP Multi-Agent Cowork Bus
+
+P85 exposes the P84 bus to agent runtimes through one MCP tool:
+`mempal_cowork_bus`. This is the point where the bus becomes usable by agents
+directly, not only by shell commands.
+
+The MCP surface is action-based:
+
+- `action=register` registers or updates a concrete `agent_id`
+- `action=list` reports project bus agents and pending inbox counts
+- `action=send` delivers one message to one concrete target
+- `action=broadcast` fans out independent inbox copies to multiple targets
+- `action=drain` returns and consumes one concrete agent's inbox
+
+P85 deliberately does not infer concrete instances from MCP `client_info.name`.
+Client names can identify a tool family such as Codex, but they cannot
+distinguish `codex-a` from `codex-b`. The multi-agent bus therefore requires
+explicit `agent_id` values and remains separate from legacy
+`mempal_cowork_push`, which is still the simpler Claude<->Codex partner
+handoff path.
+
+The MCP tool uses the same file-backed bus state under
+`~/.mempal/cowork-bus/<encoded_project_identity>/`. It does not write
+`palace.db`, drawers, cards, runtime adoption events, or schema state. tmux
+transport remains a later layer on top of the now-explicit agent registry and
+per-agent routing model.
+
+## Tmux Cowork Transport
+
+P86 activates tmux as an explicit transport for the multi-agent bus. `inbox`
+remains the default safe path. A target agent can opt into near-real-time pane
+delivery by registering with `transport=tmux` and a concrete `tmux_target`.
+
+Example:
+
+```bash
+mempal cowork-register \
+  --agent-id codex-a \
+  --tool codex \
+  --cwd "$PWD" \
+  --transport tmux \
+  --tmux-target mempal:0.1
+```
+
+After that, `cowork-send`, `cowork-broadcast`, and
+`mempal_cowork_bus action=send|broadcast` use the same transport-aware bus core.
+For tmux targets, mempal invokes the local `tmux` binary directly with
+`std::process::Command`; it does not execute through a shell. The delivered text
+is a plain envelope containing source agent id, target agent id, and message
+content.
+
+P86 intentionally does not silently fall back to inbox if tmux fails. A tmux
+transport target means "deliver to this pane"; if that pane or binary is
+unavailable, the send fails and no inbox copy is written. This prevents
+ambiguous double-delivery semantics where a pane may receive a message and then
+later drain the same message from an inbox.
+
+This gives mempal three cowork layers:
+
+- legacy partner handoff: `mempal_cowork_push` for Claude<->Codex pairs
+- multi-agent bus inbox: explicit `agent_id` routing with per-agent inbox files
+- tmux transport: explicit pane delivery for registered concrete agents
+
+## Cowork Bus Event Log
+
+P87 adds an operational event log to the multi-agent bus. Communication is no
+longer only "fire and inspect inbox"; every important bus action also appends a
+JSON Lines event under:
+
+```text
+~/.mempal/cowork-bus/<encoded_project_identity>/events.jsonl
+```
+
+The event stream records:
+
+- `register` events when a concrete agent id is registered or updated
+- `send` and `broadcast` delivery events for successful inbox or tmux delivery
+- `send` / `broadcast` failure events for tmux hard failures
+- `drain` events when an agent drains its per-agent inbox
+
+Replay is intentionally read-only. `mempal cowork-events --cwd <repo>` and
+`mempal_cowork_bus action=events` list the operational event stream; they do
+not redeliver messages, drain inboxes, trigger tmux, or ingest anything into
+`palace.db`. Message bodies are represented as bounded `message_preview`
+fields, so the event stream is an operational audit trail rather than a second
+durable memory store.
+
+This is the first runtime-ops layer above P84-P86. It gives later delivery
+ack/status, presence, thread/channel, and tmux peek work a shared evidence
+source for "what happened on the bus" without changing the core memory schema.
+
+## Cowork Delivery Ack And Status
+
+P88 derives delivery status from the P87 event stream. There is no mutable
+status table and no database migration. The event id of each successful or
+failed delivery is the `message_id` surfaced to CLI and MCP callers.
+
+Status is computed by replaying `events.jsonl`:
+
+- `pending`: delivery succeeded and has not been drained or acked
+- `drained`: a later drain event consumed the target agent's inbox message
+- `acked`: the target agent explicitly appended an ack event for that
+  `message_id`
+- `failed`: the original delivery event was a hard transport failure
+
+The user-facing surfaces are:
+
+```bash
+mempal cowork-deliveries --cwd "$PWD" --agent-id codex-a
+mempal cowork-ack --cwd "$PWD" --agent-id codex-a --message-id evt-...
+```
+
+The MCP surface reuses `mempal_cowork_bus` with `action=deliveries` and
+`action=ack`. Ack is explicit and append-only: it does not mutate inbox files,
+does not redeliver messages, and does not write `palace.db`. This keeps the
+bus operationally observable while preserving the original ephemeral cowork
+boundary.
+
+## Cowork Agent Presence
+
+P89 adds explicit heartbeat-based presence. Registration gives each concrete
+agent a `last_seen_at`, and agents can refresh it with:
+
+```bash
+mempal cowork-heartbeat --cwd "$PWD" --agent-id codex-a
+```
+
+Presence is derived when listing agents:
+
+- `online`: last seen within the default 10 minute stale threshold
+- `stale`: last seen exists but is older than the stale threshold
+- `never_seen`: legacy or hand-edited records without `last_seen_at`
+
+The same semantics are exposed through `mempal_cowork_bus action=heartbeat`
+and `action=list`. This remains an explicit signal: mempal does not install a
+daemon, does not infer liveness from tmux panes, and does not silently record
+background heartbeat events. That keeps presence useful for coordination
+without pretending to know more than the agent instances have explicitly
+reported.
+
+## Cowork Threads And Channels
+
+P90 adds two coordination scopes above raw agent addressing:
+
+- `thread_id` separates work streams such as `p90-review` or `release-audit`
+- `channel` names a group of concrete agents such as `review` or `frontend`
+
+Direct `cowork-send` and `cowork-broadcast` can attach `thread_id` and
+`channel` metadata. The metadata is carried into bus inbox messages, events,
+and delivery status replay, so a receiver can see which work stream a message
+belongs to when draining its inbox.
+
+Channels are explicit registry entries, not inferred from tool family names:
+
+```bash
+mempal cowork-channel-set \
+  --cwd "$PWD" \
+  --channel review \
+  --agent codex-a \
+  --agent codex-b
+
+mempal cowork-channel-send \
+  --cwd "$PWD" \
+  --from claude-main \
+  --channel review \
+  --thread-id p90-review \
+  --message "review this patch"
+```
+
+`cowork-channel-set` replaces membership for one channel, and
+`cowork-channel-send` fans out through the same delivery core as broadcast. The
+MCP surface exposes the same behavior as `mempal_cowork_bus`
+`action=channel_set|channel_list|channel_send`.
+
+P90 still does not make channels durable memory. They are operational routing
+state under `~/.mempal/cowork-bus/<project>/`, and they do not write
+`palace.db`.
+
+## Cowork Tmux Live Peek
+
+P91 completes the tmux runtime-ops loop by adding explicit read-only pane
+inspection for agents registered with `transport=tmux` and a concrete
+`tmux_target`.
+
+```bash
+mempal cowork-tmux-peek \
+  --cwd "$PWD" \
+  --agent-id codex-a \
+  --lines 80
+```
+
+The MCP surface is `mempal_cowork_bus action=tmux_peek`. Both CLI and MCP use
+the same adapter: a direct `std::process::Command` invocation of the local
+`tmux` binary with `capture-pane`. It is not executed through a shell, and it
+does not discover panes automatically. The registered `tmux_target` is the
+authority.
+
+Peek is deliberately not delivery. It does not append `events.jsonl`, does not
+write an inbox message, does not update channel or agent registry state, and
+does not write `palace.db`. Capture failure is a hard error rather than a
+fallback to inbox or legacy `mempal_peek_partner`.
+
+This preserves the separation between:
+
+- agent live observation: read-only tmux pane capture
+- operational communication: inbox/tmux send through the cowork bus
+- durable memory: explicit ingest into the palace database
+
+## Multi-Agent Cowork Runbook
+
+P92 makes the multi-agent runtime surfaces operationally usable by adding the
+authoritative [COWORK-RUNBOOK](COWORK-RUNBOOK.md) plus a read-only CLI surface:
+
+```bash
+mempal cowork-runbook --format plain
+mempal cowork-runbook --format json
+```
+
+The runbook describes concrete agent registration, direct send, broadcast,
+channels, threads, drain, delivery status, ack, presence, tmux delivery, tmux
+peek, doctor, sessions, handoff summaries, and explicit memory capture. Reading
+the runbook does not touch `~/.mempal` or `palace.db`.
+
+## Cowork Doctor
+
+P93 adds deterministic runtime diagnostics:
+
+```bash
+mempal cowork-doctor --cwd "$PWD"
+mempal cowork-doctor --cwd "$PWD" --probe-tmux --format json
+```
+
+The MCP equivalent is `mempal_cowork_bus action=doctor`. Doctor checks registry
+size, channel count, session count, stale or never-seen agents, pending
+deliveries, and optional tmux target reachability. tmux probing uses direct
+`tmux has-session -t <target>` invocation, not a shell.
+
+Doctor is read-only. It does not append events, drain inboxes, update
+heartbeats, repair state, or write memory.
+
+## Cowork Team Sessions
+
+P94 adds runtime team sessions stored under:
+
+```text
+~/.mempal/cowork-bus/<encoded_project_identity>/sessions.json
+```
+
+Sessions bind a collaboration goal to concrete agents, optional channels, and
+an optional thread id:
+
+```bash
+mempal cowork-session-create \
+  --cwd "$PWD" \
+  --session-id p94-review \
+  --title "P94 review" \
+  --agent claude-main \
+  --agent codex-a \
+  --thread-id p94-review
+
+mempal cowork-sessions --cwd "$PWD"
+mempal cowork-session-status --cwd "$PWD" --session-id p94-review --status paused
+```
+
+The MCP actions are `session_create`, `session_list`, and `session_status`.
+Session changes append operational events, but they do not become durable
+project memory and they do not change message delivery semantics.
+
+## Cowork Handoff Summary
+
+P95 adds deterministic handoff summaries:
+
+```bash
+mempal cowork-handoff --cwd "$PWD"
+mempal cowork-handoff --cwd "$PWD" --thread-id p95-review --format json
+```
+
+The MCP action is `mempal_cowork_bus action=handoff`. A handoff summarizes
+active sessions, agents and presence, pending deliveries, and recent events. It
+supports `thread_id`, `channel`, `session_id`, and `limit` filters. It does not
+call an LLM, drain inboxes, ack deliveries, or persist memory.
+
+## Cowork Memory Capture
+
+P96 adds the explicit bridge from runtime cowork state to durable evidence:
+
+```bash
+mempal cowork-capture \
+  --cwd "$PWD" \
+  --summary-source handoff \
+  --session-id p95-review \
+  --execute \
+  --format json
+```
+
+The MCP action is `mempal_cowork_bus action=capture`. Capture defaults to
+dry-run. With `--execute` / `execute=true`, it writes one evidence drawer under
+wing `cowork-capture` by default. It does not capture raw tmux pane text, does
+not promote knowledge, does not create knowledge cards, and does not alter
+delivery status. This keeps runtime communication ephemeral unless an agent or
+human explicitly crosses the memory boundary.
+
+## Maintenance Runbook
+
+P97 adds the authoritative [MAINTENANCE-RUNBOOK](MAINTENANCE-RUNBOOK.md) plus a
+read-only CLI:
+
+```bash
+mempal maintenance-runbook --format plain
+mempal maintenance-runbook --format json
+```
+
+The runbook stitches together research validation, research evidence ingest,
+knowledge distill, card lifecycle gates, context adoption, runtime adoption
+review, rollback, cowork handoff, and explicit cowork capture. It is a
+checklist for dream-cycle style maintenance, not a daemon or scheduler.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

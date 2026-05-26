@@ -3,6 +3,7 @@
 pub mod aaak;
 #[cfg(feature = "rest")]
 pub mod api;
+pub mod brief;
 pub mod context;
 pub mod core;
 pub mod cowork;

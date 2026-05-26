@@ -1362,6 +1362,175 @@ fn test_cli_phase3_adoption_capture_rejects_unknown_surface() {
 }
 
 #[test]
+fn test_cli_phase3_adoption_wrap_dry_run_executes_child_without_writing() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "wrap",
+            "--surface",
+            "runtime-context",
+            "--query",
+            "context pack",
+            "--format",
+            "json",
+            "--",
+            "sh",
+            "-c",
+            "printf wrapper-child; exit 0",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "wrap dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("wrap json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["execute"], false);
+    assert_eq!(report["child_exit_code"], 0);
+    assert_eq!(report["child_stdout"], "wrapper-child");
+    assert_eq!(report["outcome"], "accepted");
+    assert_eq!(report["capture"]["record_quality"]["quality"], "ready");
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert!(
+        db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+            .expect("events")
+            .is_empty()
+    );
+}
+
+#[test]
+fn test_cli_phase3_adoption_wrap_execute_writes_ready_event() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "wrap",
+            "--surface",
+            "runtime-context",
+            "--query",
+            "context pack",
+            "--note",
+            "wrapper helped",
+            "--execute",
+            "--format",
+            "json",
+            "--",
+            "sh",
+            "-c",
+            "exit 0",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "wrap execute failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("wrap json");
+    assert_eq!(report["writes"], true);
+    assert_eq!(report["capture"]["record_checked"]["blocked"], false);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    let events = db
+        .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+        .expect("events");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].signal, RuntimeAdoptionSignal::Accepted);
+}
+
+#[test]
+fn test_cli_phase3_adoption_wrap_failure_maps_rejected_and_exits_nonzero() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "wrap",
+            "--surface",
+            "runtime-context",
+            "--format",
+            "json",
+            "--",
+            "sh",
+            "-c",
+            "exit 7",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(7));
+    let report: Value = serde_json::from_slice(&output.stdout).expect("wrap json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["child_exit_code"], 7);
+    assert_eq!(report["outcome"], "rejected");
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert!(
+        db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+            .expect("events")
+            .is_empty()
+    );
+}
+
+#[test]
+fn test_cli_phase3_adoption_wrap_blocks_warning_by_default() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "wrap",
+            "--surface",
+            "card-context",
+            "--execute",
+            "--format",
+            "json",
+            "--",
+            "sh",
+            "-c",
+            "exit 0",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "wrap warning should return blocked JSON: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("wrap json");
+    assert_eq!(report["writes"], false);
+    assert_eq!(report["capture"]["record_quality"]["quality"], "warning");
+    assert_eq!(report["capture"]["record_checked"]["blocked"], true);
+
+    let db = Database::open(&home.path().join(".mempal/palace.db")).expect("open db");
+    assert!(
+        db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+            .expect("events")
+            .is_empty()
+    );
+}
+
+#[test]
+fn test_cli_phase3_adoption_wrap_rejects_missing_child_command() {
+    let home = setup_cli_home();
+    let output = run_mempal(
+        &home,
+        &["phase3", "adoption", "wrap", "--surface", "runtime-context"],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("required") || stderr.contains("command"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
 fn test_cli_phase3_adoption_check_record_json_accepts_supported_event() {
     let home = setup_cli_home();
     let output = run_mempal(
