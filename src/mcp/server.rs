@@ -8119,10 +8119,7 @@ mod tests {
             .await
             .expect("close session");
         assert_eq!(response.0.sessions[0].status, "closed");
-        assert_eq!(
-            response.0.capture.as_ref().expect("capture payload").writes,
-            false
-        );
+        assert!(!response.0.capture.as_ref().expect("capture payload").writes);
         assert!(
             !db_path.exists(),
             "dry-run session_close capture must not create palace.db"
