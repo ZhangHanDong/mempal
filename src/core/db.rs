@@ -18,7 +18,7 @@ use super::types::{
 };
 use super::utils::{build_tunnel_id, current_timestamp, format_tunnel_endpoint};
 
-const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 const DRAWER_SELECT_COLUMNS: &str = r#"
     id,
     content,

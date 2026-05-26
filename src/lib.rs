@@ -1,12 +1,14 @@
 #![warn(clippy::all)]
 
 pub mod aaak;
+pub mod adoption_analytics;
 #[cfg(feature = "rest")]
 pub mod api;
 pub mod brief;
 pub mod context;
 pub mod core;
 pub mod cowork;
+pub mod doctor;
 pub mod embed;
 pub mod factcheck;
 pub mod field_taxonomy;

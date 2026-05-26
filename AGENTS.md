@@ -152,6 +152,13 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p95-cowork-handoff-summary.spec.md` | 完成 | P95 cowork handoff summary：`cowork-handoff` / MCP `handoff` 汇总 sessions、agents、pending deliveries、recent events，支持 thread/channel/session filter |
 | `specs/p96-cowork-memory-capture.spec.md` | 完成 | P96 cowork memory capture：`cowork-capture` / MCP `capture` 显式把 handoff summary 写入 evidence drawer，默认 dry-run |
 | `specs/p97-maintenance-runbook.spec.md` | 完成 | P97 maintenance runbook：`docs/MAINTENANCE-RUNBOOK.md` + `maintenance-runbook` read-only CLI 固化 research->evidence->knowledge/card->context/adoption/cowork capture 维护流程 |
+| `specs/p98-release-install-doctor.spec.md` | 完成 | P98 release install doctor：`mempal doctor` 只读报告 binary/PATH/schema 兼容性，避免旧 binary 对新 schema 失败时无诊断 |
+| `specs/p99-mcp-runtime-doctor.spec.md` | 完成 | P99 MCP runtime doctor：`mempal_doctor` 暴露 install/schema 诊断与 MCP runtime tool/action 能力清单 |
+| `specs/p100-guided-maintenance-run.spec.md` | 完成 | P100 guided maintenance run：`mempal maintenance guided-run` 只读输出 dream/maintenance 推荐命令与状态计数 |
+| `specs/p101-cowork-session-close-capture.spec.md` | 完成 | P101 cowork session close capture：`cowork-session-close` / MCP `session_close` 关闭 session，并可显式 dry-run/execute capture |
+| `specs/p102-mcp-cognitive-brief.spec.md` | 完成 | P102 MCP cognitive brief：`mempal_brief` 向 agent runtime 暴露 deterministic citation-first brief |
+| `specs/p103-adoption-analytics.spec.md` | 完成 | P103 adoption analytics：`phase3 adoption analytics` / MCP `analytics` 按 track+feature 汇总 runtime adoption evidence |
+| `specs/p104-release-readiness-checklist.spec.md` | 完成 | P104 release readiness checklist：`mempal release-readiness` 只读检查 package/docs/spec-plan/runbook/doctor/schema 发布准备状态 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -254,6 +261,13 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-26-p95-cowork-handoff-summary.md` — P95 cowork handoff summary（已完成）
 - `docs/plans/2026-05-26-p96-cowork-memory-capture.md` — P96 cowork memory capture（已完成）
 - `docs/plans/2026-05-26-p97-maintenance-runbook.md` — P97 maintenance runbook（已完成）
+- `docs/plans/2026-05-26-p98-release-install-doctor.md` — P98 release install doctor（已完成）
+- `docs/plans/2026-05-26-p99-mcp-runtime-doctor.md` — P99 MCP runtime doctor（已完成）
+- `docs/plans/2026-05-26-p100-guided-maintenance-run.md` — P100 guided maintenance run（已完成）
+- `docs/plans/2026-05-26-p101-cowork-session-close-capture.md` — P101 cowork session close capture（已完成）
+- `docs/plans/2026-05-26-p102-mcp-cognitive-brief.md` — P102 MCP cognitive brief（已完成）
+- `docs/plans/2026-05-26-p103-adoption-analytics.md` — P103 adoption analytics（已完成）
+- `docs/plans/2026-05-26-p104-release-readiness-checklist.md` — P104 release readiness checklist（已完成）
 
 ### Spec 使用方式
 
@@ -274,13 +288,15 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
 - **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，17 条规则
 
-## MCP 工具（21 个）
+## MCP 工具（23 个）
 
 | 工具 | 作用 |
 |------|------|
 | `mempal_status` | 状态 + 协议 + AAAK spec |
+| `mempal_doctor` | release/install + MCP runtime diagnostics：报告 binary/PATH/schema 兼容性和 required MCP tool/action 能力清单（P99） |
 | `mempal_search` | 混合检索（BM25 + 向量 + RRF + tunnel hints）+ AAAK 结构化 signals（P7） |
 | `mempal_context` | mind-model runtime context：按 `dao_tian -> dao_ren -> shu -> qi` 组装指导性 context pack；`dao_tian_limit` 默认 1；用于辅助 workflow/skill/tool 选择但不自动执行（P15/P16/P26/P44） |
+| `mempal_brief` | deterministic citation-first cognitive brief：summary/key facts/evidence/cards/uncertainty/next actions，不调用 LLM、不写 DB（P102） |
 | `mempal_field_taxonomy` | read-only Stage-1 field taxonomy guidance：推荐 `field` 值但不限制自定义字段（P28） |
 | `mempal_knowledge_distill` | 从 existing evidence drawer refs 创建 candidate `dao_ren` / `qi` knowledge drawer（P22） |
 | `mempal_knowledge_policy` | read-only Stage-1 promotion policy：列出 `dao_tian/dao_ren/shu/qi` 提升阈值（P27） |
@@ -289,7 +305,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_demote` | evidence-backed knowledge demotion / retirement（P23） |
 | `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
 | `mempal_knowledge_cards` | Phase-2 knowledge card list/get/events/gate/promote/demote/retrieve；retrieve 通过 linked evidence 返回 active cards（P35/P40/P45） |
-| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan（P60/P61/P63/P64/P65/P66/P68/P69/P72/P73/P74/P77） |
+| `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/analytics/record/list/stats/gate/research_validate_plan/research_ingest_plan（P60/P61/P63/P64/P65/P66/P68/P69/P72/P73/P74/P77/P103） |
 | `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |
@@ -297,7 +313,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_tunnels` | 跨 Wing 链接发现 |
 | `mempal_peek_partner` | 读 partner agent 当前 session（live，不存储） |
 | `mempal_cowork_push` | 主动投递 ephemeral handoff 到 partner inbox（at-next-submit 交付） |
-| `mempal_cowork_bus` | 多 agent concrete `agent_id` 总线：register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/handoff/capture，支持 opt-in `transport=tmux`、event replay、delivery ack/status、presence、group channels、read-only tmux pane peek、诊断、session、handoff summary、显式 handoff-to-evidence capture（P85/P86/P87/P88/P89/P90/P91/P93/P94/P95/P96） |
+| `mempal_cowork_bus` | 多 agent concrete `agent_id` 总线：register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/session_close/handoff/capture，支持 opt-in `transport=tmux`、event replay、delivery ack/status、presence、group channels、read-only tmux pane peek、诊断、session、handoff summary、显式 handoff-to-evidence capture（P85/P86/P87/P88/P89/P90/P91/P93/P94/P95/P96/P101） |
 | `mempal_fact_check` | 离线矛盾检测（SimilarNameConflict / RelationContradiction / StaleFact）—— P9 |
 
 ## mempal 检索纪律

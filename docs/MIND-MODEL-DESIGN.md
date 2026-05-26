@@ -2066,6 +2066,107 @@ knowledge distill, card lifecycle gates, context adoption, runtime adoption
 review, rollback, cowork handoff, and explicit cowork capture. It is a
 checklist for dream-cycle style maintenance, not a daemon or scheduler.
 
+## Release Install Doctor
+
+P98 adds a read-only operator diagnostic:
+
+```bash
+mempal doctor --format plain
+mempal doctor --format json
+```
+
+Doctor runs before normal database open/migration. It reports current binary
+version, supported schema version, configured database path, direct SQLite
+`PRAGMA user_version`, current executable path, the first `mempal` found on
+`PATH`, warnings, and recommendations. This is specifically for the failure
+mode where a long-lived MCP client or shell resolves an old binary against a
+newer `palace.db` schema.
+
+P99 exposes the same runtime diagnostic through MCP:
+
+```text
+mempal_doctor
+```
+
+The MCP response adds required server tool/action expectations so an agent can
+tell whether its connected server advertises `mempal_context`, `mempal_brief`,
+`mempal_phase3`, and `mempal_cowork_bus`.
+
+## Guided Maintenance Run
+
+P100 turns the static runbook into a deterministic dry-run command:
+
+```bash
+mempal maintenance guided-run --format plain
+mempal maintenance guided-run --format json
+```
+
+The command is read-only (`writes=false`). It reports current drawer, knowledge
+card, and runtime adoption event counts when a database exists, then emits an
+ordered operator checklist for research validation, research evidence ingest,
+knowledge distill, card lifecycle gate, context review, adoption review,
+rollback review, cowork doctor, handoff, and explicit cowork capture. It never
+executes the generated commands.
+
+## Session Close Capture
+
+P101 closes the loop for concrete multi-agent sessions:
+
+```bash
+mempal cowork-session-close --cwd "$PWD" --session-id p101-review
+mempal cowork-session-close --cwd "$PWD" --session-id p101-review --capture --execute --format json
+```
+
+The MCP equivalent is `mempal_cowork_bus action=session_close`. Closing a
+session updates the runtime session status to `closed` and appends the existing
+session-status event. It does not write durable memory unless capture is
+explicitly requested and `execute=true`; dry-run capture returns the handoff
+payload without creating `palace.db`.
+
+## MCP Cognitive Brief
+
+P102 exposes the deterministic P83 brief to agent runtimes:
+
+```text
+mempal_brief
+```
+
+The tool accepts query, field, domain, cwd, max_items, and dao_tian_limit. It
+returns the same citation-first shape as CLI brief: summary, key facts,
+evidence, cards, entities, unresolved items, uncertainty, and next actions. It
+does not call an LLM and does not write adoption evidence.
+
+## Adoption Analytics
+
+P103 adds a compact analytics view over runtime adoption events:
+
+```bash
+mempal phase3 adoption analytics --format plain
+mempal phase3 adoption analytics --format json
+```
+
+MCP exposes the same report as `mempal_phase3 action=analytics`. Analytics is
+read-only and groups events by `track` and `feature`, reporting used, accepted,
+rejected, miss, rollback, contradiction, and neutral counts plus a
+deterministic recommendation. This is the operator-facing bridge from raw
+adoption evidence to default-change planning, without itself changing any
+default or lifecycle state.
+
+## Release Readiness
+
+P104 adds the release checklist:
+
+```bash
+mempal release-readiness --format plain
+mempal release-readiness --format json
+```
+
+The checklist is read-only (`writes=false`) and checks Cargo package metadata,
+README presence, P98-P104 spec/plan inventory, runbooks, doctor availability,
+and current schema support. It recommends concrete verification commands such
+as `mempal doctor --format json`, `cargo test`, `cargo clippy -- -D warnings`,
+and `cargo package`, but it does not run them automatically.
+
 ## Closing Summary
 
 The proposed system is not "RAG plus skills."

@@ -173,9 +173,10 @@ fn start_openai_embedding_stub(query: &str) -> (String, thread::JoinHandle<()>) 
                 Err(error) => panic!("accept request: {error}"),
             })
             .expect("embedding stub timed out waiting for request");
-        let mut request = [0_u8; 4096];
-        let bytes_read = stream.read(&mut request).expect("read embedding request");
-        let request = String::from_utf8_lossy(&request[..bytes_read]);
+        stream
+            .set_nonblocking(false)
+            .expect("set embedding request stream blocking");
+        let request = read_http_request(&mut stream);
         let (_, body) = request
             .split_once("\r\n\r\n")
             .expect("request should contain JSON body");
@@ -195,6 +196,44 @@ fn start_openai_embedding_stub(query: &str) -> (String, thread::JoinHandle<()>) 
             .expect("write embedding response");
     });
     (format!("http://{address}/v1/embeddings"), handle)
+}
+
+fn read_http_request(stream: &mut std::net::TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let header_end = loop {
+        let bytes_read = stream.read(&mut chunk).expect("read embedding request");
+        assert!(
+            bytes_read > 0,
+            "embedding request closed before headers were complete"
+        );
+        request.extend_from_slice(&chunk[..bytes_read]);
+        if let Some(index) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index + 4;
+        }
+    };
+    let headers = String::from_utf8_lossy(&request[..header_end]);
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .expect("embedding request content-length");
+    let expected_len = header_end + content_length;
+    while request.len() < expected_len {
+        let bytes_read = stream
+            .read(&mut chunk)
+            .expect("read embedding request body");
+        assert!(
+            bytes_read > 0,
+            "embedding request closed before body was complete"
+        );
+        request.extend_from_slice(&chunk[..bytes_read]);
+    }
+    String::from_utf8_lossy(&request[..expected_len]).into_owned()
 }
 
 fn write_cli_api_config(home: &TempDir, endpoint: &str) {
@@ -2469,4 +2508,75 @@ fn test_cli_phase3_research_ingest_plan_rejects_invalid_format() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unsupported phase3 research ingest format"));
+}
+
+#[test]
+fn test_cli_phase3_adoption_analytics_json() {
+    let home = setup_cli_home();
+    record_card_context_acceptance(&home, "analytics_accept_1");
+    record_card_context_acceptance(&home, "analytics_accept_2");
+    let rejected = run_mempal(
+        &home,
+        &[
+            "phase3",
+            "adoption",
+            "record",
+            "--id",
+            "analytics_reject_1",
+            "--track",
+            "card_context",
+            "--signal",
+            "rejected",
+            "--feature",
+            "include_cards",
+            "--query",
+            "skill trigger context",
+        ],
+    );
+    assert!(rejected.status.success());
+
+    let output = run_mempal(
+        &home,
+        &["phase3", "adoption", "analytics", "--format", "json"],
+    );
+    assert!(
+        output.status.success(),
+        "analytics failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).expect("analytics json");
+    assert_eq!(report["writes"], false);
+    let groups = report["groups"].as_array().expect("groups");
+    let include_cards = groups
+        .iter()
+        .find(|group| group["feature"] == "include_cards")
+        .expect("include_cards group");
+    assert_eq!(include_cards["accepted"], 2);
+    assert_eq!(include_cards["rejected"], 1);
+    assert!(
+        include_cards["recommendation"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("observe")
+    );
+}
+
+#[test]
+fn test_cli_phase3_adoption_analytics_plain() {
+    let home = setup_cli_home();
+    record_card_context_acceptance(&home, "analytics_plain_accept");
+
+    let output = run_mempal(
+        &home,
+        &["phase3", "adoption", "analytics", "--format", "plain"],
+    );
+    assert!(
+        output.status.success(),
+        "analytics failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("adoption analytics"), "{out}");
+    assert!(out.contains("include_cards"), "{out}");
+    assert!(out.contains("accepted=1"), "{out}");
 }

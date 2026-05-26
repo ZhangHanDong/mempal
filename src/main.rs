@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::env;
+use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,6 +11,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use mempal::aaak::{AaakCodec, AaakMeta};
+use mempal::adoption_analytics::{
+    RuntimeAdoptionAnalyticsReport, build_runtime_adoption_analytics,
+};
 #[cfg(feature = "rest")]
 use mempal::api::{ApiState, DEFAULT_REST_ADDR, serve as serve_rest_api};
 use mempal::brief::{BriefRequest, CognitiveBrief, assemble_brief};
@@ -17,7 +21,7 @@ use mempal::context::{ContextPack, ContextRequest, assemble_context};
 use mempal::core::{
     anchor,
     config::Config,
-    db::Database,
+    db::{CURRENT_SCHEMA_VERSION, Database},
     phase3::{
         CardContextDefaultProposalReport, CardContextRollbackControlReport, EvaluatorAdviceInput,
         EvaluatorAdviceReport, Phase3ReadinessReport, ResearchIngestPlanReport,
@@ -42,6 +46,7 @@ use mempal::core::{
     },
     utils::{build_triple_id, current_timestamp, format_tunnel_endpoint},
 };
+use mempal::doctor::{DoctorReport, build_doctor_report};
 use mempal::embed::{ConfiguredEmbedderFactory, Embedder};
 use mempal::field_taxonomy::{FieldTaxonomyEntry, field_taxonomy};
 use mempal::ingest::{
@@ -87,6 +92,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    Doctor {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     Init {
         dir: PathBuf,
         #[arg(long)]
@@ -457,6 +466,19 @@ enum Commands {
         #[arg(long)]
         status: String,
     },
+    /// Close a runtime team session and optionally capture its handoff summary.
+    CoworkSessionClose {
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        capture: bool,
+        #[arg(long)]
+        execute: bool,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     /// Build a deterministic multi-agent handoff summary.
     CoworkHandoff {
         #[arg(long)]
@@ -497,6 +519,22 @@ enum Commands {
     },
     /// Print the governed maintenance runbook.
     MaintenanceRunbook {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    Maintenance {
+        #[command(subcommand)]
+        command: MaintenanceCommands,
+    },
+    ReleaseReadiness {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MaintenanceCommands {
+    GuidedRun {
         #[arg(long, default_value = "plain")]
         format: String,
     },
@@ -1054,6 +1092,10 @@ enum Phase3AdoptionCommands {
         #[arg(long, default_value = "plain")]
         format: String,
     },
+    Analytics {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     Record {
         #[arg(long)]
         track: String,
@@ -1165,6 +1207,17 @@ async fn run() -> Result<()> {
     // or config to exist. Dispatch them BEFORE Config::load / Database::open
     // so a missing mempal_home never breaks the hook path.
     match cli.command {
+        Commands::Doctor { format } => {
+            return doctor_command(&format);
+        }
+        Commands::ReleaseReadiness { format } => {
+            return release_readiness_command(&format);
+        }
+        Commands::Maintenance {
+            command: MaintenanceCommands::GuidedRun { format },
+        } => {
+            return maintenance_guided_run_command(&format);
+        }
         Commands::CoworkDrain {
             target,
             cwd,
@@ -1318,6 +1371,15 @@ async fn run() -> Result<()> {
             status,
         } => {
             return cowork_session_status_command(cwd, session_id, status);
+        }
+        Commands::CoworkSessionClose {
+            cwd,
+            session_id,
+            capture,
+            execute,
+            format,
+        } => {
+            return cowork_session_close_command(cwd, session_id, capture, execute, format);
         }
         Commands::CoworkHandoff {
             cwd,
@@ -1530,9 +1592,13 @@ async fn run() -> Result<()> {
         | Commands::CoworkSessionCreate { .. }
         | Commands::CoworkSessions { .. }
         | Commands::CoworkSessionStatus { .. }
+        | Commands::CoworkSessionClose { .. }
         | Commands::CoworkHandoff { .. }
         | Commands::CoworkCapture { .. }
-        | Commands::MaintenanceRunbook { .. } => unreachable!(),
+        | Commands::MaintenanceRunbook { .. }
+        | Commands::Maintenance { .. }
+        | Commands::Doctor { .. }
+        | Commands::ReleaseReadiness { .. } => unreachable!(),
     }
 }
 
@@ -1567,6 +1633,370 @@ struct BriefCommandArgs {
     format: String,
     max_items: usize,
     dao_tian_limit: usize,
+}
+
+fn doctor_command(format: &str) -> Result<()> {
+    if !matches!(format, "plain" | "json") {
+        bail!("unsupported doctor format: {format}");
+    }
+    let (config, config_error) = match Config::load() {
+        Ok(config) => (config, None),
+        Err(error) => (Config::default(), Some(error.to_string())),
+    };
+    let mut report = build_doctor_report(&expand_home(&config.db_path));
+    if let Some(error) = config_error {
+        report.warnings.push(format!(
+            "config could not be loaded; using defaults: {error}"
+        ));
+    }
+
+    match format {
+        "plain" => print_doctor_plain(&report),
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&report).context("failed to serialize doctor report")?
+        ),
+        _ => unreachable!("doctor format was validated"),
+    }
+    Ok(())
+}
+
+fn print_doctor_plain(report: &DoctorReport) {
+    println!("mempal doctor");
+    println!("current_version={}", report.current_version);
+    println!(
+        "supported_schema_version={}",
+        report.supported_schema_version
+    );
+    println!("db_path={}", report.db.path);
+    println!("db_exists={}", report.db.exists);
+    match report.db.schema_version {
+        Some(schema_version) => println!("db_schema_version={schema_version}"),
+        None => println!("db_schema_version=unknown"),
+    }
+    println!("db_compatible={}", report.db.compatible);
+    if let Some(error) = report.db.error.as_deref() {
+        println!("db_error={error}");
+    }
+    println!(
+        "current_exe={}",
+        report.install.current_exe.as_deref().unwrap_or("unknown")
+    );
+    println!(
+        "path_mempal={}",
+        report.install.path_mempal.as_deref().unwrap_or("not_found")
+    );
+    match report.install.path_matches_current_exe {
+        Some(matches) => println!("path_matches_current_exe={matches}"),
+        None => println!("path_matches_current_exe=unknown"),
+    }
+    for warning in &report.warnings {
+        println!("warning={warning}");
+    }
+    for recommendation in &report.recommendations {
+        println!("recommendation={recommendation}");
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct GuidedMaintenanceReport {
+    writes: bool,
+    drawer_count: u64,
+    runtime_adoption_event_count: u64,
+    card_count: u64,
+    steps: Vec<GuidedMaintenanceStep>,
+}
+
+#[derive(Debug, Serialize)]
+struct GuidedMaintenanceStep {
+    order: usize,
+    phase: &'static str,
+    purpose: &'static str,
+    command: &'static str,
+    writes: bool,
+}
+
+fn maintenance_guided_run_command(format: &str) -> Result<()> {
+    if !matches!(format, "plain" | "json") {
+        bail!("unsupported maintenance guided-run format: {format}");
+    }
+    let config = Config::load().unwrap_or_default();
+    let db_path = expand_home(&config.db_path);
+    let report = GuidedMaintenanceReport {
+        writes: false,
+        drawer_count: sqlite_count_if_available(&db_path, "drawers"),
+        runtime_adoption_event_count: sqlite_count_if_available(
+            &db_path,
+            "runtime_adoption_events",
+        ),
+        card_count: sqlite_count_if_available(&db_path, "knowledge_cards"),
+        steps: guided_maintenance_steps(),
+    };
+
+    match format {
+        "plain" => print_guided_maintenance_plain(&report),
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .context("failed to serialize guided maintenance report")?
+        ),
+        _ => unreachable!("maintenance guided-run format was validated"),
+    }
+    Ok(())
+}
+
+fn guided_maintenance_steps() -> Vec<GuidedMaintenanceStep> {
+    vec![
+        GuidedMaintenanceStep {
+            order: 1,
+            phase: "research",
+            purpose: "Validate external research output before any ingest.",
+            command: "mempal phase3 research-validate-plan report.json --format json",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 2,
+            phase: "research",
+            purpose: "Preview evidence drawers and candidate distill suggestions.",
+            command: "mempal phase3 research-ingest-plan report.json --format json",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 3,
+            phase: "research",
+            purpose: "Explicitly ingest validated research findings as evidence only.",
+            command: "mempal phase3 research-ingest-plan report.json --execute --format json",
+            writes: true,
+        },
+        GuidedMaintenanceStep {
+            order: 4,
+            phase: "knowledge",
+            purpose: "Create candidate knowledge from explicit evidence refs.",
+            command: "mempal knowledge distill --statement ... --content ... --tier dao_ren --supporting-ref drawer_...",
+            writes: true,
+        },
+        GuidedMaintenanceStep {
+            order: 5,
+            phase: "cards",
+            purpose: "Check card lifecycle readiness before promotion.",
+            command: "mempal knowledge-card gate card_... --format json",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 6,
+            phase: "runtime",
+            purpose: "Assemble card-aware context explicitly before changing defaults.",
+            command: "mempal context \"current task\" --include-cards --format plain",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 7,
+            phase: "runtime",
+            purpose: "Review runtime adoption evidence by track and feature.",
+            command: "mempal phase3 adoption review --format json",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 8,
+            phase: "runtime",
+            purpose: "Inspect rollback evidence before keeping card context enabled.",
+            command: "mempal phase3 rollback-control card-context --format json",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 9,
+            phase: "cowork",
+            purpose: "Diagnose concrete agent bus state for the current project.",
+            command: "mempal cowork-doctor --cwd \"$PWD\" --format plain",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 10,
+            phase: "cowork",
+            purpose: "Build a deterministic handoff summary before session close.",
+            command: "mempal cowork-handoff --cwd \"$PWD\" --format plain",
+            writes: false,
+        },
+        GuidedMaintenanceStep {
+            order: 11,
+            phase: "cowork",
+            purpose: "Explicitly lift a handoff summary into evidence memory when needed.",
+            command: "mempal cowork-capture --cwd \"$PWD\" --summary-source handoff --execute --format json",
+            writes: true,
+        },
+    ]
+}
+
+fn print_guided_maintenance_plain(report: &GuidedMaintenanceReport) {
+    println!("Guided Maintenance Run");
+    println!("writes={}", report.writes);
+    println!("drawer_count={}", report.drawer_count);
+    println!(
+        "runtime_adoption_event_count={}",
+        report.runtime_adoption_event_count
+    );
+    println!("card_count={}", report.card_count);
+    for step in &report.steps {
+        println!();
+        println!("{}. {} ({})", step.order, step.phase, step.purpose);
+        println!("command: {}", step.command);
+        println!("writes={}", step.writes);
+    }
+}
+
+fn sqlite_count_if_available(db_path: &Path, table: &str) -> u64 {
+    if !db_path.exists() {
+        return 0;
+    }
+    let Ok(conn) =
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
+        return 0;
+    };
+    let sql = format!("SELECT COUNT(*) FROM {table}");
+    conn.query_row(&sql, [], |row| row.get::<_, i64>(0))
+        .ok()
+        .and_then(|count| u64::try_from(count).ok())
+        .unwrap_or(0)
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseReadinessReport {
+    writes: bool,
+    ready: bool,
+    supported_schema_version: u32,
+    checks: Vec<ReleaseReadinessCheck>,
+    warnings: Vec<String>,
+    recommended_commands: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReleaseReadinessCheck {
+    name: &'static str,
+    passed: bool,
+    detail: String,
+}
+
+fn release_readiness_command(format: &str) -> Result<()> {
+    if !matches!(format, "plain" | "json") {
+        bail!("unsupported release-readiness format: {format}");
+    }
+    let cwd = env::current_dir().context("failed to read current directory")?;
+    let report = build_release_readiness_report(&cwd);
+    match format {
+        "plain" => print_release_readiness_plain(&report),
+        "json" => println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .context("failed to serialize release readiness report")?
+        ),
+        _ => unreachable!("release-readiness format was validated"),
+    }
+    Ok(())
+}
+
+fn build_release_readiness_report(repo_root: &Path) -> ReleaseReadinessReport {
+    let cargo_toml = fs::read_to_string(repo_root.join("Cargo.toml")).unwrap_or_default();
+    let spec_plan_complete = (98..=104).all(|number| {
+        has_file_with_prefix(&repo_root.join("specs"), &format!("p{number}-"))
+            && has_file_name_containing(&repo_root.join("docs/plans"), &format!("p{number}"))
+    });
+    let checks = vec![
+        ReleaseReadinessCheck {
+            name: "cargo-metadata",
+            passed: cargo_toml.contains("name = \"mempal\"")
+                && cargo_toml.contains("version = ")
+                && cargo_toml.contains("readme = \"README.md\""),
+            detail: "Cargo.toml includes package name, version, and README metadata".to_string(),
+        },
+        ReleaseReadinessCheck {
+            name: "readme-docs",
+            passed: repo_root.join("README.md").is_file()
+                && repo_root.join("README_zh.md").is_file(),
+            detail: "README.md and README_zh.md are present".to_string(),
+        },
+        ReleaseReadinessCheck {
+            name: "spec-plan-inventory",
+            passed: spec_plan_complete,
+            detail: "P98-P104 each have a task spec and matching plan file".to_string(),
+        },
+        ReleaseReadinessCheck {
+            name: "runbooks",
+            passed: repo_root.join("docs/COWORK-RUNBOOK.md").is_file()
+                && repo_root.join("docs/MAINTENANCE-RUNBOOK.md").is_file(),
+            detail: "Cowork and maintenance runbooks are present".to_string(),
+        },
+        ReleaseReadinessCheck {
+            name: "doctor",
+            passed: true,
+            detail: "mempal doctor is available for install/runtime diagnostics".to_string(),
+        },
+        ReleaseReadinessCheck {
+            name: "schema-support",
+            passed: CURRENT_SCHEMA_VERSION == 9,
+            detail: format!("current supported schema version is {CURRENT_SCHEMA_VERSION}"),
+        },
+    ];
+    let warnings = checks
+        .iter()
+        .filter(|check| !check.passed)
+        .map(|check| format!("release check failed: {}", check.name))
+        .collect::<Vec<_>>();
+    let ready = warnings.is_empty();
+    ReleaseReadinessReport {
+        writes: false,
+        ready,
+        supported_schema_version: CURRENT_SCHEMA_VERSION,
+        checks,
+        warnings,
+        recommended_commands: vec![
+            "mempal doctor --format json".to_string(),
+            "cargo test".to_string(),
+            "cargo clippy -- -D warnings".to_string(),
+            "cargo package".to_string(),
+        ],
+    }
+}
+
+fn has_file_with_prefix(dir: &Path, prefix: &str) -> bool {
+    fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .any(|entry| entry.file_name().to_string_lossy().starts_with(prefix))
+}
+
+fn has_file_name_containing(dir: &Path, needle: &str) -> bool {
+    fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .any(|entry| entry.file_name().to_string_lossy().contains(needle))
+}
+
+fn print_release_readiness_plain(report: &ReleaseReadinessReport) {
+    println!("Release Readiness");
+    println!("writes={}", report.writes);
+    println!("ready={}", report.ready);
+    println!(
+        "supported_schema_version={}",
+        report.supported_schema_version
+    );
+    for check in &report.checks {
+        println!(
+            "check={} passed={} detail={}",
+            check.name, check.passed, check.detail
+        );
+    }
+    for warning in &report.warnings {
+        println!("warning={warning}");
+    }
+    println!("recommended_commands:");
+    for command in &report.recommended_commands {
+        println!("- {command}");
+    }
 }
 
 async fn bench_command(config: &Config, command: BenchCommands) -> Result<()> {
@@ -3589,6 +4019,13 @@ fn phase3_adoption_command(db: &Database, command: Phase3AdoptionCommands) -> Re
             let stats = RuntimeAdoptionStats::from_events(&events);
             print_runtime_adoption_stats(&stats, &format)
         }
+        Phase3AdoptionCommands::Analytics { format } => {
+            let events = db
+                .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10_000)
+                .context("failed to list runtime adoption events")?;
+            let report = build_runtime_adoption_analytics(&events);
+            print_runtime_adoption_analytics(&report, &format)
+        }
     }
 }
 
@@ -4369,6 +4806,49 @@ fn print_runtime_adoption_stats(stats: &RuntimeAdoptionStats, format: &str) -> R
             Ok(())
         }
         other => bail!("unsupported phase3 adoption format: {other}"),
+    }
+}
+
+fn print_runtime_adoption_analytics(
+    report: &RuntimeAdoptionAnalyticsReport,
+    format: &str,
+) -> Result<()> {
+    match format {
+        "plain" => {
+            println!("adoption analytics");
+            println!("writes={}", report.writes);
+            println!("total_events={}", report.total_events);
+            if report.groups.is_empty() {
+                println!("groups=none");
+            } else {
+                for group in &report.groups {
+                    println!(
+                        "track={} feature={} total={} used={} accepted={} rejected={} misses={} rollbacks={} contradictions={} neutral={} recommendation={}",
+                        group.track,
+                        group.feature,
+                        group.total,
+                        group.used,
+                        group.accepted,
+                        group.rejected,
+                        group.misses,
+                        group.rollbacks,
+                        group.contradictions,
+                        group.neutral,
+                        group.recommendation
+                    );
+                }
+            }
+            Ok(())
+        }
+        "json" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(report)
+                    .context("failed to serialize runtime adoption analytics")?
+            );
+            Ok(())
+        }
+        other => bail!("unsupported phase3 adoption analytics format: {other}"),
     }
 }
 
@@ -5859,6 +6339,70 @@ fn cowork_session_status_command(cwd: PathBuf, session_id: String, status: Strin
     let mempal_home = inbox::mempal_home();
     let session = bus::update_session_status(&mempal_home, &cwd, &session_id, &status)?;
     println!("session {} status={}", session.session_id, session.status);
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct CoworkSessionCloseReport {
+    session: mempal::cowork::bus::TeamSession,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    capture: Option<mempal::cowork::bus::CoworkCaptureReport>,
+}
+
+fn cowork_session_close_command(
+    cwd: PathBuf,
+    session_id: String,
+    capture: bool,
+    execute: bool,
+    format: String,
+) -> Result<()> {
+    use mempal::cowork::bus::{self, CoworkCaptureRequest};
+    use mempal::cowork::inbox;
+
+    if !matches!(format.as_str(), "plain" | "json") {
+        bail!("unknown format: {format}");
+    }
+    let mempal_home = inbox::mempal_home();
+    let session = bus::update_session_status(&mempal_home, &cwd, &session_id, "closed")?;
+    let capture = if capture {
+        let db = if execute {
+            let config = Config::load().context("failed to load config")?;
+            Some(Database::open(&expand_home(&config.db_path)).context("failed to open database")?)
+        } else {
+            None
+        };
+        Some(bus::capture_handoff_to_memory(
+            db.as_ref(),
+            &mempal_home,
+            &cwd,
+            CoworkCaptureRequest {
+                summary_source: "handoff".to_string(),
+                wing: "cowork-capture".to_string(),
+                room: None,
+                thread_id: None,
+                channel: None,
+                session_id: Some(session_id),
+                note: Some("Session closed through cowork-session-close.".to_string()),
+                execute,
+            },
+        )?)
+    } else {
+        None
+    };
+    let report = CoworkSessionCloseReport { session, capture };
+    match format.as_str() {
+        "plain" => {
+            println!(
+                "session {} status={}",
+                report.session.session_id, report.session.status
+            );
+            if let Some(capture) = &report.capture {
+                print!("{}", bus::format_capture_plain(capture));
+            }
+        }
+        "json" => println!("{}", serde_json::to_string_pretty(&report)?),
+        _ => unreachable!("cowork-session-close format was validated"),
+    }
     Ok(())
 }
 

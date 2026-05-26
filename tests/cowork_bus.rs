@@ -1689,6 +1689,106 @@ fn test_cli_cowork_session_status_update() {
 }
 
 #[test]
+fn test_cli_cowork_session_close_no_capture() {
+    let home = TempDir::new().expect("home");
+    let repo = setup_repo(&home, "session-close");
+    register(&home, &repo, "claude-main", "claude");
+    register(&home, &repo, "codex-a", "codex");
+    assert_success(&run_mempal(
+        &home,
+        &[
+            "cowork-session-create",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--session-id",
+            "review-1",
+            "--title",
+            "Review 1",
+            "--agent",
+            "claude-main",
+            "--agent",
+            "codex-a",
+        ],
+    ));
+
+    let close = run_mempal(
+        &home,
+        &[
+            "cowork-session-close",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--session-id",
+            "review-1",
+        ],
+    );
+    assert_success(&close);
+    let list = run_mempal(
+        &home,
+        &[
+            "cowork-sessions",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--format",
+            "json",
+        ],
+    );
+    assert_success(&list);
+    let value: serde_json::Value = serde_json::from_slice(&list.stdout).expect("sessions json");
+    assert_eq!(value[0]["status"], "closed");
+    assert!(!palace_db_path(&home).exists());
+}
+
+#[test]
+fn test_cli_cowork_session_close_capture_execute() {
+    let home = TempDir::new().expect("home");
+    let repo = setup_repo(&home, "session-close-capture");
+    register(&home, &repo, "claude-main", "claude");
+    register(&home, &repo, "codex-a", "codex");
+    assert_success(&run_mempal(
+        &home,
+        &[
+            "cowork-session-create",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--session-id",
+            "review-1",
+            "--title",
+            "Review 1",
+            "--agent",
+            "claude-main",
+            "--agent",
+            "codex-a",
+        ],
+    ));
+
+    let close = run_mempal(
+        &home,
+        &[
+            "cowork-session-close",
+            "--cwd",
+            repo.to_str().unwrap(),
+            "--session-id",
+            "review-1",
+            "--capture",
+            "--execute",
+            "--format",
+            "json",
+        ],
+    );
+    assert_success(&close);
+    let value: serde_json::Value = serde_json::from_slice(&close.stdout).expect("close json");
+    assert_eq!(value["session"]["status"], "closed");
+    assert_eq!(value["capture"]["writes"], true);
+    let drawer_id = value["capture"]["drawer_id"].as_str().expect("drawer id");
+    let db = mempal::core::db::Database::open(&palace_db_path(&home)).expect("open db");
+    let drawer = db
+        .get_drawer(drawer_id)
+        .expect("get drawer")
+        .expect("drawer exists");
+    assert_eq!(drawer.wing, "cowork-capture");
+}
+
+#[test]
 fn test_cli_cowork_handoff_plain() {
     let home = TempDir::new().expect("home");
     let repo = setup_repo(&home, "handoff-plain");

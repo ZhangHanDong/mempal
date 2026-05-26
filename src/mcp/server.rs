@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::adoption_analytics::build_runtime_adoption_analytics;
+use crate::brief::brief_from_context;
 use crate::context::assemble_context_with_vector;
 use crate::core::{
     anchor::{self, DerivedAnchor},
@@ -30,6 +32,7 @@ use crate::cowork::{
     AgentRecord, AgentStatus, BusError, DeliveryReport, InboxMessage, PeekError,
     PeekRequest as CoworkPeekRequest, Tool, peek_partner,
 };
+use crate::doctor::{COWORK_BUS_ACTIONS, PHASE3_ACTIONS, REQUIRED_MCP_TOOLS, build_doctor_report};
 use crate::embed::EmbedderFactory;
 use crate::field_taxonomy::field_taxonomy;
 use crate::ingest::{
@@ -67,12 +70,13 @@ use rmcp::{
 use serde_json::Value;
 
 use super::tools::{
-    ContextRequest, ContextResponse, CoworkBusAgentDto, CoworkBusCaptureDto, CoworkBusChannelDto,
-    CoworkBusDeliveryDto, CoworkBusDeliveryStatusDto, CoworkBusDoctorDto, CoworkBusEventDto,
-    CoworkBusHandoffAgentDto, CoworkBusHandoffDto, CoworkBusHandoffFiltersDto, CoworkBusMessageDto,
-    CoworkBusRequest, CoworkBusResponse, CoworkBusSessionDto, CoworkBusTmuxPeekDto,
-    CoworkBusTmuxProbeDto, CoworkPushRequest, CoworkPushResponse, DeleteRequest, DeleteResponse,
-    DuplicateWarning, FactCheckRequest, FactCheckResponse, FieldTaxonomyEntryDto,
+    BriefMcpRequest, BriefMcpResponse, ContextRequest, ContextResponse, CoworkBusAgentDto,
+    CoworkBusCaptureDto, CoworkBusChannelDto, CoworkBusDeliveryDto, CoworkBusDeliveryStatusDto,
+    CoworkBusDoctorDto, CoworkBusEventDto, CoworkBusHandoffAgentDto, CoworkBusHandoffDto,
+    CoworkBusHandoffFiltersDto, CoworkBusMessageDto, CoworkBusRequest, CoworkBusResponse,
+    CoworkBusSessionDto, CoworkBusTmuxPeekDto, CoworkBusTmuxProbeDto, CoworkPushRequest,
+    CoworkPushResponse, DeleteRequest, DeleteResponse, DoctorMcpDto, DoctorRequest, DoctorResponse,
+    DoctorToolDto, DuplicateWarning, FactCheckRequest, FactCheckResponse, FieldTaxonomyEntryDto,
     FieldTaxonomyResponse, IngestRequest, IngestResponse, KgRequest, KgResponse, KgStatsDto,
     KnowledgeCardDto, KnowledgeCardEventDto, KnowledgeCardsRequest, KnowledgeCardsResponse,
     KnowledgeDemoteRequest, KnowledgeDemoteResponse, KnowledgeDistillRequest,
@@ -175,6 +179,28 @@ impl MempalMcpServer {
         let request = serde_json::from_value(value)
             .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
         self.mempal_context(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn doctor_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<DoctorResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_doctor(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
+    pub async fn brief_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<BriefMcpResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_brief(Parameters(request))
             .await
             .map(|response| response.0)
     }
@@ -1061,6 +1087,102 @@ impl MempalMcpServer {
     }
 
     #[tool(
+        name = "mempal_doctor",
+        description = "MCP runtime diagnostics for mempal install/schema compatibility and server-advertised runtime tools. Read-only; does not migrate or create the database."
+    )]
+    async fn mempal_doctor(
+        &self,
+        Parameters(_request): Parameters<DoctorRequest>,
+    ) -> std::result::Result<Json<DoctorResponse>, ErrorData> {
+        let advertised_tools = self.tool_router.list_all();
+        let mcp = DoctorMcpDto {
+            required_tools: REQUIRED_MCP_TOOLS
+                .iter()
+                .map(|name| DoctorToolDto {
+                    name: (*name).to_string(),
+                    advertised: advertised_tools.iter().any(|tool| tool.name == *name),
+                })
+                .collect(),
+            phase3_actions: PHASE3_ACTIONS
+                .iter()
+                .map(|action| (*action).to_string())
+                .collect(),
+            cowork_bus_actions: COWORK_BUS_ACTIONS
+                .iter()
+                .map(|action| (*action).to_string())
+                .collect(),
+        };
+        Ok(Json(DoctorResponse::from_report(
+            build_doctor_report(&self.db_path),
+            mcp,
+        )))
+    }
+
+    #[tool(
+        name = "mempal_brief",
+        description = "Assemble a deterministic citation-first cognitive brief from memory. Returns summary, key facts, evidence, cards, unresolved items, uncertainty, and next actions without LLM synthesis or writes."
+    )]
+    async fn mempal_brief(
+        &self,
+        Parameters(request): Parameters<BriefMcpRequest>,
+    ) -> std::result::Result<Json<BriefMcpResponse>, ErrorData> {
+        let max_items = request.max_items.unwrap_or(12);
+        if max_items == 0 {
+            return Err(ErrorData::invalid_params(
+                "max_items must be greater than 0",
+                None,
+            ));
+        }
+        let domain = parse_domain(request.domain.as_deref())?.unwrap_or(MemoryDomain::Project);
+        let cwd = match request.cwd.as_deref() {
+            Some(value) if !value.trim().is_empty() => PathBuf::from(value),
+            Some(_) => {
+                return Err(ErrorData::invalid_params(
+                    "cwd must not be empty when provided",
+                    None,
+                ));
+            }
+            None => std::env::current_dir().map_err(|error| {
+                ErrorData::internal_error(
+                    format!("failed to read current directory: {error}"),
+                    None,
+                )
+            })?,
+        };
+
+        let embedder = self.embedder_factory.build().await.map_err(|error| {
+            ErrorData::internal_error(format!("failed to build embedder: {error}"), None)
+        })?;
+        let query_vector = embedder
+            .embed(&[request.query.as_str()])
+            .await
+            .map_err(|error| ErrorData::internal_error(format!("embedding failed: {error}"), None))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| ErrorData::internal_error("embedder returned no query vector", None))?;
+        let db = self.open_db()?;
+        let context = assemble_context_with_vector(
+            &db,
+            crate::context::ContextRequest {
+                query: request.query,
+                domain,
+                field: request
+                    .field
+                    .unwrap_or_else(|| anchor::DEFAULT_FIELD.to_string()),
+                cwd,
+                include_evidence: true,
+                include_cards: true,
+                max_items,
+                dao_tian_limit: request.dao_tian_limit.unwrap_or(1),
+            },
+            &query_vector,
+        )
+        .map_err(|error| ErrorData::internal_error(format!("brief failed: {error}"), None))?;
+        let brief = brief_from_context(context);
+        Ok(Json(BriefMcpResponse::from(brief)))
+    }
+
+    #[tool(
         name = "mempal_knowledge_distill",
         description = "Create candidate knowledge from existing evidence drawer refs. Deterministic Stage-1 distill: writes memory_kind=knowledge/status=candidate for tier dao_ren or qi, validates refs are evidence drawers, and never calls an LLM, promotes, or creates Phase-2 knowledge cards."
     )]
@@ -1379,7 +1501,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_phase3",
-        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; instrumentation_policy defines opt-in live instrumentation boundaries without writing; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; default_proposal combines readiness with rollback criteria without changing defaults; rollback_control evaluates card-context rollback evidence without writing; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
+        description = "Phase-3 runtime adoption evidence and readiness gates. Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/analytics/record/list/stats/gate/research_validate_plan/research_ingest_plan. Guidance explains when agents should record used/accepted/rejected/miss/rollback signals; instrumentation_policy defines opt-in live instrumentation boundaries without writing; prepare_record validates and returns record inputs without writing; capture maps surface/outcome observations into checked record inputs and writes only with execute=true; evaluator_advise returns deterministic advisory-only evaluator output and a surface=evaluator capture plan without lifecycle authority; default_proposal combines readiness with rollback criteria without changing defaults; rollback_control evaluates card-context rollback evidence without writing; check_record evaluates record quality without writing; record_checked runs the quality gate before writing; review summarizes adoption evidence without writing; readiness evaluates default eligibility without writing; analytics groups adoption evidence by track and feature without writing; record appends runtime_adoption_events; list/stats/gate are read-only; research_validate_plan validates external research report JSON; research_ingest_plan previews evidence drawer refs and distill suggestions without ingesting or promoting knowledge."
     )]
     async fn mempal_phase3(
         &self,
@@ -1400,6 +1522,7 @@ impl MempalMcpServer {
                 event: None,
                 events: Vec::new(),
                 stats: None,
+                analytics: None,
                 gate: None,
                 research_plan: None,
                 research_ingest_plan: None,
@@ -1418,6 +1541,7 @@ impl MempalMcpServer {
                 event: None,
                 events: Vec::new(),
                 stats: None,
+                analytics: None,
                 gate: None,
                 research_plan: None,
                 research_ingest_plan: None,
@@ -1459,6 +1583,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1544,6 +1669,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1582,6 +1708,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1632,6 +1759,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1689,6 +1817,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1731,6 +1860,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1812,6 +1942,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1870,6 +2001,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1917,6 +2049,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -1969,6 +2102,7 @@ impl MempalMcpServer {
                     event: Some(RuntimeAdoptionEventDto::from(event)),
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -2007,6 +2141,7 @@ impl MempalMcpServer {
                         .map(RuntimeAdoptionEventDto::from)
                         .collect(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -2042,6 +2177,37 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: Some(runtime_adoption_stats(&events)),
+                    analytics: None,
+                    gate: None,
+                    research_plan: None,
+                    research_ingest_plan: None,
+                    evaluator_advice: None,
+                    default_proposal: None,
+                    rollback_control: None,
+                }))
+            }
+            "analytics" => {
+                let db = self.open_db()?;
+                let events = db
+                    .list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10_000)
+                    .map_err(|error| {
+                        ErrorData::internal_error(
+                            format!("failed to list runtime adoption events: {error}"),
+                            None,
+                        )
+                    })?;
+                Ok(Json(Phase3Response {
+                    guidance: None,
+                    instrumentation_policy: None,
+                    record_plan: None,
+                    record_quality: None,
+                    record_checked: None,
+                    review_report: None,
+                    readiness_report: None,
+                    event: None,
+                    events: Vec::new(),
+                    stats: None,
+                    analytics: Some(build_runtime_adoption_analytics(&events).into()),
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: None,
@@ -2065,6 +2231,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: Some(gate),
                     research_plan: None,
                     research_ingest_plan: None,
@@ -2088,6 +2255,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: Some(validate_research_adapter_plan_value(&report)),
                     research_ingest_plan: None,
@@ -2111,6 +2279,7 @@ impl MempalMcpServer {
                     event: None,
                     events: Vec::new(),
                     stats: None,
+                    analytics: None,
                     gate: None,
                     research_plan: None,
                     research_ingest_plan: Some(ResearchIngestPlanDto::from(
@@ -2123,7 +2292,7 @@ impl MempalMcpServer {
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unsupported phase3 action: {other}; actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, rollback_control, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                    "unsupported phase3 action: {other}; actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, rollback_control, check_record, record_checked, review, readiness, analytics, record, list, stats, gate, research_validate_plan, research_ingest_plan"
                 ),
                 None,
             )),
@@ -2812,7 +2981,7 @@ impl MempalMcpServer {
     #[tool(
         name = "mempal_cowork_bus",
         description = "Multi-agent cowork bus for concrete agent instances in one project. \
-                       Actions: register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/handoff/capture. Uses explicit agent_id \
+                       Actions: register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/session_close/handoff/capture. Uses explicit agent_id \
                        values such as claude-main, codex-a, codex-b, per-agent inbox files, \
                        and append-only events under ~/.mempal/cowork-bus/<project>. This is separate from legacy \
                        mempal_cowork_push partner routing and does not infer concrete instances \
@@ -3236,6 +3405,51 @@ impl MempalMcpServer {
                     capture: None,
                 }))
             }
+            "session_close" => {
+                let session_id = required_bus_field(request.session_id, "session_id", action)?;
+                let session = bus::update_session_status(&mempal_home, &cwd, &session_id, "closed")
+                    .map_err(bus_error_to_mcp)?;
+                let capture = if request.capture.unwrap_or(false) {
+                    let execute = request.execute.unwrap_or(false);
+                    let db = if execute { Some(self.open_db()?) } else { None };
+                    Some(
+                        bus::capture_handoff_to_memory(
+                            db.as_ref(),
+                            &mempal_home,
+                            &cwd,
+                            bus::CoworkCaptureRequest {
+                                summary_source: request
+                                    .summary_source
+                                    .unwrap_or_else(|| "handoff".to_string()),
+                                wing: request.wing.unwrap_or_else(|| "cowork-capture".to_string()),
+                                room: request.room,
+                                thread_id: request.thread_id,
+                                channel: request.channel,
+                                session_id: Some(session_id),
+                                note: request.note,
+                                execute,
+                            },
+                        )
+                        .map_err(bus_error_to_mcp)?,
+                    )
+                } else {
+                    None
+                };
+                Ok(Json(CoworkBusResponse {
+                    action: action.to_string(),
+                    agents: Vec::new(),
+                    delivered: Vec::new(),
+                    messages: Vec::new(),
+                    events: Vec::new(),
+                    deliveries: Vec::new(),
+                    channels: Vec::new(),
+                    tmux_peek: None,
+                    doctor: None,
+                    sessions: vec![session_to_dto(session)],
+                    handoff: None,
+                    capture: capture.map(capture_to_dto),
+                }))
+            }
             "handoff" => {
                 let summary = bus::build_handoff_summary(
                     &mempal_home,
@@ -3301,7 +3515,7 @@ impl MempalMcpServer {
             }
             other => Err(ErrorData::invalid_params(
                 format!(
-                    "unknown action `{other}`: expected register|list|send|broadcast|drain|events|deliveries|ack|heartbeat|channel_set|channel_list|channel_send|tmux_peek|doctor|session_create|session_list|session_status|handoff|capture"
+                    "unknown action `{other}`: expected register|list|send|broadcast|drain|events|deliveries|ack|heartbeat|channel_set|channel_list|channel_send|tmux_peek|doctor|session_create|session_list|session_status|session_close|handoff|capture"
                 ),
                 None,
             )),
@@ -4641,6 +4855,123 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_mcp_tool_registry_includes_mempal_doctor() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let doctor_tool = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_doctor")
+            .expect("mempal_doctor tool exists");
+        assert!(
+            doctor_tool
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("MCP runtime diagnostics")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_doctor_reports_runtime_tools() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let response = server
+            .doctor_json_for_test(serde_json::json!({}))
+            .await
+            .expect("doctor should succeed");
+        assert!(
+            response
+                .mcp
+                .required_tools
+                .iter()
+                .any(|tool| tool.name == "mempal_context" && tool.advertised)
+        );
+        assert!(
+            response
+                .mcp
+                .required_tools
+                .iter()
+                .any(|tool| tool.name == "mempal_phase3" && tool.advertised)
+        );
+        assert!(
+            response
+                .mcp
+                .required_tools
+                .iter()
+                .any(|tool| tool.name == "mempal_cowork_bus" && tool.advertised)
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_mempal_doctor() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        assert!(tools.iter().any(|tool| tool.name == "mempal_doctor"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_doctor"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_brief_returns_cognitive_brief() {
+        let (_tempdir, db_path, server) = setup_server();
+        insert_drawer(
+            &db_path,
+            "drawer_brief_evidence",
+            "Debug evidence with unresolved action item.",
+            "mempal",
+            Some("brief"),
+            "/tmp/brief-evidence.md",
+            3,
+        );
+        insert_knowledge_drawer(
+            &db_path,
+            "drawer_brief_knowledge",
+            KnowledgeTier::Shu,
+            KnowledgeStatus::Promoted,
+            "Debug by reading cited evidence first.",
+            "debug workflow",
+        );
+
+        let response = server
+            .brief_json_for_test(serde_json::json!({
+                "query": "debug",
+                "include_cards": false
+            }))
+            .await
+            .expect("brief should succeed");
+        assert!(response.summary.key_fact_count + response.summary.evidence_count > 0);
+        assert!(
+            response
+                .key_facts
+                .iter()
+                .any(|fact| !fact.citation.drawer_id.is_empty())
+                || response
+                    .evidence
+                    .iter()
+                    .any(|evidence| !evidence.citation.drawer_id.is_empty())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_brief_rejects_max_items_zero() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let error = server
+            .brief_json_for_test(serde_json::json!({
+                "query": "debug",
+                "max_items": 0
+            }))
+            .await
+            .expect_err("max_items=0 should reject");
+        assert!(error.to_string().contains("max_items"));
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_mempal_brief() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        assert!(tools.iter().any(|tool| tool.name == "mempal_brief"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_brief"));
+    }
+
     #[tokio::test]
     async fn test_mcp_field_taxonomy_lists_stage1_fields() {
         let (_tempdir, _db_path, server) = setup_server();
@@ -5241,7 +5572,7 @@ mod tests {
             .expect_err("invalid action should fail");
         assert!(
             error.to_string().contains(
-                "actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, rollback_control, check_record, record_checked, review, readiness, record, list, stats, gate, research_validate_plan, research_ingest_plan"
+                "actions are guidance, instrumentation_policy, prepare_record, capture, evaluator_advise, default_proposal, rollback_control, check_record, record_checked, review, readiness, analytics, record, list, stats, gate, research_validate_plan, research_ingest_plan"
             )
         );
 
@@ -5633,6 +5964,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_mcp_phase3_adoption_analytics_action() {
+        let (_tempdir, db_path, server) = setup_server();
+        let before = {
+            let db = Database::open(&db_path).expect("open db");
+            for (id, signal) in [
+                ("analytics_accept", RuntimeAdoptionSignal::Accepted),
+                ("analytics_reject", RuntimeAdoptionSignal::Rejected),
+            ] {
+                db.insert_runtime_adoption_event(&RuntimeAdoptionEvent {
+                    id: id.to_string(),
+                    track: RuntimeAdoptionTrack::CardContext,
+                    signal,
+                    feature: "include_cards".to_string(),
+                    query: Some("skill trigger".to_string()),
+                    context_hash: None,
+                    card_id: None,
+                    evaluator_id: None,
+                    research_report_id: None,
+                    note: Some("analytics fixture".to_string()),
+                    metadata: None,
+                    created_at: "1777710000".to_string(),
+                })
+                .expect("insert event");
+            }
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len()
+        };
+
+        let response = server
+            .phase3_json_for_test(serde_json::json!({
+                "action": "analytics"
+            }))
+            .await
+            .expect("analytics");
+        let analytics = response.analytics.expect("analytics report");
+        assert!(!analytics.writes);
+        assert_eq!(analytics.total_events, 2);
+        assert!(
+            analytics
+                .groups
+                .iter()
+                .any(|group| group.feature == "include_cards" && group.accepted == 1)
+        );
+
+        let db = Database::open(&db_path).expect("reopen db");
+        assert_eq!(
+            db.list_runtime_adoption_events(&RuntimeAdoptionFilter::default(), 10)
+                .expect("events")
+                .len(),
+            before
+        );
+    }
+
+    #[tokio::test]
     async fn test_mcp_phase3_readiness_card_context_default_is_read_only() {
         let (_tempdir, db_path, server) = setup_server();
         let before = {
@@ -5793,12 +6179,13 @@ mod tests {
         let description = tool.description.as_deref().unwrap_or_default();
         assert!(description.contains("Phase-3 runtime adoption evidence"));
         assert!(description.contains(
-            "Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/record/list/stats/gate/research_validate_plan/research_ingest_plan"
+            "Actions: guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/rollback_control/check_record/record_checked/review/readiness/analytics/record/list/stats/gate/research_validate_plan/research_ingest_plan"
         ));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_phase3"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=guidance"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=instrumentation_policy"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=readiness"));
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=analytics"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=capture"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=evaluator_advise"));
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("action=default_proposal"));
@@ -7209,6 +7596,7 @@ mod tests {
                 wing: None,
                 room: None,
                 note: None,
+                capture: None,
                 execute: None,
             }))
             .await
@@ -7244,6 +7632,7 @@ mod tests {
             wing: None,
             room: None,
             note: None,
+            capture: None,
             execute: None,
         }
     }
@@ -7702,6 +8091,45 @@ mod tests {
         assert!(
             !mempal_home.join("palace.db").exists(),
             "sessions must not write the db-backed memory store"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_cowork_bus_session_close() {
+        let (tempdir, db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        mcp_bus_register(&server, &repo, "claude-main", "claude").await;
+        mcp_bus_register(&server, &repo, "codex-a", "codex").await;
+
+        let mut create = bus_request("session_create", &repo);
+        create.session_id = Some("review-1".to_string());
+        create.title = Some("Review 1".to_string());
+        create.agents = vec!["claude-main".to_string(), "codex-a".to_string()];
+        server
+            .mempal_cowork_bus(Parameters(create))
+            .await
+            .expect("create session");
+
+        let mut close = bus_request("session_close", &repo);
+        close.session_id = Some("review-1".to_string());
+        close.capture = Some(true);
+        close.execute = Some(false);
+        let response = server
+            .mempal_cowork_bus(Parameters(close))
+            .await
+            .expect("close session");
+        assert_eq!(response.0.sessions[0].status, "closed");
+        assert_eq!(
+            response.0.capture.as_ref().expect("capture payload").writes,
+            false
+        );
+        assert!(
+            !db_path.exists(),
+            "dry-run session_close capture must not create palace.db"
+        );
+        assert!(
+            mempal_home.join("cowork-bus").exists(),
+            "session close should remain a cowork bus runtime operation"
         );
     }
 
