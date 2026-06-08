@@ -393,7 +393,11 @@ fn validate_ingest_request(
                 || trigger_hints.is_some()
             {
                 return Err(ErrorData::invalid_params(
-                    "evidence drawer does not allow knowledge-only fields",
+                    "evidence drawer does not allow knowledge-only fields \
+                     (statement, tier, status, supporting_refs, counterexample_refs, \
+                     teaching_refs, verification_refs, scope_constraints, trigger_hints); \
+                     omit them for an evidence drawer, or use mempal_knowledge_distill \
+                     to create governed knowledge from existing evidence",
                     None,
                 ));
             }
@@ -2379,7 +2383,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_ingest",
-        description = "Persist a decision, bug fix, or design insight to project memory. Call this when a decision is reached in conversation — include the rationale, not just the outcome. Wing is required; let mempal auto-route the room. Set dry_run=true to preview the drawer_id without writing."
+        description = "Persist a decision, bug fix, or design insight to project memory. Call this when a decision is reached in conversation — include the rationale, not just the outcome. Wing is required; let mempal auto-route the room. Set dry_run=true to preview the drawer_id without writing. By default this writes a raw EVIDENCE drawer — pass only content plus wing/room/importance/source. Do NOT pass knowledge-only fields (statement, tier, status, supporting_refs, counterexample_refs, teaching_refs, verification_refs, scope_constraints, trigger_hints) on a default ingest: an evidence drawer rejects them. To distill existing evidence drawers into a governed typed rule, use mempal_knowledge_distill instead."
     )]
     async fn mempal_ingest(
         &self,
@@ -6548,6 +6552,80 @@ mod tests {
                 .contains("candidate knowledge from existing evidence")
         );
         assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_knowledge_distill"));
+    }
+
+    // P107: ingest entrypoint discoverability — evidence vs knowledge boundary
+    // must be visible on push-based surfaces before a first-time agent fails.
+
+    #[tokio::test]
+    async fn test_mcp_ingest_evidence_rejects_knowledge_fields_with_remedy() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let err = server
+            .ingest_json_for_test(serde_json::json!({
+                "wing": "mempal",
+                "room": "review",
+                "content": "a raw decision recorded as evidence",
+                "statement": "this knowledge-only field must be rejected",
+            }))
+            .await
+            .expect_err("evidence ingest carrying a knowledge-only field must be rejected");
+        assert!(
+            err.message.contains("mempal_knowledge_distill"),
+            "P107: rejection must steer to the distill entrypoint, got: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_mcp_ingest_tool_description_steers_to_distill() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let ingest = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_ingest")
+            .expect("mempal_ingest tool exists");
+        let description = ingest.description.as_deref().unwrap_or_default();
+        assert!(
+            description.contains("EVIDENCE drawer"),
+            "P107: ingest description must state the evidence-drawer default"
+        );
+        assert!(
+            description.contains("mempal_knowledge_distill"),
+            "P107: ingest description must steer to mempal_knowledge_distill"
+        );
+    }
+
+    #[test]
+    fn test_mcp_ingest_schema_documents_knowledge_only_fields() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let ingest = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_ingest")
+            .expect("mempal_ingest tool exists");
+        let schema = serde_json::to_string(&ingest.input_schema)
+            .expect("serialize mempal_ingest input schema");
+        assert!(
+            schema.contains("Knowledge-only"),
+            "P107: input schema must mark knowledge-only fields"
+        );
+        assert!(
+            schema.contains("mempal_knowledge_distill"),
+            "P107: input schema must steer to mempal_knowledge_distill"
+        );
+    }
+
+    #[test]
+    fn test_mcp_protocol_documents_evidence_vs_knowledge_entrypoint() {
+        let protocol = crate::core::protocol::MEMORY_PROTOCOL;
+        assert!(
+            protocol.contains("EVIDENCE drawer by default"),
+            "P107: protocol must state default ingest writes evidence"
+        );
+        assert!(
+            protocol.contains("mempal_knowledge_distill"),
+            "P107: protocol must direct distilling evidence to mempal_knowledge_distill"
+        );
     }
 
     #[tokio::test]

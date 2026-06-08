@@ -159,6 +159,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p104-release-readiness-checklist.spec.md` | 完成 | P104 release readiness checklist：`mempal release-readiness` 只读检查 package/docs/spec-plan/runbook/doctor/schema 发布准备状态 |
 | `specs/p105-mempal-book-zh-cn.spec.md` | 完成 | P105 mempal book zh-CN：中文 mdBook + Mermaid 渲染 + 每章 agent-spec 写作合约/计划 + 扩展正文，从决策到架构到实际使用 |
 | `specs/p106-context-distill-signal.spec.md` | 完成 | P106 context distill signal：`mempal context` / `mempal_context` 只读 `distill_suggestions`——确定性检测 evidence 密集但无 promoted 知识的 field（≥5 evidence 且 0 promoted），给出 distill 建议；不写库、不自动 distill/promote，写入仍走显式 gate |
+| `specs/p107-ingest-entrypoint-discoverability.spec.md` | 完成 | P107 ingest entrypoint discoverability：把 evidence-vs-knowledge ingest 边界做成 first-time agent 下手前可见的 push-型契约——`mempal_ingest` 工具描述 + `IngestRequest` knowledge-only 字段 schema doc + 错误文案补救 + MEMORY_PROTOCOL Rule 4；纯文档/可发现性，零 schema/行为/校验变更 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -270,6 +271,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-05-26-p104-release-readiness-checklist.md` — P104 release readiness checklist（已完成）
 - `docs/plans/2026-05-28-p105-mempal-book-zh-cn.md` — P105 mempal book zh-CN（已完成）
 - `docs/plans/2026-06-04-p106-context-distill-signal.md` — P106 context distill signal（已完成）
+- `docs/plans/2026-06-09-p107-ingest-entrypoint-discoverability.md` — P107 ingest entrypoint discoverability（已完成）
 
 ### Spec 使用方式
 
@@ -308,7 +310,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_knowledge_publish_anchor` | metadata-only outward anchor publication（P25） |
 | `mempal_knowledge_cards` | Phase-2 knowledge card list/get/events/gate/promote/demote/retrieve；retrieve 通过 linked evidence 返回 active cards（P35/P40/P45） |
 | `mempal_phase3` | Phase-3 runtime adoption evidence：guidance/instrumentation_policy/prepare_record/capture/evaluator_advise/default_proposal/check_record/record_checked/review/readiness/analytics/record/list/stats/gate/research_validate_plan/research_ingest_plan（P60/P61/P63/P64/P65/P66/P68/P69/P72/P73/P74/P77/P103） |
-| `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`） |
+| `mempal_ingest` | 写记忆（支持 dry_run；P9-B 暴露 `lock_wait_ms`）；默认写 evidence drawer，knowledge-only 字段被拒并引导至 `mempal_knowledge_distill`（P107） |
 | `mempal_delete` | soft-delete（+ audit） |
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |
 | `mempal_kg` | 知识图谱三元组（add/query/invalidate） |

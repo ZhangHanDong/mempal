@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: MINOR bumps introduce new features, PATCH bumps are bug-fix only).
 
+## [0.6.1] — 2026-06-09
+
+Quality / discoverability patch. **P107: make the evidence-vs-knowledge ingest
+boundary discoverable before failure.** No schema, behavior, or validation
+change — only the surfaces a first-time agent reads before calling.
+
+- `mempal_ingest` tool description now states it writes a raw **evidence**
+  drawer by default and that knowledge-only fields belong to
+  `mempal_knowledge_distill`, not a default ingest.
+- The `IngestRequest` knowledge-only fields (`memory_kind`, `statement`,
+  `tier`, `status`, `supporting_refs`, `counterexample_refs`, `teaching_refs`,
+  `verification_refs`, `scope_constraints`, `trigger_hints`) carry doc comments,
+  so the derived MCP JSON schema marks them knowledge-only and steers to
+  distill.
+- The `evidence drawer does not allow knowledge-only fields` rejection is now
+  remedial: it names the fields and tells the caller to omit them or use
+  `mempal_knowledge_distill`.
+- The embedded MEMORY_PROTOCOL (Rule 4) documents the evidence-vs-knowledge
+  entrypoint split.
+
+Motivated by a real Codex miscall: it passed a distilled `statement` +
+`supporting_refs` through `mempal_ingest` (which defaults to evidence) and hit
+the rejection with no next-step guidance. A drawer storing the lesson is
+pull-based; a first-time agent never searches it, so the contract had to move to
+push-based surfaces (tool description, schema docs, error text, protocol).
+
 ## [0.6.0] — 2026-06-05
 
 Feature release. **P106: a read-only "distill signal" in mind-model context.**

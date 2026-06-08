@@ -1381,18 +1381,46 @@ pub struct IngestRequest {
     /// Default 0. Use 3-5 for key decisions, architecture choices, and lessons learned.
     pub importance: Option<i32>,
 
+    /// Memory layer. Defaults to "evidence" (a raw, verbatim record) when
+    /// omitted. Set "knowledge" ONLY for a fully-formed typed knowledge drawer,
+    /// in which case statement, tier, status, and supporting_refs are ALL
+    /// required and provenance is forbidden. To turn existing evidence drawers
+    /// into a governed rule, prefer mempal_knowledge_distill over a hand-built
+    /// knowledge ingest.
     pub memory_kind: Option<String>,
     pub domain: Option<String>,
     pub field: Option<String>,
     pub provenance: Option<String>,
+    /// Knowledge-only field — NOT for an evidence drawer. A default (evidence)
+    /// ingest REJECTS this and the other knowledge-only fields (tier, status,
+    /// supporting_refs, counterexample_refs, teaching_refs, verification_refs,
+    /// scope_constraints, trigger_hints). Only valid with
+    /// memory_kind="knowledge". To distill evidence into a rule, use
+    /// mempal_knowledge_distill.
     pub statement: Option<String>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub tier: Option<String>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub status: Option<String>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub supporting_refs: Option<Vec<String>>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub counterexample_refs: Option<Vec<String>>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub teaching_refs: Option<Vec<String>>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub verification_refs: Option<Vec<String>>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub scope_constraints: Option<String>,
+    /// Knowledge-only (see `statement`). Rejected on an evidence drawer; use
+    /// memory_kind="knowledge" or mempal_knowledge_distill.
     pub trigger_hints: Option<TriggerHintsDto>,
     pub anchor_kind: Option<String>,
     pub anchor_id: Option<String>,
