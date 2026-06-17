@@ -357,6 +357,16 @@ impl ValidatedIngestMetadata {
     }
 }
 
+/// Resolve the project directory a peek should read. An explicit non-empty
+/// `cwd` (P108) wins; otherwise fall back to the server's process directory.
+fn resolve_peek_cwd(cwd: Option<String>) -> std::result::Result<PathBuf, ErrorData> {
+    match cwd.map(|c| c.trim().to_string()).filter(|c| !c.is_empty()) {
+        Some(explicit) => Ok(PathBuf::from(explicit)),
+        None => std::env::current_dir()
+            .map_err(|e| ErrorData::internal_error(format!("cwd unavailable: {e}"), None)),
+    }
+}
+
 fn validate_ingest_request(
     request: &IngestRequest,
     source_type: &SourceType,
@@ -2860,7 +2870,7 @@ impl MempalMcpServer {
 
     #[tool(
         name = "mempal_peek_partner",
-        description = "Read the partner coding agent's LIVE session log (Claude Code ↔ Codex) without storing it in mempal. Returns the most recent user+assistant messages from their active session file. Use this for CURRENT partner state; use mempal_search for CRYSTALLIZED past decisions. Peek is a pure read — it never writes to mempal drawers. Pass tool=\"auto\" to infer the partner from MCP ClientInfo, or tool=\"claude\"/\"codex\" explicitly."
+        description = "Read the partner coding agent's LIVE session log (Claude Code ↔ Codex) without storing it in mempal. Returns the most recent user+assistant messages from their active session file. Use this for CURRENT partner state; use mempal_search for CRYSTALLIZED past decisions. Peek is a pure read — it never writes to mempal drawers. Pass tool=\"auto\" to infer the partner from MCP ClientInfo, or tool=\"claude\"/\"codex\" explicitly. Pass cwd to read a partner session in another project; when omitted it reads the partner session for the project this server runs in."
     )]
     async fn mempal_peek_partner(
         &self,
@@ -2883,8 +2893,7 @@ impl MempalMcpServer {
             .and_then(|g| g.clone())
             .and_then(|n| Tool::from_str_ci(&n));
 
-        let cwd = std::env::current_dir()
-            .map_err(|e| ErrorData::internal_error(format!("cwd unavailable: {e}"), None))?;
+        let cwd = resolve_peek_cwd(request.cwd)?;
 
         let cowork_req = CoworkPeekRequest {
             tool,
@@ -6625,6 +6634,47 @@ mod tests {
         assert!(
             protocol.contains("mempal_knowledge_distill"),
             "P107: protocol must direct distilling evidence to mempal_knowledge_distill"
+        );
+    }
+
+    // P108: peek cwd cross-project — the partner-peek entrypoints must let a
+    // caller target another project's session, not only the server's cwd.
+
+    #[test]
+    fn test_resolve_peek_cwd_honors_explicit_and_falls_back() {
+        let explicit = resolve_peek_cwd(Some("/tmp/some-project".to_string()))
+            .expect("explicit cwd resolves");
+        assert_eq!(explicit, PathBuf::from("/tmp/some-project"));
+
+        // Whitespace-only is treated as omitted.
+        let blank = resolve_peek_cwd(Some("   ".to_string())).expect("blank cwd resolves");
+        let current = std::env::current_dir().expect("current dir");
+        assert_eq!(blank, current, "P108: blank cwd must fall back to current dir");
+
+        let omitted = resolve_peek_cwd(None).expect("omitted cwd resolves");
+        assert_eq!(
+            omitted, current,
+            "P108: omitted cwd must fall back to current dir"
+        );
+    }
+
+    #[test]
+    fn test_mcp_peek_partner_schema_documents_cwd() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let peek = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_peek_partner")
+            .expect("mempal_peek_partner tool exists");
+        let schema = serde_json::to_string(&peek.input_schema)
+            .expect("serialize mempal_peek_partner input schema");
+        assert!(
+            schema.contains("cwd"),
+            "P108: peek input schema must expose a cwd property"
+        );
+        assert!(
+            schema.contains("another project"),
+            "P108: peek cwd doc must explain cross-project reads"
         );
     }
 

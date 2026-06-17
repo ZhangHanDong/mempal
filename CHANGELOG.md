@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: MINOR bumps introduce new features, PATCH bumps are bug-fix only).
 
+## [0.6.2] — 2026-06-17
+
+Capability completion (backward-compatible). **P108: peek a partner agent's
+LIVE session for any project, not just the MCP server's own.**
+
+- `mempal_peek_partner` gains an optional `cwd` — pass it to read a partner
+  session in another project; omitting it preserves the prior
+  `std::env::current_dir()` behavior.
+- New CLI `mempal cowork-peek --tool <claude|codex> --cwd <path>
+  [--limit N] [--since RFC3339] [--format plain|json]` for no-tmux,
+  shell-level cross-project live reading. Runs in the cowork graceful-degrade
+  path (no palace.db required).
+
+The cowork layer's `peek_partner` already resolved sessions by `cwd`; both
+runtime entrypoints just never exposed it. Surfaced by Codex while diagnosing
+how to read a partner's live session per-project without tmux. No change to
+session resolution, self-peek, or storage.
+
 ## [0.6.1] — 2026-06-09
 
 Quality / discoverability patch. **P107: make the evidence-vs-knowledge ingest

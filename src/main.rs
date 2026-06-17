@@ -424,6 +424,21 @@ enum Commands {
         #[arg(long, default_value_t = 80)]
         lines: usize,
     },
+    /// Read a partner agent's LIVE session log for a project (no tmux needed).
+    CoworkPeek {
+        /// Which agent tool's session to read (claude|codex).
+        #[arg(long)]
+        tool: String,
+        /// Project directory whose partner session to read.
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     /// Diagnose multi-agent cowork bus runtime state.
     CoworkDoctor {
         #[arg(long)]
@@ -1343,6 +1358,15 @@ async fn run() -> Result<()> {
         } => {
             return cowork_tmux_peek_command(agent_id, cwd, lines);
         }
+        Commands::CoworkPeek {
+            tool,
+            cwd,
+            limit,
+            since,
+            format,
+        } => {
+            return cowork_peek_command(tool, cwd, limit, since, format);
+        }
         Commands::CoworkDoctor {
             cwd,
             now,
@@ -1592,6 +1616,7 @@ async fn run() -> Result<()> {
         | Commands::CoworkChannelSet { .. }
         | Commands::CoworkChannelSend { .. }
         | Commands::CoworkTmuxPeek { .. }
+        | Commands::CoworkPeek { .. }
         | Commands::CoworkDoctor { .. }
         | Commands::CoworkSessionCreate { .. }
         | Commands::CoworkSessions { .. }
@@ -6257,6 +6282,49 @@ fn cowork_tmux_peek_command(agent_id: String, cwd: PathBuf, lines: usize) -> Res
     Ok(())
 }
 
+fn cowork_peek_command(
+    tool: String,
+    cwd: PathBuf,
+    limit: usize,
+    since: Option<String>,
+    format: String,
+) -> Result<()> {
+    use mempal::cowork::peek::{PeekRequest, Tool, peek_partner};
+
+    let target = Tool::from_str_ci(&tool)
+        .ok_or_else(|| anyhow::anyhow!("unknown tool `{tool}`: expected claude|codex"))?;
+    let resp = peek_partner(PeekRequest {
+        tool: target,
+        limit,
+        since,
+        cwd,
+        // Shell caller has no MCP ClientInfo; self-peek does not apply.
+        caller_tool: None,
+        home_override: None,
+    })
+    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+
+    match format.as_str() {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&resp)?);
+            Ok(())
+        }
+        "plain" => {
+            println!(
+                "partner={} active={} session={}",
+                resp.partner_tool.as_str(),
+                resp.partner_active,
+                resp.session_path.as_deref().unwrap_or("(none)")
+            );
+            for msg in &resp.messages {
+                println!("[{} @ {}] {}", msg.role, msg.at, msg.text);
+            }
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
+}
+
 fn static_runbook_command(title: &str, content: &str, format: &str) -> Result<()> {
     match format {
         "plain" => {
@@ -7043,4 +7111,40 @@ fn should_skip_dir(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| matches!(name, ".git" | "target" | "node_modules"))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // P108: the cross-project cowork-peek CLI must parse with an explicit tool
+    // and a target project cwd.
+    #[test]
+    fn test_cli_cowork_peek_parses() {
+        let cli = Cli::try_parse_from([
+            "mempal",
+            "cowork-peek",
+            "--tool",
+            "codex",
+            "--cwd",
+            "/tmp/project",
+        ])
+        .expect("cowork-peek must parse");
+        match cli.command {
+            Commands::CoworkPeek {
+                tool,
+                cwd,
+                limit,
+                since,
+                format,
+            } => {
+                assert_eq!(tool, "codex");
+                assert_eq!(cwd, PathBuf::from("/tmp/project"));
+                assert_eq!(limit, 30, "default limit");
+                assert!(since.is_none());
+                assert_eq!(format, "plain", "default format");
+            }
+            _ => panic!("expected CoworkPeek command variant"),
+        }
+    }
 }

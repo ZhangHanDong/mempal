@@ -1678,6 +1678,11 @@ pub struct PeekPartnerRequest {
     /// Optional RFC3339 timestamp cutoff — only messages strictly newer than
     /// this are returned.
     pub since: Option<String>,
+
+    /// Optional project directory whose partner session to read. Use this to
+    /// peek a partner working in another project; when omitted, mempal reads the
+    /// partner session for the project this MCP server runs in.
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
