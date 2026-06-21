@@ -44,6 +44,17 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    call mempal_tunnels with action="list" to discover related rooms across
    wings when context may live in another project.
 
+3a. RESUME ANOTHER PROJECT FROM ANY DIRECTORY
+   mempal stores every project's memory in one global database keyed by wing,
+   and each project's absolute worktree path is recorded. When the user wants to
+   continue a project that is NOT the current directory ("continue the xxx
+   project", "pick up where we left off on yyy"), call mempal_projects to list
+   known projects, then mempal_resume with the project name (a fuzzy fragment is
+   fine). Resume returns that project's worktree path, recent decisions,
+   in-flight candidate knowledge, and a next step. mempal returns the path to cd
+   into; it does not move you — change directory yourself, then use
+   mempal_context scoped to that path for ordered guidance.
+
 3b. USE MIND-MODEL CONTEXT FOR GUIDANCE
    When you need ordered operating guidance rather than raw evidence search,
    call mempal_context. It assembles typed knowledge in the intended runtime

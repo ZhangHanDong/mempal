@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: MINOR bumps introduce new features, PATCH bumps are bug-fix only).
 
+## [0.7.0] — 2026-06-22
+
+New capability. **P109: list and resume any project from any directory.**
+
+mempal already keeps every project's memory in one global `palace.db` keyed by
+`wing`, with each project's absolute worktree path in its `worktree://` anchor.
+P109 surfaces that so "continue the xxx project" works without already knowing
+its wing slug or path:
+
+- `mempal projects` / `mempal_projects` — list every known project: name,
+  absolute worktree path, drawer counts, last activity (newest first).
+- `mempal resume <fuzzy-name>` / `mempal_resume` — resolve a name fragment
+  against wings and worktree-path basenames; on a unique match return the
+  project's path, recent decisions, in-flight candidate knowledge, and a
+  concrete next step; otherwise return candidates (ambiguous) or the available
+  projects (not found).
+- MEMORY_PROTOCOL Rule 3a documents the resume flow.
+
+Read-only and embedder-free: no LLM, no writes, no new schema. mempal returns
+the path to cd into; moving into the repo stays the agent's job. Surfaced by the
+question "from any directory, can I just say 'continue project xxx'?".
+
 ## [0.6.2] — 2026-06-17
 
 Capability completion (backward-compatible). **P108: peek a partner agent's

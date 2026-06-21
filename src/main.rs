@@ -179,6 +179,22 @@ enum Commands {
         #[arg(long = "dao-tian-limit", default_value_t = 1)]
         dao_tian_limit: usize,
     },
+    /// List every project (wing) mempal knows, newest activity first.
+    Projects {
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
+    /// Resume a project by fuzzy name from any directory.
+    Resume {
+        /// Project name or fragment (matches a wing or a worktree-path basename).
+        query: String,
+        #[arg(long, default_value_t = 5)]
+        evidence_limit: usize,
+        #[arg(long, default_value_t = 5)]
+        candidate_limit: usize,
+        #[arg(long, default_value = "plain")]
+        format: String,
+    },
     WakeUp {
         #[arg(long)]
         format: Option<String>,
@@ -1574,6 +1590,13 @@ async fn run() -> Result<()> {
             )
             .await
         }
+        Commands::Projects { format } => projects_command(&db, &format),
+        Commands::Resume {
+            query,
+            evidence_limit,
+            candidate_limit,
+            format,
+        } => resume_command(&db, &query, evidence_limit, candidate_limit, &format),
         Commands::Delete { drawer_id } => delete_command(&db, &drawer_id),
         Commands::Purge { before } => purge_command(&db, before.as_deref()),
         Commands::WakeUp { format } => wake_up_command(&db, format.as_deref()),
@@ -2269,6 +2292,97 @@ async fn context_command(db: &Database, config: &Config, args: ContextCommandArg
     }
 
     Ok(())
+}
+
+fn projects_command(db: &Database, format: &str) -> Result<()> {
+    let projects = mempal::projects::list_projects(db)?;
+    match format {
+        "json" => println!("{}", serde_json::to_string_pretty(&projects)?),
+        "plain" => {
+            if projects.is_empty() {
+                println!("(no projects)");
+            }
+            for p in &projects {
+                println!(
+                    "{}\t{}\tdrawers={} (ev={} kn={})\tlast={}",
+                    p.wing,
+                    p.path.as_deref().unwrap_or("(no worktree path)"),
+                    p.total,
+                    p.evidence,
+                    p.knowledge,
+                    p.last_activity
+                );
+            }
+        }
+        other => bail!("unknown format: {other}"),
+    }
+    Ok(())
+}
+
+fn resume_command(
+    db: &Database,
+    query: &str,
+    evidence_limit: usize,
+    candidate_limit: usize,
+    format: &str,
+) -> Result<()> {
+    use mempal::projects::ResumeResolution;
+
+    let resolution = mempal::projects::resume_project(db, query, evidence_limit, candidate_limit)?;
+    match format {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&resolution)?);
+            Ok(())
+        }
+        "plain" => {
+            match &resolution {
+                ResumeResolution::Resolved(pack) => {
+                    println!("resolved: {}", pack.wing);
+                    println!("path: {}", pack.path.as_deref().unwrap_or("(unknown)"));
+                    println!(
+                        "drawers: {} (evidence={} knowledge={}) last={}",
+                        pack.total, pack.evidence, pack.knowledge, pack.last_activity
+                    );
+                    if !pack.recent_evidence.is_empty() {
+                        println!("recent evidence:");
+                        for e in &pack.recent_evidence {
+                            println!(
+                                "  [{}] {} :: {}",
+                                e.drawer_id,
+                                e.source_file.as_deref().unwrap_or("(no source)"),
+                                e.snippet
+                            );
+                        }
+                    }
+                    if !pack.in_flight.is_empty() {
+                        println!("in-flight candidate knowledge:");
+                        for c in &pack.in_flight {
+                            println!(
+                                "  [{}] {}",
+                                c.drawer_id,
+                                c.statement.as_deref().unwrap_or("(no statement)")
+                            );
+                        }
+                    }
+                    println!("next: {}", pack.next_step);
+                }
+                ResumeResolution::Ambiguous { query, candidates } => {
+                    println!("ambiguous '{query}' — matches:");
+                    for c in candidates {
+                        println!("  {} ({})", c.wing, c.path.as_deref().unwrap_or("no path"));
+                    }
+                }
+                ResumeResolution::NotFound { query, available } => {
+                    println!("not found '{query}'. available projects:");
+                    for wing in available {
+                        println!("  {wing}");
+                    }
+                }
+            }
+            Ok(())
+        }
+        other => bail!("unknown format: {other}"),
+    }
 }
 
 async fn brief_command(db: &Database, config: &Config, args: BriefCommandArgs) -> Result<()> {
@@ -7145,6 +7259,34 @@ mod tests {
                 assert_eq!(format, "plain", "default format");
             }
             _ => panic!("expected CoworkPeek command variant"),
+        }
+    }
+
+    // P109: projects + resume CLI must parse.
+    #[test]
+    fn test_cli_projects_and_resume_parse() {
+        let projects = Cli::try_parse_from(["mempal", "projects", "--format", "json"])
+            .expect("projects must parse");
+        match projects.command {
+            Commands::Projects { format } => assert_eq!(format, "json"),
+            _ => panic!("expected Projects command variant"),
+        }
+
+        let resume = Cli::try_parse_from(["mempal", "resume", "auth-service"])
+            .expect("resume must parse");
+        match resume.command {
+            Commands::Resume {
+                query,
+                evidence_limit,
+                candidate_limit,
+                format,
+            } => {
+                assert_eq!(query, "auth-service");
+                assert_eq!(evidence_limit, 5, "default evidence limit");
+                assert_eq!(candidate_limit, 5, "default candidate limit");
+                assert_eq!(format, "plain", "default format");
+            }
+            _ => panic!("expected Resume command variant"),
         }
     }
 }

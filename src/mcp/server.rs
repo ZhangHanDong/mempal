@@ -83,8 +83,10 @@ use super::tools::{
     KnowledgeDistillResponse, KnowledgeGateRequest, KnowledgeGateResponse, KnowledgePolicyResponse,
     KnowledgePromoteRequest, KnowledgePromoteResponse, KnowledgePublishAnchorRequest,
     KnowledgePublishAnchorResponse, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse,
-    Phase3GateDto, Phase3Request, Phase3Response, ResearchAdapterPlanDto, ResearchIngestPlanDto,
-    RetrievedKnowledgeCardDto, RuntimeAdoptionEventDto, RuntimeAdoptionStatsDto, ScopeCount,
+    Phase3GateDto, Phase3Request, Phase3Response, ProjectsResponse, ResearchAdapterPlanDto,
+    ResearchIngestPlanDto, ResumeRequest, ResumeResponse, RetrievedKnowledgeCardDto,
+    RuntimeAdoptionEventDto,
+    RuntimeAdoptionStatsDto, ScopeCount,
     SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
     TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
     TunnelsRequest, TunnelsResponse,
@@ -2866,6 +2868,35 @@ impl MempalMcpServer {
                 None,
             )),
         }
+    }
+
+    #[tool(
+        name = "mempal_projects",
+        description = "List every project (wing) mempal knows — name, absolute worktree path, drawer counts, and last activity — newest first. Read-only; works from any directory. Use it to discover which project to resume."
+    )]
+    async fn mempal_projects(&self) -> std::result::Result<Json<ProjectsResponse>, ErrorData> {
+        let db = self.open_db()?;
+        let projects = crate::projects::list_projects(&db).map_err(db_error)?;
+        Ok(Json(ProjectsResponse { projects }))
+    }
+
+    #[tool(
+        name = "mempal_resume",
+        description = "Resume a project by fuzzy name from any directory. Resolves the query against wing names and worktree-path basenames and returns the project's worktree path, recent decisions, in-flight candidate knowledge, and a concrete next step — or candidate projects when ambiguous, or the available projects when not found. Read-only: mempal returns the path to cd into, it does not move you."
+    )]
+    async fn mempal_resume(
+        &self,
+        Parameters(request): Parameters<ResumeRequest>,
+    ) -> std::result::Result<Json<ResumeResponse>, ErrorData> {
+        let db = self.open_db()?;
+        let resolution = crate::projects::resume_project(
+            &db,
+            &request.query,
+            request.evidence_limit.unwrap_or(5),
+            request.candidate_limit.unwrap_or(5),
+        )
+        .map_err(db_error)?;
+        Ok(Json(ResumeResponse::from(resolution)))
     }
 
     #[tool(
@@ -6676,6 +6707,22 @@ mod tests {
             schema.contains("another project"),
             "P108: peek cwd doc must explain cross-project reads"
         );
+    }
+
+    // P109: cross-project resume tools must be registered.
+    #[test]
+    fn test_mcp_registry_includes_projects_and_resume() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        assert!(
+            tools.iter().any(|tool| tool.name == "mempal_projects"),
+            "P109: mempal_projects must be registered"
+        );
+        assert!(
+            tools.iter().any(|tool| tool.name == "mempal_resume"),
+            "P109: mempal_resume must be registered"
+        );
+        assert!(crate::core::protocol::MEMORY_PROTOCOL.contains("mempal_resume"));
     }
 
     #[tokio::test]

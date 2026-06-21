@@ -21,4 +21,5 @@ pub mod knowledge_distill;
 pub mod knowledge_gate;
 pub mod knowledge_lifecycle;
 pub mod mcp;
+pub mod projects;
 pub mod search;

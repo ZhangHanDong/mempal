@@ -161,6 +161,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p106-context-distill-signal.spec.md` | 完成 | P106 context distill signal：`mempal context` / `mempal_context` 只读 `distill_suggestions`——确定性检测 evidence 密集但无 promoted 知识的 field（≥5 evidence 且 0 promoted），给出 distill 建议；不写库、不自动 distill/promote，写入仍走显式 gate |
 | `specs/p107-ingest-entrypoint-discoverability.spec.md` | 完成 | P107 ingest entrypoint discoverability：把 evidence-vs-knowledge ingest 边界做成 first-time agent 下手前可见的 push-型契约——`mempal_ingest` 工具描述 + `IngestRequest` knowledge-only 字段 schema doc + 错误文案补救 + MEMORY_PROTOCOL Rule 4；纯文档/可发现性，零 schema/行为/校验变更 |
 | `specs/p108-peek-cwd-cross-project.spec.md` | 完成 | P108 peek cwd cross-project：`mempal_peek_partner` 加可选 `cwd` + 新 CLI `mempal cowork-peek --tool --cwd`，支持无 tmux 跨项目读 partner live session；省略 `cwd` 保持原 `current_dir` 行为，零 peek_partner/存储变更 |
+| `specs/p109-cross-project-resume.spec.md` | 完成 | P109 cross-project resume：`mempal projects` / `mempal_projects` 列出所有项目（wing + worktree 路径 + 计数 + 最近活动），`mempal resume <fuzzy>` / `mempal_resume` 模糊解析到 wing/路径并返回项目路径 + 最近决策 + in-flight candidate + 下一步；只读、无 embedder、不写库、不改 context；从任意目录"继续 xxx 项目" |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -274,6 +275,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-06-04-p106-context-distill-signal.md` — P106 context distill signal（已完成）
 - `docs/plans/2026-06-09-p107-ingest-entrypoint-discoverability.md` — P107 ingest entrypoint discoverability（已完成）
 - `docs/plans/2026-06-17-p108-peek-cwd-cross-project.md` — P108 peek cwd cross-project（已完成）
+- `docs/plans/2026-06-22-p109-cross-project-resume.md` — P109 cross-project resume（已完成）
 
 ### Spec 使用方式
 
@@ -294,7 +296,7 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 - **隧道**：动态跨 Wing 链接发现，内联到搜索结果
 - **自描述协议**：MEMORY_PROTOCOL 嵌入 MCP ServerInfo.instructions，17 条规则
 
-## MCP 工具（23 个）
+## MCP 工具（25 个）
 
 | 工具 | 作用 |
 |------|------|
@@ -317,6 +319,8 @@ agent-spec lint specs/p6-cowork-peek-and-decide.spec.md --min-score 0.7
 | `mempal_taxonomy` | Wing/Room 路由关键词管理 |
 | `mempal_kg` | 知识图谱三元组（add/query/invalidate） |
 | `mempal_tunnels` | 跨 Wing 链接发现 |
+| `mempal_projects` | 列出所有项目（wing + worktree 路径 + 计数 + 最近活动），从任意目录可用（P109） |
+| `mempal_resume` | 按模糊名解析项目并返回路径 + 最近决策 + in-flight candidate + 下一步（P109） |
 | `mempal_peek_partner` | 读 partner agent 当前 session（live，不存储）；可选 `cwd` 跨项目读（P108，对应 CLI `mempal cowork-peek`） |
 | `mempal_cowork_push` | 主动投递 ephemeral handoff 到 partner inbox（at-next-submit 交付） |
 | `mempal_cowork_bus` | 多 agent concrete `agent_id` 总线：register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/session_close/handoff/capture，支持 opt-in `transport=tmux`、event replay、delivery ack/status、presence、group channels、read-only tmux pane peek、诊断、session、handoff summary、显式 handoff-to-evidence capture（P85/P86/P87/P88/P89/P90/P91/P93/P94/P95/P96/P101） |
@@ -359,6 +363,7 @@ src/
 ├── cowork/                    # 多 agent cowork bus / peek / push
 ├── factcheck/                 # 离线矛盾检测（relations / contradictions）
 ├── context.rs                 # mind-model runtime context assembler
+├── projects.rs                # P109 跨项目 list + fuzzy resume（只读）
 ├── brief.rs                   # deterministic cognitive brief
 ├── doctor.rs                  # install/runtime 诊断
 ├── field_taxonomy.rs          # field taxonomy guidance

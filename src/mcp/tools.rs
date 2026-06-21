@@ -1685,6 +1685,69 @@ pub struct PeekPartnerRequest {
     pub cwd: Option<String>,
 }
 
+/// P109: response for `mempal_projects`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ProjectsResponse {
+    pub projects: Vec<crate::projects::ProjectSummary>,
+}
+
+/// P109: request for `mempal_resume`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct ResumeRequest {
+    /// Project name or fragment; matches a wing or a worktree-path basename.
+    pub query: String,
+    /// Recent evidence drawers to include (default 5).
+    pub evidence_limit: Option<usize>,
+    /// In-flight candidate knowledge drawers to include (default 5).
+    pub candidate_limit: Option<usize>,
+}
+
+/// P109: flat response for `mempal_resume` (object-rooted for MCP output schema).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ResumeResponse {
+    /// One of `resolved`, `ambiguous`, `not_found`.
+    pub resolution: String,
+    pub query: String,
+    /// The resume pack when `resolution == "resolved"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pack: Option<crate::projects::ResumePack>,
+    /// Candidate projects when `resolution == "ambiguous"`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<crate::projects::ProjectSummary>,
+    /// Available wings when `resolution == "not_found"`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub available: Vec<String>,
+}
+
+impl From<crate::projects::ResumeResolution> for ResumeResponse {
+    fn from(resolution: crate::projects::ResumeResolution) -> Self {
+        use crate::projects::ResumeResolution;
+        match resolution {
+            ResumeResolution::Resolved(pack) => ResumeResponse {
+                resolution: "resolved".to_string(),
+                query: pack.wing.clone(),
+                pack: Some(*pack),
+                candidates: Vec::new(),
+                available: Vec::new(),
+            },
+            ResumeResolution::Ambiguous { query, candidates } => ResumeResponse {
+                resolution: "ambiguous".to_string(),
+                query,
+                pack: None,
+                candidates,
+                available: Vec::new(),
+            },
+            ResumeResolution::NotFound { query, available } => ResumeResponse {
+                resolution: "not_found".to_string(),
+                query,
+                pack: None,
+                candidates: Vec::new(),
+                available,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PeekPartnerResponse {
     pub partner_tool: String,
