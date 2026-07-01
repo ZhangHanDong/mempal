@@ -69,6 +69,7 @@ pub struct EmbedConfig {
     pub model: Option<String>,
     pub api_endpoint: Option<String>,
     pub api_model: Option<String>,
+    pub dimensions: Option<usize>,
 }
 
 impl Default for EmbedConfig {
@@ -78,6 +79,7 @@ impl Default for EmbedConfig {
             model: None,
             api_endpoint: None,
             api_model: None,
+            dimensions: None,
         }
     }
 }
@@ -113,4 +115,25 @@ fn default_config_path() -> PathBuf {
         .map(PathBuf::from)
         .map(|home| home.join(".mempal").join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("~/.mempal/config.toml"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+
+    #[test]
+    fn parses_api_embedding_dimensions() {
+        let config: Config = toml::from_str(
+            r#"
+[embed]
+backend = "api"
+api_endpoint = "http://localhost:11434/api/embeddings"
+api_model = "nomic-embed-text"
+dimensions = 768
+"#,
+        )
+        .expect("parse config");
+
+        assert_eq!(config.embed.dimensions, Some(768));
+    }
 }
