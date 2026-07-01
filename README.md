@@ -57,6 +57,7 @@ backend = "onnx"
 backend = "api"
 api_endpoint = "http://localhost:11434/api/embeddings"
 api_model = "nomic-embed-text"
+dimensions = 768  # optional; defaults to 384 when omitted
 ```
 
 ## Commands
@@ -263,7 +264,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 ```
 
-After changing the embedding model, re-embed existing drawers:
+After changing the embedding model or dimensions, re-embed existing drawers:
 
 ```bash
 mempal reindex
