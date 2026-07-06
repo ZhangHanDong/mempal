@@ -24,7 +24,8 @@ use crate::core::{
         TriggerHints, Triple,
     },
     utils::{
-        build_bootstrap_drawer_id_from_parts, build_triple_id, current_timestamp,
+        build_bootstrap_drawer_id_from_parts,
+        build_bootstrap_drawer_id_from_parts_with_source_file, build_triple_id, current_timestamp,
         knowledge_source_file, source_file_or_synthetic,
     },
 };
@@ -85,11 +86,9 @@ use super::tools::{
     KnowledgePublishAnchorResponse, PeekMessageDto, PeekPartnerRequest, PeekPartnerResponse,
     Phase3GateDto, Phase3Request, Phase3Response, ProjectsResponse, ResearchAdapterPlanDto,
     ResearchIngestPlanDto, ResumeRequest, ResumeResponse, RetrievedKnowledgeCardDto,
-    RuntimeAdoptionEventDto,
-    RuntimeAdoptionStatsDto, ScopeCount,
-    SearchRequest, SearchResponse, SearchResultDto, StatusResponse, TaxonomyEntryDto,
-    TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
-    TunnelsRequest, TunnelsResponse,
+    RuntimeAdoptionEventDto, RuntimeAdoptionStatsDto, ScopeCount, SearchRequest, SearchResponse,
+    SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse,
+    TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -965,13 +964,23 @@ impl MempalMcpServer {
             .collect();
 
         Ok(Json(StatusResponse {
-            schema_version,
-            normalize_version_current: CURRENT_NORMALIZE_VERSION,
-            stale_drawer_count,
+            schema_version: i32::try_from(schema_version).map_err(|_| {
+                ErrorData::internal_error("schema_version does not fit in i32", None)
+            })?,
+            normalize_version_current: i32::try_from(CURRENT_NORMALIZE_VERSION).map_err(|_| {
+                ErrorData::internal_error("normalize_version_current does not fit in i32", None)
+            })?,
+            stale_drawer_count: i64::try_from(stale_drawer_count).map_err(|_| {
+                ErrorData::internal_error("stale_drawer_count does not fit in i64", None)
+            })?,
             drawer_count,
             taxonomy_count,
-            db_size_bytes,
-            diary_rollup_days,
+            db_size_bytes: i64::try_from(db_size_bytes).map_err(|_| {
+                ErrorData::internal_error("db_size_bytes does not fit in i64", None)
+            })?,
+            diary_rollup_days: i32::try_from(diary_rollup_days).map_err(|_| {
+                ErrorData::internal_error("diary_rollup_days does not fit in i32", None)
+            })?,
             scopes,
             aaak_spec: crate::aaak::generate_spec(),
             memory_protocol: crate::core::protocol::MEMORY_PROTOCOL.to_string(),
@@ -2463,12 +2472,21 @@ impl MempalMcpServer {
         }
 
         let metadata = validate_ingest_request(&request, &SourceType::Manual)?;
-        let drawer_id = build_bootstrap_drawer_id_from_parts(
-            &request.wing,
-            room,
-            &request.content,
-            metadata.identity_parts(),
-        );
+        let drawer_id = match metadata.memory_kind {
+            MemoryKind::Evidence => build_bootstrap_drawer_id_from_parts_with_source_file(
+                &request.wing,
+                room,
+                &request.content,
+                metadata.identity_parts(),
+                request.source.as_deref(),
+            ),
+            MemoryKind::Knowledge => build_bootstrap_drawer_id_from_parts(
+                &request.wing,
+                room,
+                &request.content,
+                metadata.identity_parts(),
+            ),
+        };
 
         if request.dry_run.unwrap_or(false) {
             return Ok(Json(IngestResponse {
@@ -2553,8 +2571,9 @@ impl MempalMcpServer {
                 scope_constraints: metadata.scope_constraints,
                 trigger_hints: metadata.trigger_hints,
             };
-            db.insert_drawer(&drawer).map_err(db_error)?;
-            db.insert_vector(&drawer_id, &vector).map_err(db_error)?;
+            if db.insert_drawer(&drawer).map_err(db_error)? {
+                db.insert_vector(&drawer_id, &vector).map_err(db_error)?;
+            }
         }
 
         // lock_guard drops here, releasing the advisory lock.
@@ -6673,14 +6692,17 @@ mod tests {
 
     #[test]
     fn test_resolve_peek_cwd_honors_explicit_and_falls_back() {
-        let explicit = resolve_peek_cwd(Some("/tmp/some-project".to_string()))
-            .expect("explicit cwd resolves");
+        let explicit =
+            resolve_peek_cwd(Some("/tmp/some-project".to_string())).expect("explicit cwd resolves");
         assert_eq!(explicit, PathBuf::from("/tmp/some-project"));
 
         // Whitespace-only is treated as omitted.
         let blank = resolve_peek_cwd(Some("   ".to_string())).expect("blank cwd resolves");
         let current = std::env::current_dir().expect("current dir");
-        assert_eq!(blank, current, "P108: blank cwd must fall back to current dir");
+        assert_eq!(
+            blank, current,
+            "P108: blank cwd must fall back to current dir"
+        );
 
         let omitted = resolve_peek_cwd(None).expect("omitted cwd resolves");
         assert_eq!(

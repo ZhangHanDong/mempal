@@ -74,6 +74,7 @@ use mempal::knowledge_lifecycle::{
     DemoteRequest, PromoteRequest, demote_knowledge, promote_knowledge,
 };
 use mempal::mcp::MempalMcpServer;
+use mempal::path_filter::{ProjectPathFilterOptions, project_walk};
 use mempal::search::{SearchFilters, SearchOptions, search_with_options};
 use serde::Serialize;
 use serde_json::Value;
@@ -100,6 +101,12 @@ enum Commands {
         dir: PathBuf,
         #[arg(long)]
         dry_run: bool,
+        #[arg(long = "ignore-file")]
+        ignore_files: Vec<PathBuf>,
+        #[arg(long)]
+        no_gitignore: bool,
+        #[arg(long)]
+        no_mempalignore: bool,
     },
     Ingest {
         dir: PathBuf,
@@ -115,6 +122,12 @@ enum Commands {
         no_strip_noise: bool,
         #[arg(long)]
         diary_rollup: bool,
+        #[arg(long = "ignore-file")]
+        ignore_files: Vec<PathBuf>,
+        #[arg(long)]
+        no_gitignore: bool,
+        #[arg(long)]
+        no_mempalignore: bool,
     },
     Search {
         query: String,
@@ -1473,7 +1486,22 @@ async fn run() -> Result<()> {
     let db = Database::open(&expand_home(&config.db_path)).context("failed to open database")?;
 
     match cli.command {
-        Commands::Init { dir, dry_run } => init_command(&db, &dir, dry_run),
+        Commands::Init {
+            dir,
+            dry_run,
+            ignore_files,
+            no_gitignore,
+            no_mempalignore,
+        } => init_command(
+            &db,
+            &dir,
+            dry_run,
+            ProjectPathFilterOptions {
+                respect_gitignore: !no_gitignore,
+                respect_mempalignore: !no_mempalignore,
+                custom_ignore_files: ignore_files,
+            },
+        ),
         Commands::Ingest {
             dir,
             wing,
@@ -1482,6 +1510,9 @@ async fn run() -> Result<()> {
             dry_run,
             no_strip_noise,
             diary_rollup,
+            ignore_files,
+            no_gitignore,
+            no_mempalignore,
         } => {
             ingest_command(
                 &db,
@@ -1494,6 +1525,11 @@ async fn run() -> Result<()> {
                     dry_run,
                     no_strip_noise,
                     diary_rollup,
+                    project_filter: ProjectPathFilterOptions {
+                        respect_gitignore: !no_gitignore,
+                        respect_mempalignore: !no_mempalignore,
+                        custom_ignore_files: ignore_files,
+                    },
                 },
             )
             .await
@@ -2080,13 +2116,18 @@ async fn bench_command(config: &Config, command: BenchCommands) -> Result<()> {
     }
 }
 
-fn init_command(db: &Database, dir: &Path, dry_run: bool) -> Result<()> {
+fn init_command(
+    db: &Database,
+    dir: &Path,
+    dry_run: bool,
+    filter_options: ProjectPathFilterOptions,
+) -> Result<()> {
     let wing = dir
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("default")
         .to_string();
-    let rooms = detect_rooms(dir)?;
+    let rooms = detect_rooms_with_options(dir, &filter_options)?;
 
     if !dry_run {
         for room in &rooms {
@@ -2136,6 +2177,7 @@ async fn ingest_command(db: &Database, config: &Config, args: IngestCommandArgs<
         no_strip_noise: args.no_strip_noise,
         diary_rollup: args.diary_rollup,
         diary_rollup_day: None,
+        project_filter: args.project_filter,
     };
 
     let stats = if args.dry_run {
@@ -2176,6 +2218,7 @@ struct IngestCommandArgs<'a> {
     dry_run: bool,
     no_strip_noise: bool,
     diary_rollup: bool,
+    project_filter: ProjectPathFilterOptions,
 }
 
 async fn ingest_path_with_options<E: Embedder + ?Sized>(
@@ -6182,13 +6225,42 @@ async fn build_embedder(config: &Config) -> Result<Box<dyn Embedder>> {
 }
 
 fn expand_home(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Some(home) = env::var_os("HOME")
-    {
-        return PathBuf::from(home).join(rest);
+    expand_home_with_home(path, home_dir())
+}
+
+fn expand_home_with_home(path: &str, home: Option<PathBuf>) -> PathBuf {
+    if path == "~" {
+        return home.unwrap_or_else(|| PathBuf::from("."));
+    }
+
+    if let Some(rest) = path.strip_prefix("~/") {
+        return home
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(".").join(rest));
     }
 
     PathBuf::from(path)
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("USERPROFILE")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            let drive = env::var_os("HOMEDRIVE")?;
+            let path = env::var_os("HOMEPATH")?;
+            if drive.is_empty() || path.is_empty() {
+                return None;
+            }
+            let mut home = PathBuf::from(drive);
+            home.push(path);
+            Some(home)
+        })
 }
 
 fn cowork_register_command(
@@ -7192,101 +7264,281 @@ fn estimate_wake_up_tokens(drawers: &[mempal::core::types::Drawer]) -> usize {
         .sum()
 }
 
-fn detect_rooms(dir: &Path) -> Result<Vec<String>> {
+fn detect_rooms_with_options(
+    dir: &Path,
+    filter_options: &ProjectPathFilterOptions,
+) -> Result<Vec<String>> {
     let mut rooms = BTreeSet::new();
-    let mut stack = vec![dir.to_path_buf()];
+    for entry in project_walk(dir, filter_options)? {
+        let entry = entry.with_context(|| format!("failed to walk {}", dir.display()))?;
+        let path = entry.path();
+        if path == dir || !path.is_dir() {
+            continue;
+        }
 
-    while let Some(current) = stack.pop() {
-        for entry in std::fs::read_dir(&current)
-            .with_context(|| format!("failed to read directory {}", current.display()))?
+        if let Some(name) = path.file_name().and_then(|name| name.to_str())
+            && !matches!(name, "src" | "tests")
         {
-            let entry =
-                entry.with_context(|| format!("failed to read entry in {}", current.display()))?;
-            let path = entry.path();
-            if !path.is_dir() || should_skip_dir(&path) {
-                continue;
-            }
-
-            if let Some(name) = path.file_name().and_then(|name| name.to_str())
-                && !matches!(name, "src" | "tests")
-            {
-                rooms.insert(name.to_string());
-            }
-
-            stack.push(path);
+            rooms.insert(name.to_string());
         }
     }
 
     Ok(rooms.into_iter().collect())
 }
 
-fn should_skip_dir(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| matches!(name, ".git" | "target" | "node_modules"))
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+    use mempal::path_filter::ProjectPathFilterOptions;
+
+    fn run_cli_parse_test(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .name("cli-parse-test".to_string())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn cli parse test")
+            .join()
+            .expect("cli parse test");
+    }
+
+    #[test]
+    fn test_init_detect_rooms_respects_gitignore_and_mempalignore() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src/auth")).expect("src auth");
+        std::fs::create_dir_all(root.join("dist/build-room")).expect("dist");
+        std::fs::create_dir_all(root.join("generated/gen-room")).expect("generated");
+        std::fs::create_dir_all(root.join("target/release-room")).expect("target");
+        std::fs::create_dir_all(root.join("node_modules/pkg-room")).expect("node_modules");
+        std::fs::write(root.join(".gitignore"), "dist/\n").expect("gitignore");
+        std::fs::write(root.join(".mempalignore"), "generated/\n").expect("mempalignore");
+
+        let rooms = detect_rooms_with_options(root, &ProjectPathFilterOptions::default())
+            .expect("detect rooms");
+
+        assert!(rooms.contains(&"auth".to_string()));
+        assert!(!rooms.contains(&"build-room".to_string()));
+        assert!(!rooms.contains(&"gen-room".to_string()));
+        assert!(!rooms.contains(&"release-room".to_string()));
+        assert!(!rooms.contains(&"pkg-room".to_string()));
+    }
+
+    #[test]
+    fn test_init_no_gitignore_keeps_mempalignore() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("dist/build-room")).expect("dist");
+        std::fs::create_dir_all(root.join("generated/gen-room")).expect("generated");
+        std::fs::write(root.join(".gitignore"), "dist/\n").expect("gitignore");
+        std::fs::write(root.join(".mempalignore"), "generated/\n").expect("mempalignore");
+
+        let rooms = detect_rooms_with_options(
+            root,
+            &ProjectPathFilterOptions {
+                respect_gitignore: false,
+                ..ProjectPathFilterOptions::default()
+            },
+        )
+        .expect("detect rooms");
+
+        assert!(rooms.contains(&"build-room".to_string()));
+        assert!(!rooms.contains(&"gen-room".to_string()));
+    }
+
+    #[test]
+    fn test_init_custom_ignore_file_excludes_rooms() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let root = tmp.path();
+        let custom = root.join("custom.ignore");
+        std::fs::create_dir_all(root.join("notes/api")).expect("notes api");
+        std::fs::write(&custom, "notes/\n").expect("custom ignore");
+
+        let rooms = detect_rooms_with_options(
+            root,
+            &ProjectPathFilterOptions {
+                custom_ignore_files: vec![custom],
+                ..ProjectPathFilterOptions::default()
+            },
+        )
+        .expect("detect rooms");
+
+        assert!(!rooms.contains(&"api".to_string()));
+    }
+
+    #[test]
+    fn test_init_missing_ignore_file_fails() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let missing = tmp.path().join("missing.ignore");
+        let err = detect_rooms_with_options(
+            tmp.path(),
+            &ProjectPathFilterOptions {
+                custom_ignore_files: vec![missing.clone()],
+                ..ProjectPathFilterOptions::default()
+            },
+        )
+        .expect_err("missing custom ignore file should fail");
+
+        assert!(err.to_string().contains(&missing.display().to_string()));
+    }
+
+    #[test]
+    fn test_cli_init_ignore_flags_parse() {
+        run_cli_parse_test(|| {
+            let matches = Cli::command()
+                .try_get_matches_from([
+                    "mempal",
+                    "init",
+                    ".",
+                    "--dry-run",
+                    "--ignore-file",
+                    "extra.ignore",
+                    "--no-gitignore",
+                    "--no-mempalignore",
+                ])
+                .expect("init ignore flags must parse");
+            let (name, sub) = matches.subcommand().expect("subcommand");
+            assert_eq!(name, "init");
+            assert_eq!(sub.get_one::<PathBuf>("dir"), Some(&PathBuf::from(".")));
+            assert!(sub.get_flag("dry_run"));
+            let ignore_files = sub
+                .get_many::<PathBuf>("ignore_files")
+                .expect("ignore files")
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(ignore_files, vec![PathBuf::from("extra.ignore")]);
+            assert!(sub.get_flag("no_gitignore"));
+            assert!(sub.get_flag("no_mempalignore"));
+        });
+    }
+
+    #[test]
+    fn test_cli_ingest_ignore_flags_parse() {
+        run_cli_parse_test(|| {
+            let matches = Cli::command()
+                .try_get_matches_from([
+                    "mempal",
+                    "ingest",
+                    ".",
+                    "--wing",
+                    "demo",
+                    "--ignore-file",
+                    "extra.ignore",
+                    "--no-gitignore",
+                    "--no-mempalignore",
+                ])
+                .expect("ingest ignore flags must parse");
+            let (name, sub) = matches.subcommand().expect("subcommand");
+            assert_eq!(name, "ingest");
+            assert_eq!(sub.get_one::<PathBuf>("dir"), Some(&PathBuf::from(".")));
+            assert_eq!(
+                sub.get_one::<String>("wing").map(String::as_str),
+                Some("demo")
+            );
+            assert!(sub.get_one::<String>("room").is_none());
+            assert!(sub.get_one::<String>("format").is_none());
+            assert!(!sub.get_flag("dry_run"));
+            assert!(!sub.get_flag("no_strip_noise"));
+            assert!(!sub.get_flag("diary_rollup"));
+            let ignore_files = sub
+                .get_many::<PathBuf>("ignore_files")
+                .expect("ignore files")
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(ignore_files, vec![PathBuf::from("extra.ignore")]);
+            assert!(sub.get_flag("no_gitignore"));
+            assert!(sub.get_flag("no_mempalignore"));
+        });
+    }
 
     // P108: the cross-project cowork-peek CLI must parse with an explicit tool
     // and a target project cwd.
     #[test]
     fn test_cli_cowork_peek_parses() {
-        let cli = Cli::try_parse_from([
-            "mempal",
-            "cowork-peek",
-            "--tool",
-            "codex",
-            "--cwd",
-            "/tmp/project",
-        ])
-        .expect("cowork-peek must parse");
-        match cli.command {
-            Commands::CoworkPeek {
-                tool,
-                cwd,
-                limit,
-                since,
-                format,
-            } => {
-                assert_eq!(tool, "codex");
-                assert_eq!(cwd, PathBuf::from("/tmp/project"));
-                assert_eq!(limit, 30, "default limit");
-                assert!(since.is_none());
-                assert_eq!(format, "plain", "default format");
-            }
-            _ => panic!("expected CoworkPeek command variant"),
-        }
+        run_cli_parse_test(|| {
+            let matches = Cli::command()
+                .try_get_matches_from([
+                    "mempal",
+                    "cowork-peek",
+                    "--tool",
+                    "codex",
+                    "--cwd",
+                    "/tmp/project",
+                ])
+                .expect("cowork-peek must parse");
+            let (name, sub) = matches.subcommand().expect("subcommand");
+            assert_eq!(name, "cowork-peek");
+            assert_eq!(
+                sub.get_one::<String>("tool").map(String::as_str),
+                Some("codex")
+            );
+            assert_eq!(
+                sub.get_one::<PathBuf>("cwd"),
+                Some(&PathBuf::from("/tmp/project"))
+            );
+            assert_eq!(sub.get_one::<usize>("limit"), Some(&30), "default limit");
+            assert!(sub.get_one::<String>("since").is_none());
+            assert_eq!(
+                sub.get_one::<String>("format").map(String::as_str),
+                Some("plain"),
+                "default format"
+            );
+        });
     }
 
     // P109: projects + resume CLI must parse.
     #[test]
     fn test_cli_projects_and_resume_parse() {
-        let projects = Cli::try_parse_from(["mempal", "projects", "--format", "json"])
-            .expect("projects must parse");
-        match projects.command {
-            Commands::Projects { format } => assert_eq!(format, "json"),
-            _ => panic!("expected Projects command variant"),
-        }
+        run_cli_parse_test(|| {
+            let projects = Cli::command()
+                .try_get_matches_from(["mempal", "projects", "--format", "json"])
+                .expect("projects must parse");
+            let (name, sub) = projects.subcommand().expect("projects subcommand");
+            assert_eq!(name, "projects");
+            assert_eq!(
+                sub.get_one::<String>("format").map(String::as_str),
+                Some("json")
+            );
 
-        let resume = Cli::try_parse_from(["mempal", "resume", "auth-service"])
-            .expect("resume must parse");
-        match resume.command {
-            Commands::Resume {
-                query,
-                evidence_limit,
-                candidate_limit,
-                format,
-            } => {
-                assert_eq!(query, "auth-service");
-                assert_eq!(evidence_limit, 5, "default evidence limit");
-                assert_eq!(candidate_limit, 5, "default candidate limit");
-                assert_eq!(format, "plain", "default format");
-            }
-            _ => panic!("expected Resume command variant"),
-        }
+            let resume = Cli::command()
+                .try_get_matches_from(["mempal", "resume", "auth-service"])
+                .expect("resume must parse");
+            let (name, sub) = resume.subcommand().expect("resume subcommand");
+            assert_eq!(name, "resume");
+            assert_eq!(
+                sub.get_one::<String>("query").map(String::as_str),
+                Some("auth-service")
+            );
+            assert_eq!(
+                sub.get_one::<usize>("evidence_limit"),
+                Some(&5),
+                "default evidence limit"
+            );
+            assert_eq!(
+                sub.get_one::<usize>("candidate_limit"),
+                Some(&5),
+                "default candidate limit"
+            );
+            assert_eq!(
+                sub.get_one::<String>("format").map(String::as_str),
+                Some("plain"),
+                "default format"
+            );
+        });
+    }
+
+    #[test]
+    fn test_expand_home_handles_tilde_without_home_env() {
+        let home = PathBuf::from("/tmp/mempal-home");
+
+        assert_eq!(expand_home_with_home("~", Some(home.clone())), home);
+        assert_eq!(
+            expand_home_with_home("~/palace.db", Some(home.clone())),
+            home.join("palace.db")
+        );
+
+        let fallback = expand_home_with_home("~/palace.db", None);
+        assert_ne!(fallback, PathBuf::from("~/palace.db"));
+        assert_eq!(fallback, PathBuf::from(".").join("palace.db"));
     }
 }

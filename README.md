@@ -85,6 +85,19 @@ api_model = "nomic-embed-text"
 | `mempal fact-check [PATH\|-] [--wing W] [--room R] [--now <UNIX_SECS>]` | Offline contradiction check against KG triples + known entities |
 | `mempal bench longmemeval <FILE>` | LongMemEval retrieval benchmark |
 
+### Project ignore rules
+
+`mempal init <DIR>` and directory-mode `mempal ingest <DIR>` use the target
+project's ignore rules by default. They respect `.gitignore`, `.git/info/exclude`,
+global Git excludes, and a root-level `.mempalignore`. Built artifacts that should
+never become project memory can be listed in `.mempalignore` without changing the
+project's Git behavior.
+
+Use `--ignore-file <PATH>` to add one or more extra ignore files for a run. Use
+`--no-gitignore` or `--no-mempalignore` to disable either default source. Explicit
+file ingest remains explicit: `mempal ingest path/to/file --wing <W>` still ingests
+that file even if the project ignore rules would skip it during directory traversal.
+
 ## MCP Server (10 tools)
 
 `mempal serve --mcp` exposes these tools via Model Context Protocol:

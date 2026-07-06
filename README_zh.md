@@ -85,6 +85,18 @@ api_model = "nomic-embed-text"
 | `mempal fact-check [PATH\|-] [--wing W] [--room R] [--now <UNIX_SECS>]` | 离线矛盾检查（对照 KG 三元组 + 已知 entity） |
 | `mempal bench longmemeval <FILE>` | LongMemEval 检索 benchmark |
 
+### 项目 ignore 规则
+
+`mempal init <DIR>` 和目录模式的 `mempal ingest <DIR>` 默认复用目标项目自己的
+ignore 规则。它们会尊重 `.gitignore`、`.git/info/exclude`、全局 Git exclude，
+以及项目根目录的 `.mempalignore`。只想从项目记忆中排除的编译产物、缓存目录或
+生成文件，可以写进 `.mempalignore`，不需要改变项目本身的 Git 行为。
+
+单次运行可以用 `--ignore-file <PATH>` 追加一个或多个 ignore 文件。需要关闭默认
+来源时，用 `--no-gitignore` 或 `--no-mempalignore`。显式文件导入保持显式：
+`mempal ingest path/to/file --wing <W>` 即使在目录遍历时会被 ignore 规则跳过，
+仍然会导入这个文件。
+
 ## MCP 服务器（10 个工具）
 
 `mempal serve --mcp` 通过 Model Context Protocol 暴露：

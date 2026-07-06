@@ -165,12 +165,13 @@ fn expected_bootstrap_evidence_id(
     room: Option<&str>,
     content: &str,
     source_type: &SourceType,
+    source_file: Option<&str>,
 ) -> String {
     let defaults = anchor::bootstrap_defaults(source_type);
     let memory_kind = MemoryKind::Evidence;
     let domain = MemoryDomain::Project;
     let empty_refs: &[String] = &[];
-    build_bootstrap_drawer_id_from_parts(
+    mempal::core::utils::build_bootstrap_drawer_id_from_parts_with_source_file(
         wing,
         room,
         content,
@@ -192,6 +193,7 @@ fn expected_bootstrap_evidence_id(
             scope_constraints: None,
             trigger_hints: None,
         },
+        source_file,
     )
 }
 
@@ -744,8 +746,13 @@ async fn test_mcp_ingest_default_drawer_id_matches_bootstrap_identity() {
         .await
         .expect("default ingest should succeed");
 
-    let expected =
-        expected_bootstrap_evidence_id("mempal", Some("identity"), content, &SourceType::Manual);
+    let expected = expected_bootstrap_evidence_id(
+        "mempal",
+        Some("identity"),
+        content,
+        &SourceType::Manual,
+        None,
+    );
 
     assert_eq!(response.drawer_id, expected);
     assert_ne!(
@@ -834,8 +841,13 @@ async fn test_rest_ingest_does_not_claim_typed_field_parity() {
         }),
     )
     .await;
-    let expected =
-        expected_bootstrap_evidence_id("mempal", Some("identity"), content, &SourceType::Manual);
+    let expected = expected_bootstrap_evidence_id(
+        "mempal",
+        Some("identity"),
+        content,
+        &SourceType::Manual,
+        None,
+    );
 
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(body["drawer_id"], expected);
@@ -876,8 +888,13 @@ async fn test_file_ingest_uses_bootstrap_identity_for_evidence_drawer() {
     )
     .await
     .expect("file ingest should succeed");
-    let expected =
-        expected_bootstrap_evidence_id("mempal", Some("identity"), content, &SourceType::Project);
+    let expected = expected_bootstrap_evidence_id(
+        "mempal",
+        Some("identity"),
+        content,
+        &SourceType::Project,
+        Some("identity-note.md"),
+    );
 
     assert_eq!(stats.chunks, 1);
     assert_ne!(
@@ -940,8 +957,13 @@ fn test_p13b_does_not_rewrite_existing_drawer_ids() {
     let db_path = db.path().to_path_buf();
     let content = "Legacy drawer id must survive P13B unchanged.";
     let old_id = build_drawer_id("mempal", Some("identity"), content);
-    let new_id =
-        expected_bootstrap_evidence_id("mempal", Some("identity"), content, &SourceType::Manual);
+    let new_id = expected_bootstrap_evidence_id(
+        "mempal",
+        Some("identity"),
+        content,
+        &SourceType::Manual,
+        None,
+    );
     assert_ne!(old_id, new_id);
 
     let drawer = Drawer::new_bootstrap_evidence(BootstrapEvidenceArgs {
