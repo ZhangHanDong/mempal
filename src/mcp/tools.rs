@@ -1310,7 +1310,6 @@ pub struct SearchResultDto {
     pub similarity: f32,
     pub route: RouteDecisionDto,
     /// Other wings sharing this room (tunnel cross-references).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tunnel_hints: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub neighbors: Option<ChunkNeighborsDto>,
@@ -1471,13 +1470,13 @@ pub struct DuplicateWarning {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct StatusResponse {
-    pub schema_version: u32,
-    pub normalize_version_current: u32,
-    pub stale_drawer_count: u64,
+    pub schema_version: i32,
+    pub normalize_version_current: i32,
+    pub stale_drawer_count: i64,
     pub drawer_count: i64,
     pub taxonomy_count: i64,
-    pub db_size_bytes: u64,
-    pub diary_rollup_days: u32,
+    pub db_size_bytes: i64,
+    pub diary_rollup_days: i32,
     pub scopes: Vec<ScopeCount>,
     pub aaak_spec: String,
     pub memory_protocol: String,
@@ -2598,7 +2597,7 @@ mod tests {
         SearchResult,
     };
 
-    use super::SearchResultDto;
+    use super::{SearchResultDto, StatusResponse};
 
     fn sample_result(content: &str) -> SearchResult {
         SearchResult {
@@ -2656,5 +2655,24 @@ mod tests {
         assert_eq!(dto.emotions, vec!["determ".to_string()]);
         assert!(dto.topics.is_empty());
         assert_eq!(dto.importance_stars, 2);
+    }
+
+    #[test]
+    fn test_search_result_serializes_empty_tunnel_hints() {
+        let mut result = sample_result("No tunnel hints here.");
+        result.tunnel_hints.clear();
+        let dto = SearchResultDto::with_signals_from_result(result);
+        let json = serde_json::to_value(&dto).expect("serialize dto");
+
+        assert_eq!(json["tunnel_hints"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_status_response_schema_avoids_unsigned_integer_formats() {
+        let schema = rmcp::schemars::schema_for!(StatusResponse);
+        let json = serde_json::to_string(&schema).expect("serialize schema");
+
+        assert!(!json.contains("uint32"), "{json}");
+        assert!(!json.contains("uint64"), "{json}");
     }
 }

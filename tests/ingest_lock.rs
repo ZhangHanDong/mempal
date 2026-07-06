@@ -12,7 +12,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use mempal::core::db::Database;
 use mempal::embed::{Embedder, Result as EmbedResult};
-use mempal::ingest::{IngestOptions, ingest_file_with_options};
+use mempal::ingest::{IngestOptions, ingest_dir_with_options, ingest_file_with_options};
+use mempal::path_filter::ProjectPathFilterOptions;
 use tempfile::TempDir;
 
 /// Stub embedder: returns a fixed vector regardless of input. 3 dims so
@@ -62,6 +63,23 @@ fn write_file(dir: &Path, name: &str, content: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, content).expect("write fixture");
     path
+}
+
+fn write_bytes(dir: &Path, name: &str, content: &[u8]) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, content).expect("write fixture");
+    path
+}
+
+fn active_source_files(db: &Database) -> Vec<String> {
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT source_file FROM drawers WHERE deleted_at IS NULL ORDER BY source_file")
+        .expect("prepare source_file query");
+    stmt.query_map([], |row| row.get::<_, Option<String>>(0))
+        .expect("query source files")
+        .map(|row| row.expect("source file row").unwrap_or_default())
+        .collect()
 }
 
 /// Run an ingest on a fresh tokio runtime — matches the cross-process
@@ -180,6 +198,231 @@ fn test_concurrent_ingest_different_source_no_blocking() {
 
     let db = Database::open(&db_path).unwrap();
     assert_eq!(db.drawer_count().unwrap(), 2);
+}
+
+#[test]
+fn test_ingest_same_content_different_sources_get_distinct_drawers() {
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("palace.db");
+    let db = Database::open(&db_path).expect("init db");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+    let file_a = write_file(tmp.path(), "a.md", "identical boilerplate content");
+    let file_b = write_file(tmp.path(), "b.md", "identical boilerplate content");
+
+    let stats_a = rt
+        .block_on(ingest_file_with_options(
+            &db,
+            &StubEmbedder,
+            &file_a,
+            "test",
+            IngestOptions {
+                room: Some("docs"),
+                source_root: Some(tmp.path()),
+                ..IngestOptions::default()
+            },
+        ))
+        .expect("ingest first source");
+    let stats_b = rt
+        .block_on(ingest_file_with_options(
+            &db,
+            &StubEmbedder,
+            &file_b,
+            "test",
+            IngestOptions {
+                room: Some("docs"),
+                source_root: Some(tmp.path()),
+                ..IngestOptions::default()
+            },
+        ))
+        .expect("ingest second source");
+
+    assert_eq!(stats_a.chunks, 1);
+    assert_eq!(stats_b.chunks, 1);
+    let drawers = db.all_active_drawers().expect("drawers");
+    assert_eq!(drawers.len(), 2, "different source files must not collide");
+    assert_ne!(drawers[0].0, drawers[1].0);
+}
+
+#[test]
+fn test_ingest_dir_skips_platform_and_binary_files() {
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("palace.db");
+    let db = Database::open(&db_path).expect("init db");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir(&source_dir).expect("create source dir");
+
+    write_file(&source_dir, "note.md", "only this text should be ingested");
+    write_bytes(&source_dir, ".DS_Store", b"ignored metadata");
+    write_bytes(&source_dir, "._note.md", b"ignored appledouble");
+    write_bytes(&source_dir, "image.png", b"\x89PNG\r\n\x1a\n");
+
+    let stats = rt
+        .block_on(ingest_dir_with_options(
+            &db,
+            &StubEmbedder,
+            &source_dir,
+            "test",
+            IngestOptions {
+                room: Some("docs"),
+                source_root: Some(&source_dir),
+                ..IngestOptions::default()
+            },
+        ))
+        .expect("ingest dir");
+
+    assert_eq!(stats.files, 1, "only the markdown file is read");
+    assert_eq!(stats.chunks, 1);
+    assert_eq!(stats.skipped, 3, "three platform/binary files are skipped");
+    assert_eq!(db.drawer_count().expect("drawer count"), 1);
+}
+
+#[test]
+fn test_ingest_dir_respects_gitignore_and_mempalignore() {
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("palace.db");
+    let db = Database::open(&db_path).expect("init db");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir(&source_dir).expect("source dir");
+
+    write_file(&source_dir, "keep.md", "keep this document");
+    std::fs::create_dir_all(source_dir.join("dist")).expect("dist");
+    std::fs::create_dir_all(source_dir.join("generated")).expect("generated");
+    std::fs::create_dir_all(source_dir.join("target")).expect("target");
+    write_file(&source_dir.join("dist"), "ignored.md", "git ignored");
+    write_file(
+        &source_dir.join("generated"),
+        "ignored.md",
+        "mempal ignored",
+    );
+    write_file(&source_dir.join("target"), "ignored.md", "hard ignored");
+    std::fs::write(source_dir.join(".gitignore"), "dist/\n").expect("gitignore");
+    std::fs::write(source_dir.join(".mempalignore"), "generated/\n").expect("mempalignore");
+
+    let stats = rt
+        .block_on(ingest_dir_with_options(
+            &db,
+            &StubEmbedder,
+            &source_dir,
+            "test",
+            IngestOptions {
+                room: Some("docs"),
+                source_root: Some(&source_dir),
+                ..IngestOptions::default()
+            },
+        ))
+        .expect("ingest dir");
+
+    assert_eq!(stats.files, 1);
+    assert_eq!(stats.chunks, 1);
+    assert_eq!(active_source_files(&db), vec!["keep.md"]);
+}
+
+#[test]
+fn test_ingest_no_mempalignore_keeps_gitignore() {
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("palace.db");
+    let db = Database::open(&db_path).expect("init db");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(source_dir.join("dist")).expect("dist");
+    std::fs::create_dir_all(source_dir.join("generated")).expect("generated");
+    write_file(&source_dir.join("dist"), "ignored.md", "git ignored");
+    write_file(
+        &source_dir.join("generated"),
+        "remember.md",
+        "mempal ignore disabled",
+    );
+    std::fs::write(source_dir.join(".gitignore"), "dist/\n").expect("gitignore");
+    std::fs::write(source_dir.join(".mempalignore"), "generated/\n").expect("mempalignore");
+
+    let stats = rt
+        .block_on(ingest_dir_with_options(
+            &db,
+            &StubEmbedder,
+            &source_dir,
+            "test",
+            IngestOptions {
+                room: Some("docs"),
+                source_root: Some(&source_dir),
+                project_filter: ProjectPathFilterOptions {
+                    respect_mempalignore: false,
+                    ..ProjectPathFilterOptions::default()
+                },
+                ..IngestOptions::default()
+            },
+        ))
+        .expect("ingest dir");
+
+    assert_eq!(stats.files, 1);
+    assert_eq!(active_source_files(&db), vec!["generated/remember.md"]);
+}
+
+#[test]
+fn test_ingest_custom_ignore_file_excludes_sources() {
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("palace.db");
+    let db = Database::open(&db_path).expect("init db");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(source_dir.join("notes")).expect("notes");
+    let custom = source_dir.join("custom.ignore");
+    write_file(&source_dir, "keep.md", "keep this");
+    write_file(&source_dir.join("notes"), "ignored.md", "ignore this");
+    std::fs::write(&custom, "notes/\n").expect("custom ignore");
+
+    let stats = rt
+        .block_on(ingest_dir_with_options(
+            &db,
+            &StubEmbedder,
+            &source_dir,
+            "test",
+            IngestOptions {
+                room: Some("docs"),
+                source_root: Some(&source_dir),
+                project_filter: ProjectPathFilterOptions {
+                    custom_ignore_files: vec![custom],
+                    ..ProjectPathFilterOptions::default()
+                },
+                ..IngestOptions::default()
+            },
+        ))
+        .expect("ingest dir");
+
+    assert_eq!(stats.files, 1);
+    assert_eq!(active_source_files(&db), vec!["keep.md"]);
+}
+
+#[tokio::test]
+async fn test_ingest_explicit_file_bypasses_project_ignore() {
+    let tmp = TempDir::new().expect("tempdir");
+    let db_path = tmp.path().join("palace.db");
+    let db = Database::open(&db_path).expect("init db");
+    let dist = tmp.path().join("dist");
+    std::fs::create_dir(&dist).expect("dist");
+    std::fs::write(tmp.path().join(".gitignore"), "dist/\n").expect("gitignore");
+    let file = write_file(&dist, "manual.md", "explicit file still ingests");
+
+    let stats = ingest_file_with_options(
+        &db,
+        &StubEmbedder,
+        &file,
+        "test",
+        IngestOptions {
+            room: Some("docs"),
+            source_root: Some(tmp.path()),
+            ..IngestOptions::default()
+        },
+    )
+    .await
+    .expect("explicit ingest");
+
+    assert_eq!(stats.files, 1);
+    assert_eq!(stats.chunks, 1);
+    assert_eq!(db.drawer_count().expect("drawer count"), 1);
+    assert_eq!(active_source_files(&db), vec!["dist/manual.md"]);
 }
 
 #[tokio::test]

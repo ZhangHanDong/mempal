@@ -41,6 +41,7 @@ async-trait = "0.1"
 axum = { version = "0.8", optional = true }
 bimap = "0.6"
 clap = { version = "4", features = ["derive"] }
+ignore = "0.4"
 jieba-rs = "0.8"
 model2vec-rs = { version = "0.1", optional = true }
 ort = { version = "2.0.0-rc.9", optional = true }

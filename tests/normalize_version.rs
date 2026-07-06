@@ -536,7 +536,10 @@ async fn test_status_exposes_stale_count() {
         .await
         .expect("status should succeed");
 
-    assert_eq!(status.normalize_version_current, CURRENT_NORMALIZE_VERSION);
+    assert_eq!(
+        status.normalize_version_current,
+        i32::try_from(CURRENT_NORMALIZE_VERSION).expect("normalize version fits i32")
+    );
     assert_eq!(status.stale_drawer_count, 5);
 }
 

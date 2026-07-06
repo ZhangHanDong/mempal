@@ -8,6 +8,7 @@ pub mod noise;
 pub mod normalize;
 pub mod reindex;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::core::{
@@ -16,6 +17,7 @@ use crate::core::{
     utils::{build_bootstrap_evidence_drawer_id, current_timestamp, route_room_from_taxonomy},
 };
 use crate::embed::{EmbedError, Embedder};
+use crate::path_filter::{ProjectPathFilterOptions, project_walk};
 use thiserror::Error;
 
 use crate::ingest::{
@@ -53,7 +55,7 @@ pub struct IngestStats {
     pub lock_wait_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct IngestOptions<'a> {
     pub room: Option<&'a str>,
     pub source_root: Option<&'a Path>,
@@ -68,6 +70,7 @@ pub struct IngestOptions<'a> {
     pub no_strip_noise: bool,
     pub diary_rollup: bool,
     pub diary_rollup_day: Option<&'a str>,
+    pub project_filter: ProjectPathFilterOptions,
 }
 
 pub type Result<T> = std::result::Result<T, IngestError>;
@@ -138,6 +141,14 @@ pub enum IngestError {
     EmbedderReturnedNoVector { drawer_id: String },
     #[error("failed to acquire ingest lock: {0}")]
     Lock(#[from] lock::LockError),
+    #[error("failed to apply project ignore rules: {0}")]
+    ProjectFilter(#[from] crate::path_filter::ProjectPathFilterError),
+    #[error("failed to walk project path {path}")]
+    WalkPath {
+        path: PathBuf,
+        #[source]
+        source: ignore::Error,
+    },
     #[error("failed to read directory {path}")]
     ReadDir {
         path: PathBuf,
@@ -174,6 +185,7 @@ pub async fn ingest_file<E: Embedder + ?Sized>(
             no_strip_noise: false,
             diary_rollup: false,
             diary_rollup_day: None,
+            project_filter: ProjectPathFilterOptions::default(),
         },
     )
     .await
@@ -295,6 +307,7 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
     }
 
     let mut pending = Vec::new();
+    let mut seen_drawer_ids = HashSet::new();
 
     for (chunk_index, chunk) in chunks.iter().enumerate() {
         let drawer_id = build_bootstrap_evidence_drawer_id(
@@ -302,7 +315,12 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
             Some(resolved_room.as_str()),
             chunk,
             &source_type,
+            Some(source_file.as_str()),
         );
+        if !seen_drawer_ids.insert(drawer_id.clone()) {
+            stats.skipped += 1;
+            continue;
+        }
         if db
             .drawer_exists(&drawer_id)
             .map_err(|source| IngestError::CheckDrawer {
@@ -355,17 +373,22 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
             ..drawer
         };
 
-        db.insert_drawer(&drawer)
+        let inserted = db
+            .insert_drawer(&drawer)
             .map_err(|source| IngestError::InsertDrawer {
                 drawer_id: drawer.id.clone(),
                 source,
             })?;
-        db.insert_vector(&drawer_id, &vector)
-            .map_err(|source| IngestError::InsertVector {
-                drawer_id: drawer.id.clone(),
-                source,
-            })?;
-        stats.chunks += 1;
+        if inserted {
+            db.insert_vector(&drawer_id, &vector)
+                .map_err(|source| IngestError::InsertVector {
+                    drawer_id: drawer.id.clone(),
+                    source,
+                })?;
+            stats.chunks += 1;
+        } else {
+            stats.skipped += 1;
+        }
     }
 
     Ok(stats)
@@ -393,6 +416,7 @@ pub async fn ingest_dir<E: Embedder + ?Sized>(
             no_strip_noise: false,
             diary_rollup: false,
             diary_rollup_day: None,
+            project_filter: ProjectPathFilterOptions::default(),
         },
     )
     .await
@@ -406,36 +430,29 @@ pub async fn ingest_dir_with_options<E: Embedder + ?Sized>(
     options: IngestOptions<'_>,
 ) -> Result<IngestStats> {
     let mut stats = IngestStats::default();
-    let mut stack = vec![dir.to_path_buf()];
 
-    while let Some(current) = stack.pop() {
-        for entry in std::fs::read_dir(&current).map_err(|source| IngestError::ReadDir {
-            path: current.clone(),
+    for entry in project_walk(dir, &options.project_filter)? {
+        let entry = entry.map_err(|source| IngestError::WalkPath {
+            path: dir.to_path_buf(),
             source,
-        })? {
-            let entry = entry.map_err(|source| IngestError::ReadDirEntry {
-                path: current.clone(),
-                source,
-            })?;
-            let path = entry.path();
+        })?;
+        let path = entry.path();
+        if path == dir || path.is_dir() {
+            continue;
+        }
 
-            if path.is_dir() {
-                if should_skip_dir(&path) {
-                    continue;
-                }
-                stack.push(path);
+        if path.is_file() {
+            if should_skip_file(path, &options.project_filter) {
+                stats.skipped += 1;
                 continue;
             }
-
-            if path.is_file() {
-                let file_stats =
-                    ingest_file_with_options(db, embedder, &path, wing, options).await?;
-                stats.files += file_stats.files;
-                stats.chunks += file_stats.chunks;
-                stats.skipped += file_stats.skipped;
-                stats.noise_bytes_stripped =
-                    merge_optional_sum(stats.noise_bytes_stripped, file_stats.noise_bytes_stripped);
-            }
+            let file_stats =
+                ingest_file_with_options(db, embedder, path, wing, options.clone()).await?;
+            stats.files += file_stats.files;
+            stats.chunks += file_stats.chunks;
+            stats.skipped += file_stats.skipped;
+            stats.noise_bytes_stripped =
+                merge_optional_sum(stats.noise_bytes_stripped, file_stats.noise_bytes_stripped);
         }
     }
 
@@ -459,11 +476,48 @@ fn source_type_for(format: Format) -> SourceType {
     }
 }
 
-fn should_skip_dir(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| matches!(name, ".git" | "target" | "node_modules"))
+fn should_skip_file(path: &Path, filter_options: &ProjectPathFilterOptions) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if matches!(name, ".DS_Store" | ".gitignore" | ".mempalignore") || name.starts_with("._") {
+        return true;
+    }
+    if is_custom_ignore_file(path, filter_options) {
+        return true;
+    }
+
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "a" | "bmp"
+                    | "class"
+                    | "dll"
+                    | "dylib"
+                    | "exe"
+                    | "gif"
+                    | "ico"
+                    | "jar"
+                    | "jpeg"
+                    | "jpg"
+                    | "o"
+                    | "pdf"
+                    | "png"
+                    | "so"
+                    | "wasm"
+                    | "webp"
+                    | "zip"
+            )
+        })
         .unwrap_or(false)
+}
+
+fn is_custom_ignore_file(path: &Path, filter_options: &ProjectPathFilterOptions) -> bool {
+    filter_options.custom_ignore_files.iter().any(|custom| {
+        path == custom || path.canonicalize().ok().as_ref() == custom.canonicalize().ok().as_ref()
+    })
 }
 
 fn normalize_source_file(path: &Path, source_root: Option<&Path>) -> String {

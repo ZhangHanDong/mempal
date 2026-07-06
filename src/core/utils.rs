@@ -12,6 +12,7 @@ use super::{
 };
 
 pub const DEFAULT_ROOM: &str = "default";
+const BOOTSTRAP_DRAWER_ID_HASH_LEN: usize = 12;
 
 pub fn build_drawer_id(wing: &str, room: Option<&str>, content: &str) -> String {
     let room = room.unwrap_or(DEFAULT_ROOM);
@@ -46,7 +47,7 @@ pub fn build_bootstrap_drawer_id(
         "drawer_{}_{}_{}",
         sanitize_component(wing),
         sanitize_component(room),
-        &digest[..8]
+        &digest[..BOOTSTRAP_DRAWER_ID_HASH_LEN]
     )
 }
 
@@ -112,17 +113,40 @@ pub fn build_bootstrap_drawer_id_from_parts(
     build_bootstrap_drawer_id(wing, room, content, &bootstrap_identity_components(parts))
 }
 
+pub fn source_file_identity_component(source_file: Option<&str>) -> String {
+    format!(
+        "source_file={}",
+        source_file
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("")
+    )
+}
+
+pub fn build_bootstrap_drawer_id_from_parts_with_source_file(
+    wing: &str,
+    room: Option<&str>,
+    content: &str,
+    parts: BootstrapIdentityParts<'_>,
+    source_file: Option<&str>,
+) -> String {
+    let mut components = bootstrap_identity_components(parts);
+    components.push(source_file_identity_component(source_file));
+    build_bootstrap_drawer_id(wing, room, content, &components)
+}
+
 pub fn build_bootstrap_evidence_drawer_id(
     wing: &str,
     room: Option<&str>,
     content: &str,
     source_type: &SourceType,
+    source_file: Option<&str>,
 ) -> String {
     let defaults = anchor::bootstrap_defaults(source_type);
     let memory_kind = MemoryKind::Evidence;
     let domain = MemoryDomain::Project;
     let empty_refs: &[String] = &[];
-    build_bootstrap_drawer_id_from_parts(
+    build_bootstrap_drawer_id_from_parts_with_source_file(
         wing,
         room,
         content,
@@ -144,6 +168,7 @@ pub fn build_bootstrap_evidence_drawer_id(
             scope_constraints: None,
             trigger_hints: None,
         },
+        source_file,
     )
 }
 

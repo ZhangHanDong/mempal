@@ -180,11 +180,17 @@ async fn ingest_handler(
             )
         })?;
     let db = Database::open(&state.db_path).map_err(internal_error)?;
+    let source_identity = request
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let drawer_id = build_bootstrap_evidence_drawer_id(
         &request.wing,
         request.room.as_deref(),
         &request.content,
         &SourceType::Manual,
+        source_identity,
     );
 
     if !db.drawer_exists(&drawer_id).map_err(internal_error)? {
@@ -204,9 +210,10 @@ async fn ingest_handler(
             normalize_version: CURRENT_NORMALIZE_VERSION,
             ..drawer
         };
-        db.insert_drawer(&drawer).map_err(internal_error)?;
-        db.insert_vector(&drawer_id, &vector)
-            .map_err(internal_error)?;
+        if db.insert_drawer(&drawer).map_err(internal_error)? {
+            db.insert_vector(&drawer_id, &vector)
+                .map_err(internal_error)?;
+        }
     }
 
     Ok((StatusCode::CREATED, Json(IngestResponse { drawer_id })))

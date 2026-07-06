@@ -1063,11 +1063,13 @@ pub fn capture_handoff_to_memory(
     content.push_str(&format_handoff_plain(&summary));
 
     let source_type = SourceType::Manual;
+    let source_file = format!("cowork-capture://{capture_id}");
     let drawer_id = build_bootstrap_evidence_drawer_id(
         &request.wing,
         request.room.as_deref(),
         &content,
         &source_type,
+        Some(source_file.as_str()),
     );
     if request.execute {
         let db = db.ok_or(BusError::MissingCaptureDatabase)?;
@@ -1076,7 +1078,7 @@ pub fn capture_handoff_to_memory(
             content: content.clone(),
             wing: request.wing.clone(),
             room: request.room.clone(),
-            source_file: Some(format!("cowork-capture://{capture_id}")),
+            source_file: Some(source_file),
             source_type,
             added_at: current_timestamp(),
             chunk_index: Some(0),

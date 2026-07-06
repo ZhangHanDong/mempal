@@ -126,7 +126,10 @@ fn test_resume_resolves_unique_match() {
         ResumeResolution::Resolved(pack) => {
             assert_eq!(pack.wing, "auth-service");
             assert_eq!(pack.path.as_deref(), Some("/Work/auth-service"));
-            assert!(!pack.recent_evidence.is_empty(), "must list recent evidence");
+            assert!(
+                !pack.recent_evidence.is_empty(),
+                "must list recent evidence"
+            );
             assert!(pack.next_step.contains("/Work/auth-service"));
         }
         other => panic!("expected resolved, got {other:?}"),

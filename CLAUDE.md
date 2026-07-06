@@ -162,6 +162,8 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p107-ingest-entrypoint-discoverability.spec.md` | 完成 | P107 ingest entrypoint discoverability：把 evidence-vs-knowledge ingest 边界做成 first-time agent 下手前可见的 push-型契约——`mempal_ingest` 工具描述 + `IngestRequest` knowledge-only 字段 schema doc + 错误文案补救 + MEMORY_PROTOCOL Rule 4；纯文档/可发现性，零 schema/行为/校验变更 |
 | `specs/p108-peek-cwd-cross-project.spec.md` | 完成 | P108 peek cwd cross-project：`mempal_peek_partner` 加可选 `cwd` + 新 CLI `mempal cowork-peek --tool --cwd`，支持无 tmux 跨项目读 partner live session；省略 `cwd` 保持原 `current_dir` 行为，零 peek_partner/存储变更 |
 | `specs/p109-cross-project-resume.spec.md` | 完成 | P109 cross-project resume：`mempal projects` / `mempal_projects` 列出所有项目（wing + worktree 路径 + 计数 + 最近活动），`mempal resume <fuzzy>` / `mempal_resume` 模糊解析到 wing/路径并返回项目路径 + 最近决策 + in-flight candidate + 下一步；只读、无 embedder、不写库、不改 context；从任意目录"继续 xxx 项目" |
+| `specs/p110-public-issue-compatibility.spec.md` | 完成 | P110 public issue compatibility fixes：修复 GitHub #1-#4（drawer identity source-aware + 12 hex、同批去重/insert bool、Windows `~/` expansion、MCP signed-compatible schema、`tunnel_hints` always on-wire） |
+| `specs/p111-project-ignore-rules.spec.md` | 完成 | P111 project ignore rules：`init` / directory `ingest` 共享 project path-filter，默认尊重 `.gitignore` + `.mempalignore`，支持 `--ignore-file` / `--no-gitignore` / `--no-mempalignore` |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -276,6 +278,8 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-06-09-p107-ingest-entrypoint-discoverability.md` — P107 ingest entrypoint discoverability（已完成）
 - `docs/plans/2026-06-17-p108-peek-cwd-cross-project.md` — P108 peek cwd cross-project（已完成）
 - `docs/plans/2026-06-22-p109-cross-project-resume.md` — P109 cross-project resume（已完成）
+- `docs/plans/2026-07-02-p110-public-issue-compatibility.md` — P110 public issue compatibility fixes（已完成）
+- `docs/plans/2026-07-06-p111-project-ignore-rules.md` — P111 project ignore rules（已完成）
 
 ### Spec 使用方式
 

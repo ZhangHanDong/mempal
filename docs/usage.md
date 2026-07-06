@@ -93,8 +93,8 @@ Use this when you already know the concepts and just need the right command quic
 
 | Command | Purpose |
 |---------|---------|
-| `mempal init <DIR> [--dry-run]` | infer a `wing` and seed initial taxonomy rooms from a project tree |
-| `mempal ingest --wing <WING> <DIR> [--dry-run]` | chunk, embed, and store a project tree |
+| `mempal init <DIR> [--dry-run] [--ignore-file PATH]` | infer a `wing` and seed initial taxonomy rooms from a project tree |
+| `mempal ingest --wing <WING> <DIR> [--dry-run] [--ignore-file PATH]` | chunk, embed, and store a project tree |
 | `mempal search <QUERY> [--wing W] [--room R] [--json]` | hybrid search (BM25 + vector + RRF) with tunnel hints |
 | `mempal context <QUERY> [--format json] [--include-evidence] [--dao-tian-limit N]` | assemble mind-model runtime context (`dao_tian -> dao_ren -> shu -> qi`); default `dao_tian` budget is 1 |
 | `mempal field-taxonomy [--format json]` | inspect read-only recommended `field` values for typed memory |
@@ -147,6 +147,17 @@ Write those taxonomy entries:
 ```bash
 mempal init ~/code/myapp
 ```
+
+By default, `init` and directory-mode `ingest` respect the target project's
+`.gitignore`, `.git/info/exclude`, global Git excludes, and a root-level
+`.mempalignore`. Add generated files, build outputs, or caches that should stay
+out of project memory to `.mempalignore`.
+
+For one-off runs, pass `--ignore-file <PATH>` more than once to add custom ignore
+files. Use `--no-gitignore` or `--no-mempalignore` when you need to disable one
+of the default sources. Mempal still hard-skips `.git/`, `target/`, and
+`node_modules/` during project traversal. Explicit file ingest bypasses traversal
+ignore rules.
 
 ### 2. Preview ingest before writing
 

@@ -162,11 +162,11 @@ impl Database {
         &self.path
     }
 
-    pub fn insert_drawer(&self, drawer: &Drawer) -> Result<(), DbError> {
+    pub fn insert_drawer(&self, drawer: &Drawer) -> Result<bool, DbError> {
         anchor::validate_anchor_domain(&drawer.domain, &drawer.anchor_kind)
             .map_err(|message| DbError::InvalidDrawerMetadata(message.to_string()))?;
 
-        self.conn.execute(
+        let inserted = self.conn.execute(
             r#"
             INSERT INTO drawers (
                 id,
@@ -197,6 +197,7 @@ impl Database {
                 trigger_hints
             )
             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)
+            ON CONFLICT(id) DO NOTHING
             "#,
             params![
                 drawer.id.as_str(),
@@ -228,7 +229,7 @@ impl Database {
             ],
         )?;
 
-        Ok(())
+        Ok(inserted == 1)
     }
 
     pub fn taxonomy_entries(&self) -> Result<Vec<TaxonomyEntry>, DbError> {
@@ -343,8 +344,10 @@ impl Database {
             .optional()?;
 
         if existing.is_none() {
-            self.insert_drawer(drawer)?;
-            return self.insert_vector(&drawer.id, vector);
+            if self.insert_drawer(drawer)? {
+                return self.insert_vector(&drawer.id, vector);
+            }
+            return Ok(());
         }
 
         let (rowid, old_content) = existing.expect("checked Some");
