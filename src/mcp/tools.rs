@@ -1684,6 +1684,26 @@ pub struct PeekPartnerRequest {
     pub cwd: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SessionPeekRequest {
+    /// Concrete agent tool whose local session should be read. Must be
+    /// "claude" or "codex"; "auto" is intentionally rejected because this is
+    /// an explicit session reader, not partner inference.
+    pub tool: String,
+
+    /// Maximum number of user+assistant messages to return. Default 30.
+    pub limit: Option<usize>,
+
+    /// Optional RFC3339 timestamp cutoff — only messages strictly newer than
+    /// this are returned.
+    pub since: Option<String>,
+
+    /// Required project directory whose session should be read. Use this for
+    /// same-tool or cross-project reads such as Codex reading another Codex
+    /// session for a different cwd.
+    pub cwd: String,
+}
+
 /// P109: response for `mempal_projects`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ProjectsResponse {
@@ -1753,6 +1773,16 @@ pub struct PeekPartnerResponse {
     pub session_path: Option<String>,
     pub session_mtime: Option<String>,
     pub partner_active: bool,
+    pub messages: Vec<PeekMessageDto>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct SessionPeekResponse {
+    pub tool: String,
+    pub session_path: Option<String>,
+    pub session_mtime: Option<String>,
+    pub active: bool,
     pub messages: Vec<PeekMessageDto>,
     pub truncated: bool,
 }

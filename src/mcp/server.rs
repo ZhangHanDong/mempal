@@ -87,8 +87,9 @@ use super::tools::{
     Phase3GateDto, Phase3Request, Phase3Response, ProjectsResponse, ResearchAdapterPlanDto,
     ResearchIngestPlanDto, ResumeRequest, ResumeResponse, RetrievedKnowledgeCardDto,
     RuntimeAdoptionEventDto, RuntimeAdoptionStatsDto, ScopeCount, SearchRequest, SearchResponse,
-    SearchResultDto, StatusResponse, TaxonomyEntryDto, TaxonomyRequest, TaxonomyResponse,
-    TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto, TunnelsRequest, TunnelsResponse,
+    SearchResultDto, SessionPeekRequest, SessionPeekResponse, StatusResponse, TaxonomyEntryDto,
+    TaxonomyRequest, TaxonomyResponse, TriggerHintsDto, TripleDto, TunnelDto, TunnelEndpointDto,
+    TunnelsRequest, TunnelsResponse,
 };
 
 #[derive(Clone)]
@@ -276,6 +277,17 @@ impl MempalMcpServer {
         self.mempal_status().await.map(|response| response.0)
     }
 
+    pub async fn session_peek_json_for_test(
+        &self,
+        value: Value,
+    ) -> std::result::Result<SessionPeekResponse, ErrorData> {
+        let request = serde_json::from_value(value)
+            .map_err(|error| ErrorData::invalid_params(error.to_string(), None))?;
+        self.mempal_session_peek(Parameters(request))
+            .await
+            .map(|response| response.0)
+    }
+
     pub async fn knowledge_policy_json_for_test(
         &self,
     ) -> std::result::Result<KnowledgePolicyResponse, ErrorData> {
@@ -366,6 +378,27 @@ fn resolve_peek_cwd(cwd: Option<String>) -> std::result::Result<PathBuf, ErrorDa
         None => std::env::current_dir()
             .map_err(|e| ErrorData::internal_error(format!("cwd unavailable: {e}"), None)),
     }
+}
+
+fn parse_session_peek_tool(raw: &str) -> std::result::Result<Tool, ErrorData> {
+    let tool = raw.trim();
+    if tool.eq_ignore_ascii_case("auto") {
+        return Err(ErrorData::invalid_params(
+            "mempal_session_peek requires a concrete tool value of claude or codex; use mempal_peek_partner with tool=auto for partner inference",
+            None,
+        ));
+    }
+
+    Tool::from_target_str(tool).ok_or_else(|| {
+        ErrorData::invalid_params(
+            format!("unsupported tool `{raw}`: expected claude or codex"),
+            None,
+        )
+    })
+}
+
+fn resolve_session_peek_cwd(cwd: &str) -> std::result::Result<PathBuf, ErrorData> {
+    required_string(Some(cwd), "cwd").map(PathBuf::from)
 }
 
 fn validate_ingest_request(
@@ -2978,6 +3011,51 @@ impl MempalMcpServer {
     }
 
     #[tool(
+        name = "mempal_session_peek",
+        description = "Read a local Claude or Codex LIVE session for an explicit tool+cwd without partner inference. Use this for same-tool or cross-project session inspection, e.g. Codex reading another Codex project's session. This is pure read: it returns session data in the MCP response body and never writes mempal drawers, cowork inboxes, events, or session registries. Requires tool=\"claude\" or tool=\"codex\" and a non-empty cwd; tool=\"auto\" belongs to mempal_peek_partner."
+    )]
+    async fn mempal_session_peek(
+        &self,
+        Parameters(request): Parameters<SessionPeekRequest>,
+    ) -> std::result::Result<Json<SessionPeekResponse>, ErrorData> {
+        let tool = parse_session_peek_tool(&request.tool)?;
+        let cwd = resolve_session_peek_cwd(&request.cwd)?;
+
+        let cowork_req = CoworkPeekRequest {
+            tool,
+            limit: request.limit.unwrap_or(30),
+            since: request.since,
+            cwd,
+            // Explicit session peek is not partner peek. Do not use MCP
+            // ClientInfo for self-peek checks or auto-inference here.
+            caller_tool: None,
+            home_override: None,
+        };
+
+        let resp = peek_partner(cowork_req).map_err(|e| match e {
+            PeekError::CannotInferPartner | PeekError::SelfPeek => {
+                ErrorData::invalid_params(e.to_string(), None)
+            }
+            PeekError::Io(_) | PeekError::Parse(_) => {
+                ErrorData::internal_error(e.to_string(), None)
+            }
+        })?;
+
+        Ok(Json(SessionPeekResponse {
+            tool: resp.partner_tool.as_str().to_string(),
+            session_path: resp.session_path,
+            session_mtime: resp.session_mtime,
+            active: resp.partner_active,
+            messages: resp
+                .messages
+                .into_iter()
+                .map(PeekMessageDto::from)
+                .collect(),
+            truncated: resp.truncated,
+        }))
+    }
+
+    #[tool(
         name = "mempal_cowork_push",
         description = "Proactively deliver a short handoff message to the PARTNER agent's inbox. \
                        Partner reads it at their next UserPromptSubmit hook, NOT real-time. \
@@ -4102,9 +4180,11 @@ fn passive_tunnel_id(room: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use async_trait::async_trait;
     use rusqlite::params;
@@ -4958,6 +5038,13 @@ mod tests {
                 .required_tools
                 .iter()
                 .any(|tool| tool.name == "mempal_phase3" && tool.advertised)
+        );
+        assert!(
+            response
+                .mcp
+                .required_tools
+                .iter()
+                .any(|tool| tool.name == "mempal_session_peek" && tool.advertised)
         );
         assert!(
             response
@@ -7775,7 +7862,7 @@ mod tests {
     // mapping. They complement the integration tests in tests/cowork_inbox.rs,
     // which only cover the CLI and inbox layers.
 
-    use super::super::tools::{CoworkBusRequest, CoworkPushRequest};
+    use super::super::tools::{CoworkBusRequest, CoworkPushRequest, SessionPeekRequest};
     use tokio::sync::Mutex as TokioMutex;
 
     // Tests below mutate $HOME env var to point mempal_home() at a tempdir.
@@ -7786,6 +7873,21 @@ mod tests {
     // Every cowork push handler test must acquire this guard before
     // mutating $HOME and hold it for its entire lifetime.
     static COWORK_HOME_LOCK: TokioMutex<()> = TokioMutex::const_new(());
+
+    struct HomeEnvRestore {
+        old_home: Option<OsString>,
+    }
+
+    impl Drop for HomeEnvRestore {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.old_home {
+                    Some(home) => std::env::set_var("HOME", home),
+                    None => std::env::remove_var("HOME"),
+                }
+            }
+        }
+    }
 
     async fn setup_cowork_home(
         tempdir: &TempDir,
@@ -7801,6 +7903,286 @@ mod tests {
             std::env::set_var("HOME", &home);
         }
         (mempal_home, repo, guard)
+    }
+
+    async fn setup_session_peek_home(
+        tempdir: &TempDir,
+    ) -> (
+        PathBuf,
+        tokio::sync::MutexGuard<'static, ()>,
+        HomeEnvRestore,
+    ) {
+        let guard = COWORK_HOME_LOCK.lock().await;
+        let home = tempdir.path().to_path_buf();
+        let old_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
+        (home, guard, HomeEnvRestore { old_home })
+    }
+
+    fn write_codex_session_for_cwd(home: &Path, cwd: &Path) -> PathBuf {
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let (year, month, day) = crate::cowork::peek::days_to_ymd(now_secs.div_euclid(86400));
+        let codex_dir = home.join(format!(".codex/sessions/{year:04}/{month:02}/{day:02}"));
+        fs::create_dir_all(&codex_dir).expect("create fake codex session dir");
+        let stamp = format!("{year:04}-{month:02}-{day:02}T12:00:00Z");
+        let cwd_str = cwd.to_string_lossy();
+        let path = codex_dir.join(format!(
+            "rollout-{year:04}-{month:02}-{day:02}T12-00-00-p112.jsonl"
+        ));
+        fs::write(
+            &path,
+            format!(
+                r#"{{"timestamp":"{stamp}","type":"session_meta","payload":{{"id":"p112","timestamp":"{stamp}","cwd":"{cwd_str}","originator":"codex-tui"}}}}
+{{"timestamp":"{stamp}","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"P112 user msg"}}]}}}}
+{{"timestamp":"{stamp}","type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"P112 assistant reply"}}]}}}}
+"#
+            ),
+        )
+        .expect("write fake codex session");
+        path
+    }
+
+    // P112: explicit MCP session peek is not partner peek.
+
+    #[tokio::test]
+    async fn test_mcp_session_peek_allows_same_tool_codex_cross_project() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (home, _home_guard, _restore) = setup_session_peek_home(&tempdir).await;
+        let cwd = tempdir.path().join("agentsview");
+        fs::create_dir_all(&cwd).expect("create project cwd");
+        let session_path = write_codex_session_for_cwd(&home, &cwd);
+        *server.client_name.lock().unwrap() = Some("codex-mcp-client".to_string());
+
+        let response = server
+            .mempal_session_peek(Parameters(SessionPeekRequest {
+                tool: "codex".to_string(),
+                limit: Some(5),
+                since: None,
+                cwd: cwd.to_string_lossy().into_owned(),
+            }))
+            .await
+            .expect("session peek should allow same-tool explicit read")
+            .0;
+
+        assert_eq!(response.tool, "codex");
+        assert_eq!(
+            response.session_path.as_deref(),
+            Some(session_path.to_string_lossy().as_ref())
+        );
+        assert!(response.session_mtime.is_some());
+        assert_eq!(response.messages.len(), 2);
+        assert_eq!(response.messages[0].text, "P112 user msg");
+        assert_eq!(response.messages[1].text, "P112 assistant reply");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_peek_partner_still_rejects_self_peek() {
+        let (_tempdir, _db_path, server) = setup_server();
+        *server.client_name.lock().unwrap() = Some("codex-mcp-client".to_string());
+
+        let result = server
+            .mempal_peek_partner(Parameters(PeekPartnerRequest {
+                tool: "codex".to_string(),
+                limit: None,
+                since: None,
+                cwd: None,
+            }))
+            .await;
+        let error = match result {
+            Ok(_) => panic!("partner peek must reject MCP self-peek"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("cannot peek your own session"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_session_peek_rejects_auto_tool() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let result = server
+            .mempal_session_peek(Parameters(SessionPeekRequest {
+                tool: "auto".to_string(),
+                limit: None,
+                since: None,
+                cwd: "/tmp/agentsview".to_string(),
+            }))
+            .await;
+        let error = match result {
+            Ok(_) => panic!("auto must be rejected for explicit session peek"),
+            Err(error) => error,
+        };
+
+        let message = error.to_string();
+        assert!(message.contains("concrete"), "unexpected error: {message}");
+        assert!(message.contains("claude") && message.contains("codex"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_session_peek_rejects_unknown_tool() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let result = server
+            .mempal_session_peek(Parameters(SessionPeekRequest {
+                tool: "other-agent".to_string(),
+                limit: None,
+                since: None,
+                cwd: "/tmp/agentsview".to_string(),
+            }))
+            .await;
+        let error = match result {
+            Ok(_) => panic!("unknown tool must be rejected"),
+            Err(error) => error,
+        };
+
+        let message = error.to_string();
+        assert!(
+            message.contains("other-agent"),
+            "unexpected error: {message}"
+        );
+        assert!(message.contains("unsupported") || message.contains("unknown"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_session_peek_requires_non_empty_cwd() {
+        let (_tempdir, _db_path, server) = setup_server();
+
+        let missing = server
+            .session_peek_json_for_test(serde_json::json!({ "tool": "codex" }))
+            .await
+            .expect_err("missing cwd must fail");
+        assert!(
+            missing.to_string().contains("cwd"),
+            "unexpected error: {missing}"
+        );
+
+        let result = server
+            .mempal_session_peek(Parameters(SessionPeekRequest {
+                tool: "codex".to_string(),
+                limit: None,
+                since: None,
+                cwd: "   ".to_string(),
+            }))
+            .await;
+        let empty = match result {
+            Ok(_) => panic!("empty cwd must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            empty.to_string().contains("cwd"),
+            "unexpected error: {empty}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_session_peek_has_no_mempal_or_cowork_side_effects() {
+        let (tempdir, db_path, server) = setup_server();
+        let (home, _home_guard, _restore) = setup_session_peek_home(&tempdir).await;
+        let cwd = tempdir.path().join("agentsview-side-effects");
+        fs::create_dir_all(&cwd).expect("create project cwd");
+        write_codex_session_for_cwd(&home, &cwd);
+        assert!(!db_path.exists(), "setup should not create palace.db");
+        assert!(
+            !home.join(".mempal").exists(),
+            "setup should not create .mempal"
+        );
+
+        let response = server
+            .mempal_session_peek(Parameters(SessionPeekRequest {
+                tool: "codex".to_string(),
+                limit: Some(5),
+                since: None,
+                cwd: cwd.to_string_lossy().into_owned(),
+            }))
+            .await
+            .expect("session peek should read fixture")
+            .0;
+
+        assert_eq!(response.messages.len(), 2);
+        assert!(!db_path.exists(), "session peek must not open palace.db");
+        assert!(
+            !home.join(".mempal").exists(),
+            "session peek must not write cowork or mempal state"
+        );
+    }
+
+    #[test]
+    fn test_mcp_tool_registry_and_protocol_include_session_peek() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let session_peek = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_session_peek")
+            .expect("mempal_session_peek tool exists");
+        let schema = serde_json::to_string(&session_peek.input_schema)
+            .expect("serialize mempal_session_peek input schema");
+        assert!(schema.contains("tool"), "schema must include tool");
+        assert!(schema.contains("cwd"), "schema must include cwd");
+        assert!(
+            schema.contains("same-tool") || schema.contains("same tool"),
+            "schema docs must explain same-tool reads: {schema}"
+        );
+
+        let protocol = crate::core::protocol::MEMORY_PROTOCOL;
+        assert!(protocol.contains("mempal_session_peek"));
+        assert!(protocol.contains("mempal_peek_partner"));
+        assert!(protocol.contains("tmux_peek"));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_session_peek_response_uses_tool_not_partner_tool() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (home, _home_guard, _restore) = setup_session_peek_home(&tempdir).await;
+        let cwd = tempdir.path().join("agentsview-response");
+        fs::create_dir_all(&cwd).expect("create project cwd");
+        write_codex_session_for_cwd(&home, &cwd);
+
+        let response = server
+            .mempal_session_peek(Parameters(SessionPeekRequest {
+                tool: "codex".to_string(),
+                limit: Some(5),
+                since: None,
+                cwd: cwd.to_string_lossy().into_owned(),
+            }))
+            .await
+            .expect("session peek should read fixture")
+            .0;
+        let json = serde_json::to_value(response).expect("serialize session peek response");
+        assert_eq!(json.get("tool").and_then(|v| v.as_str()), Some("codex"));
+        assert!(
+            json.get("partner_tool").is_none(),
+            "session response must not use partner_tool: {json}"
+        );
+        assert!(json.get("active").is_some(), "response must expose active");
+        assert!(
+            json.get("partner_active").is_none(),
+            "session response must not use partner_active: {json}"
+        );
+    }
+
+    #[test]
+    fn test_mcp_session_peek_has_no_file_output_mode() {
+        let (_tempdir, _db_path, server) = setup_server();
+        let tools = server.tool_router.list_all();
+        let session_peek = tools
+            .iter()
+            .find(|tool| tool.name == "mempal_session_peek")
+            .expect("mempal_session_peek tool exists");
+        let schema = serde_json::to_value(&session_peek.input_schema)
+            .expect("serialize mempal_session_peek input schema");
+        let properties = schema
+            .get("properties")
+            .and_then(|value| value.as_object())
+            .expect("schema properties");
+        assert!(!properties.contains_key("output_path"), "{schema}");
+        assert!(!properties.contains_key("output"), "{schema}");
+        assert!(!properties.contains_key("format"), "{schema}");
     }
 
     async fn mcp_bus_register(server: &MempalMcpServer, repo: &Path, agent_id: &str, tool: &str) {

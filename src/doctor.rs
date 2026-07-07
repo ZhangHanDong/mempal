@@ -10,6 +10,7 @@ pub const REQUIRED_MCP_TOOLS: &[&str] = &[
     "mempal_context",
     "mempal_brief",
     "mempal_phase3",
+    "mempal_session_peek",
     "mempal_cowork_bus",
 ];
 

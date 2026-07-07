@@ -586,7 +586,7 @@ mempal serve --mcp
 
 If `mempal` was built without the `rest` feature, plain `mempal serve` behaves the same way.
 
-The MCP server exposes eighteen tools:
+The MCP server exposes nineteen tools:
 
 - `mempal_status` — state + protocol + AAAK spec
 - `mempal_search` — hybrid search (BM25 + vector + RRF) with tunnel hints and AAAK-derived structured signals (`entities` / `topics` / `flags` / `emotions` / `importance_stars`)
@@ -604,6 +604,7 @@ The MCP server exposes eighteen tools:
 - `mempal_kg` — knowledge graph: add/query/invalidate/timeline/stats
 - `mempal_tunnels` — cross-wing room discovery
 - `mempal_peek_partner` — read the partner coding agent's live session (Claude ↔ Codex); pure read, never writes to mempal
+- `mempal_session_peek` — read an explicit local Claude/Codex session by concrete `tool + cwd`; use for same-tool or cross-project session reads
 - `mempal_cowork_push` — send a short handoff message (≤ 8 KB) to the partner agent's inbox; delivered at the partner's next UserPromptSubmit via a drain hook
 - `mempal_fact_check` — offline contradiction detection against KG triples and known entities
 
@@ -664,6 +665,7 @@ Soft-delete a drawer:
 Two coding agents running on the same repo — typically Claude Code and Codex — can collaborate through two primitives:
 
 - **`mempal_peek_partner`** (P6) — read the partner's live session file without storing anything in mempal. Use for "what is partner currently doing" questions.
+- **`mempal_session_peek`** (P112) — read an explicit local session by concrete `tool + cwd`. Use for same-tool or cross-project inspection such as Codex reading another Codex project's transcript.
 - **`mempal_cowork_push`** (P8) — send a short handoff (≤ 8 KB) to the partner's inbox. The partner sees it prepended to their next user prompt via a UserPromptSubmit hook. Use for "make sure partner notices X" status updates that are too transient for an ingest drawer.
 
 ### Install hooks

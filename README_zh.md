@@ -112,6 +112,7 @@ ignore 规则。它们会尊重 `.gitignore`、`.git/info/exclude`、全局 Git 
 | `mempal_kg` | 知识图谱：add/query/invalidate/timeline/stats |
 | `mempal_tunnels` | 跨 Wing room 发现 |
 | `mempal_peek_partner` | 读 partner agent 当前 session（Claude ↔ Codex），纯只读 |
+| `mempal_session_peek` | 按明确 `tool + cwd` 读取本地 Claude/Codex session，支持同工具跨项目读取 |
 | `mempal_cowork_push` | 向 partner agent inbox 投递短消息（at-next-submit 交付） |
 | `mempal_fact_check` | 离线矛盾检测（相似名 / 关系对立 / 时态失效，纯本地无 LLM） |
 
@@ -129,7 +130,7 @@ mempal 通过自描述教 agent 这些规则：
 4. **决策后保存** — 保存理由，不仅是结果
 5. **引用一切** — 引用 drawer_id 和 source_file
 5a. **记日记** — session 结束时在 `wing="agent-diary"` 下记行为观察
-8. **Partner 感知** — 问 partner 当前状态用 `mempal_peek_partner`（live session），问已沉淀决策才用 `mempal_search`
+8. **Partner 感知** — 问 partner 当前状态用 `mempal_peek_partner`（live session），明确同工具/跨项目本地 session 用 `mempal_session_peek`，问已沉淀决策才用 `mempal_search`
 9. **决策沉淀** — `mempal_ingest` 只存已达成的硬决策；partner 参与时要把 partner 的关键贡献带进 drawer 正文
 10. **COWORK PUSH** — `mempal_cowork_push` 是 SEND 原语，at-next-submit 交付、非实时；别用它做该 ingest 的事
 11. **入库前校验** — 在 ingest 含 entity 关系断言的决策前调 `mempal_fact_check`，它抓相似名拼错、KG 关系矛盾、以及 `valid_to` 已过期的 stale fact

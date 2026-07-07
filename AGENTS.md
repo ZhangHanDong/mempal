@@ -166,6 +166,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p109-cross-project-resume.spec.md` | 完成 | P109 cross-project resume：`mempal projects` / `mempal_projects` 列出所有项目（wing + worktree 路径 + 计数 + 最近活动），`mempal resume <fuzzy>` / `mempal_resume` 模糊解析到 wing/路径并返回项目路径 + 最近决策 + in-flight candidate + 下一步；只读、无 embedder、不写库、不改 context；从任意目录"继续 xxx 项目" |
 | `specs/p110-public-issue-compatibility.spec.md` | 完成 | P110 public issue compatibility fixes：修复 GitHub #1-#4（drawer identity source-aware + 12 hex、同批去重/insert bool、Windows `~/` expansion、MCP signed-compatible schema、`tunnel_hints` always on-wire） |
 | `specs/p111-project-ignore-rules.spec.md` | 完成 | P111 project ignore rules：`init` / directory `ingest` 共享 project path-filter，默认尊重 `.gitignore` + `.mempalignore`，支持 `--ignore-file` / `--no-gitignore` / `--no-mempalignore` |
+| `specs/p112-session-peek.spec.md` | 完成 | P112 explicit MCP session peek：新增 `mempal_session_peek` 显式按 `tool + cwd` 只读读取本地 Claude/Codex session，支持同工具/跨项目场景，同时保持 `mempal_peek_partner` self-peek 保护不变 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -282,6 +283,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-06-22-p109-cross-project-resume.md` — P109 cross-project resume（已完成）
 - `docs/plans/2026-07-02-p110-public-issue-compatibility.md` — P110 public issue compatibility fixes（已完成）
 - `docs/plans/2026-07-06-p111-project-ignore-rules.md` — P111 project ignore rules（已完成）
+- `docs/plans/2026-07-07-p112-session-peek.md` — P112 explicit MCP session peek（已完成）
 
 ### Spec 使用方式
 
