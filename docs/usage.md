@@ -21,23 +21,23 @@ Before using the CLI, keep four nouns straight:
 
 ## Install
 
-Install the CLI locally:
+Install the latest released CLI from crates.io:
 
 ```bash
-cargo install --path crates/mempal-cli --locked
+cargo install mempal --version 0.8.0 --locked
 ```
 
 Install with REST support:
 
 ```bash
-cargo install --path crates/mempal-cli --locked --features rest
+cargo install mempal --version 0.8.0 --locked --features rest
 ```
 
 For development without installation:
 
 ```bash
-cargo run -p mempal-cli -- --help
-cargo run -p mempal-cli --features rest -- serve --help
+cargo run -- --help
+cargo run --features rest -- serve --help
 ```
 
 ## Configuration

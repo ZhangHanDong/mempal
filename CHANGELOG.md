@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: MINOR bumps introduce new features, PATCH bumps are bug-fix only).
 
+## [0.8.0] — 2026-07-08
+
+Feature release covering the post-0.7.0 public compatibility and agent runtime
+work: P110, P111, P112, plus configurable external embedding dimensions.
+
+### Added
+
+- **Project ignore rules (P111).** `mempal init <DIR>` and directory-mode
+  `mempal ingest <DIR>` now respect the target project's ignore configuration
+  by default: `.gitignore`, `.git/info/exclude`, global Git excludes, and
+  root-level `.mempalignore`. Add one-off ignore files with `--ignore-file`;
+  disable defaults with `--no-gitignore` or `--no-mempalignore`.
+- **Explicit MCP session peek (P112).** New `mempal_session_peek` MCP tool reads
+  a concrete Claude/Codex local session by `tool + cwd`, including same-tool
+  cross-project reads that `mempal_peek_partner` correctly rejects as self-peek.
+
+### Changed
+
+- **Public issue compatibility fixes (P110).** Drawer identity is source-aware
+  with 12-hex ids; same-batch ingest duplicate handling is stable; Windows `~/`
+  config expansion works; MCP schemas stay strict-client compatible; tunnel hints
+  are consistently present on-wire.
+- **External embedding API dimensions are configurable.** Set
+  `embed.dimensions` for non-default embedding backends; omitted values preserve
+  the prior default behavior.
+- README and usage docs now show crates.io install commands for the latest
+  release and the correct source-checkout install path for the single-crate
+  layout.
+
 ## [0.7.0] — 2026-06-22
 
 New capability. **P109: list and resume any project from any directory.**
@@ -364,6 +393,10 @@ P8) on top of hybrid search and the knowledge graph.
 Earlier releases (0.1.x, 0.2.x) are tracked only in Git history. Run
 `git log --oneline` on the repository to inspect them.
 
+[0.8.0]: https://github.com/ZhangHanDong/mempal/releases/tag/v0.8.0
+[0.7.0]: https://github.com/ZhangHanDong/mempal/releases/tag/v0.7.0
+[0.6.2]: https://github.com/ZhangHanDong/mempal/releases/tag/v0.6.2
+[0.6.1]: https://github.com/ZhangHanDong/mempal/releases/tag/v0.6.1
 [0.6.0]: https://github.com/ZhangHanDong/mempal/releases/tag/v0.6.0
 [0.5.4]: https://github.com/ZhangHanDong/mempal/releases/tag/v0.5.4
 [0.5.3]: https://github.com/ZhangHanDong/mempal/releases/tag/v0.5.3

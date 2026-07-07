@@ -2,6 +2,8 @@
 
 Project memory for coding agents. Single binary, `cargo install mempal`, find past decisions with citations in seconds.
 
+Latest release: **v0.8.0** (2026-07-08).
+
 ## What It Does
 
 ```
@@ -19,7 +21,7 @@ Next session (any agent) → mempal search → finds the decision with source ci
 ## Quick Start
 
 ```bash
-cargo install --path crates/mempal-cli --locked
+cargo install mempal --version 0.8.0 --locked
 
 mempal init ~/code/myapp
 mempal ingest ~/code/myapp --wing myapp
@@ -30,7 +32,13 @@ mempal wake-up
 With REST support:
 
 ```bash
-cargo install --path crates/mempal-cli --locked --features rest
+cargo install mempal --version 0.8.0 --locked --features rest
+```
+
+From a source checkout:
+
+```bash
+cargo install --path . --locked
 ```
 
 ## Configuration
