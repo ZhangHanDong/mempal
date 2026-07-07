@@ -49,7 +49,10 @@ impl EmbedderFactory for ConfiguredEmbedderFactory {
                     .clone()
                     .unwrap_or_else(|| "http://localhost:11434/api/embeddings".to_string()),
                 self.config.embed.api_model.clone(),
-                DEFAULT_API_DIMENSIONS,
+                self.config
+                    .embed
+                    .dimensions
+                    .unwrap_or(DEFAULT_API_DIMENSIONS),
             ))),
             backend => Err(EmbedError::UnsupportedBackend(backend.to_string())),
         }

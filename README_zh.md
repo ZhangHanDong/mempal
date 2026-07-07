@@ -57,6 +57,7 @@ backend = "onnx"
 backend = "api"
 api_endpoint = "http://localhost:11434/api/embeddings"
 api_model = "nomic-embed-text"
+dimensions = 768  # 可选；省略时默认 384
 ```
 
 ## 命令一览
