@@ -112,6 +112,7 @@ that file even if the project ignore rules would skip it during directory traver
 | `mempal_kg` | Knowledge graph: add/query/invalidate/timeline/stats |
 | `mempal_tunnels` | Cross-wing room discovery |
 | `mempal_peek_partner` | Read partner agent's live session (Claude ↔ Codex), pure read, never writes |
+| `mempal_session_peek` | Read an explicit Claude/Codex local session by concrete tool + cwd, including same-tool cross-project reads |
 | `mempal_cowork_push` | Send a short handoff message to partner agent's inbox (at-next-submit delivery) |
 | `mempal_fact_check` | Offline contradiction detection vs KG triples + known entities (similar-name, relation mismatch, stale facts) |
 
@@ -129,14 +130,14 @@ mempal teaches agents these rules through self-description:
 4. **SAVE AFTER DECISIONS** — persist rationale, not just outcomes
 5. **CITE EVERYTHING** — reference drawer_id and source_file
 5a. **KEEP A DIARY** — record behavioral observations in wing="agent-diary"
-8. **PARTNER AWARENESS** — use `mempal_peek_partner` for live partner-agent session, not crystallized drawers
+8. **PARTNER AWARENESS** — use `mempal_peek_partner` for live partner-agent session, `mempal_session_peek` for explicit same-tool/cross-project local sessions, and mempal search only for crystallized drawers
 9. **DECISION CAPTURE** — `mempal_ingest` is for firm decisions only; include partner input when peek informed the call
 10. **COWORK PUSH** — use `mempal_cowork_push` as the SEND primitive in the SEND/READ/PERSIST triad; at-next-submit delivery, not real-time
 11. **VERIFY BEFORE INGEST** — call `mempal_fact_check` before persisting a decision that asserts entity relationships; it catches similar-name typos, relation mismatches against the KG, and stale facts with expired `valid_to`
 
 ## Agent Cowork (P6 peek + P8 push)
 
-Two coding agents (Claude Code and Codex) can collaborate on the same repo through a per-project inbox + hook-driven injection channel, on top of `mempal_peek_partner` (read live partner session) and `mempal_cowork_push` (send ephemeral handoff).
+Two coding agents (Claude Code and Codex) can collaborate on the same repo through a per-project inbox + hook-driven injection channel, on top of `mempal_peek_partner` (read live partner session), `mempal_session_peek` (read an explicit local session by concrete tool + cwd), and `mempal_cowork_push` (send ephemeral handoff).
 
 Install hooks once per repo (run at the repo root):
 

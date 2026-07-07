@@ -137,6 +137,10 @@ You have persistent project memory via mempal. Follow these rules in every sessi
    mempal_search for CRYSTALLIZED past decisions. Don't conflate the two.
    Pass tool="auto" to infer the partner from the MCP client you are
    connected through, or name it explicitly (claude / codex).
+   When you need an explicit same-tool or cross-project session read (for
+   example Codex reading another Codex project's local transcript), call
+   mempal_session_peek with concrete tool="claude" or tool="codex" and cwd.
+   Use cowork bus tmux_peek for registered concrete agent panes.
 
 9. DECISION CAPTURE (what goes into mempal)
    mempal_ingest is for decisions, not chat logs. A drawer-worthy item is
@@ -341,6 +345,7 @@ TOOLS:
   mempal_kg            — knowledge graph: add/query/invalidate/timeline/stats triples
   mempal_tunnels       — discover cross-wing room links
   mempal_peek_partner  — read partner agent's live session (Claude ↔ Codex), pure read
+  mempal_session_peek  — read an explicit Claude/Codex local session by concrete tool + cwd, pure read
   mempal_cowork_push   — send a short handoff message to partner agent (P8)
   mempal_cowork_bus    — concrete agent_id multi-agent bus register/list/send/broadcast/drain/events/deliveries/ack/heartbeat/channel_set/channel_list/channel_send/tmux_peek/doctor/session_create/session_list/session_status/session_close/handoff/capture, with opt-in transport=tmux, event replay, delivery ack/status, presence, group channels, read-only tmux pane peek, diagnostics, sessions, handoff summaries, and explicit handoff-to-evidence capture (P85/P86/P87/P88/P89/P90/P91/P93/P94/P95/P96/P101)
   mempal_fact_check    — offline contradiction detection vs KG triples + entities (P9)
@@ -378,6 +383,18 @@ mod tests {
         assert!(
             MEMORY_PROTOCOL.contains("mempal_peek_partner"),
             "MEMORY_PROTOCOL must mention the mempal_peek_partner tool"
+        );
+    }
+
+    #[test]
+    fn contains_session_peek_tool_name() {
+        assert!(
+            MEMORY_PROTOCOL.contains("mempal_session_peek"),
+            "MEMORY_PROTOCOL must mention the mempal_session_peek tool"
+        );
+        assert!(
+            MEMORY_PROTOCOL.contains("same-tool") && MEMORY_PROTOCOL.contains("cwd"),
+            "MEMORY_PROTOCOL must distinguish explicit same-tool session reads"
         );
     }
 
