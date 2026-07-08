@@ -267,14 +267,11 @@ Chinese text uses jieba-rs POS tagging for proper word segmentation.
 
 | Crate | Responsibility |
 |-------|---------------|
-| `mempal-core` | Types, SQLite schema v4, taxonomy, triples |
-| `mempal-embed` | Embedder trait (model2vec default, ort optional) |
-| `mempal-ingest` | Format detection, normalization, chunking (5 formats) |
-| `mempal-search` | Hybrid search (BM25 + vector + RRF), routing, tunnels |
-| `mempal-aaak` | AAAK encode/decode with BNF grammar + roundtrip tests |
-| `mempal-mcp` | MCP server (9 tools) |
-| `mempal-api` | Feature-gated REST API |
-| `mempal-cli` | CLI entrypoint |
+| `mempal` | Installable CLI + MCP/REST server, SQLite storage, ingest, context, KG, cowork orchestration |
+| `mempal-embed` | Public `Embedder` / `EmbedderFactory` traits, API embedder, model2vec and ONNX implementations |
+| `mempal-search-core` | Public FTS5 query escaping and RRF rank-fusion primitives |
+| `mempal-agent-memory` | Public agent-memory domain types and anchor helpers |
+| `mempal-mcp-protocol` | Public self-describing `MEMORY_PROTOCOL` text |
 
 Key design choices:
 - **model2vec-rs** default embedder — zero native deps, multilingual (BGE-M3 distilled)
@@ -283,6 +280,8 @@ Key design choices:
 - **Soft-delete** with audit trail — `mempal delete` + `mempal purge`
 - **Importance ranking** — drawers have 0-5 importance, wake-up sorts by importance
 - **Semantic dedup** — ingest warns (doesn't block) when similar content exists
+- **Public workspace crates** — reusable libraries are maintained in this repo and
+  published as versioned crates while `cargo install mempal` remains the CLI path
 
 ## Development
 

@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use mempal_search_core::build_fts_match_query;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 use thiserror::Error;
@@ -2640,21 +2641,6 @@ fn parse_keywords(raw: Option<&str>) -> Result<Vec<String>, DbError> {
         .collect();
 
     Ok(keywords)
-}
-
-fn build_fts_match_query(query: &str) -> Option<String> {
-    let terms = query
-        .split_whitespace()
-        .map(str::trim)
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-        .collect::<Vec<_>>();
-
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" AND "))
-    }
 }
 
 #[cfg(test)]

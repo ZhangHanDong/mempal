@@ -40,6 +40,15 @@ cargo run -- --help
 cargo run --features rest -- serve --help
 ```
 
+Source checkouts are Cargo workspaces. The root package is still `mempal` and
+still owns the installable CLI binary, while reusable public crates live under
+`crates/`:
+
+- `mempal-embed`: embedding traits and implementations
+- `mempal-search-core`: FTS5 query escaping and RRF rank fusion
+- `mempal-agent-memory`: memory domain types and anchor helpers
+- `mempal-mcp-protocol`: self-describing MCP protocol text
+
 ## Configuration
 
 Config file path:

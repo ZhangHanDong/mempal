@@ -9,6 +9,7 @@ use crate::core::{
     utils::source_file_or_synthetic,
 };
 use crate::embed::{EmbedError, Embedder};
+use mempal_search_core::{DEFAULT_RRF_K, build_fts_match_query, reciprocal_rank_fusion};
 use thiserror::Error;
 
 use crate::search::filter::build_filter_clause;
@@ -262,50 +263,28 @@ fn inject_tunnel_hints(db: &Database, results: &mut [SearchResult]) {
     }
 }
 
-/// Reciprocal Rank Fusion: merge vector and BM25 ranked lists.
-/// RRF score = sum(1 / (k + rank)) across both lists, with k=60.
 fn rrf_merge(
     vector_results: Vec<SearchResult>,
     fts_results: Vec<SearchResult>,
     top_k: usize,
 ) -> Vec<SearchResult> {
-    use std::collections::HashMap;
-
-    const RRF_K: f64 = 60.0;
-
-    let mut scores: HashMap<String, f64> = HashMap::new();
-    let mut result_map: HashMap<String, SearchResult> = HashMap::new();
-
-    // Score vector results
-    for (rank, result) in vector_results.into_iter().enumerate() {
-        let score = 1.0 / (RRF_K + rank as f64 + 1.0);
-        scores.insert(result.drawer_id.clone(), score);
-        result_map.insert(result.drawer_id.clone(), result);
-    }
-
-    // Score FTS results and merge
-    for (rank, result) in fts_results.into_iter().enumerate() {
-        let score = 1.0 / (RRF_K + rank as f64 + 1.0);
-        *scores.entry(result.drawer_id.clone()).or_default() += score;
-        result_map.entry(result.drawer_id.clone()).or_insert(result);
-    }
-
-    // Sort by RRF score descending, fill in similarity field
-    let mut merged: Vec<SearchResult> = scores
+    let vector_hits = vector_results
         .into_iter()
-        .filter_map(|(id, rrf_score)| {
-            let mut result = result_map.remove(&id)?;
-            result.similarity = rrf_score as f32;
-            Some(result)
+        .map(|result| (result.drawer_id.clone(), result))
+        .collect::<Vec<_>>();
+    let fts_hits = fts_results
+        .into_iter()
+        .map(|result| (result.drawer_id.clone(), result))
+        .collect::<Vec<_>>();
+
+    reciprocal_rank_fusion(vec![vector_hits, fts_hits], top_k, DEFAULT_RRF_K)
+        .into_iter()
+        .map(|hit| {
+            let mut result = hit.item;
+            result.similarity = hit.score as f32;
+            result
         })
-        .collect();
-    merged.sort_by(|a, b| {
-        b.similarity
-            .partial_cmp(&a.similarity)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    merged.truncate(top_k);
-    merged
+        .collect()
 }
 
 pub fn search_by_vector(
@@ -567,21 +546,6 @@ fn anchor_kind_from_str(value: &str) -> rusqlite::Result<AnchorKind> {
         "repo" => Ok(AnchorKind::Repo),
         "worktree" => Ok(AnchorKind::Worktree),
         _ => Err(invalid_enum_value("anchor_kind", value.to_string())),
-    }
-}
-
-fn build_fts_match_query(query: &str) -> Option<String> {
-    let terms = query
-        .split_whitespace()
-        .map(str::trim)
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-        .collect::<Vec<_>>();
-
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" AND "))
     }
 }
 

@@ -1,0 +1,15 @@
+[package]
+name = "mempal-search-core"
+version = "0.8.0"
+edition = "2024"
+license = "MIT"
+description = "Reusable FTS5 and RRF hybrid-search primitives for mempal."
+repository = "https://github.com/ZhangHanDong/mempal"
+homepage = "https://github.com/ZhangHanDong/mempal"
+documentation = "https://docs.rs/mempal-search-core"
+rust-version = "1.85"
+readme = "../../README.md"
+keywords = ["search", "sqlite", "rrf", "fts5", "mempal"]
+categories = ["algorithms", "development-tools"]
+
+[dependencies]

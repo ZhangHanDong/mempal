@@ -1536,8 +1536,10 @@ dependencies = [
  "clap",
  "ignore",
  "jieba-rs",
- "model2vec-rs",
- "ort",
+ "mempal-agent-memory",
+ "mempal-embed",
+ "mempal-mcp-protocol",
+ "mempal-search-core",
  "reqwest",
  "rmcp",
  "rusqlite",
@@ -1547,12 +1549,43 @@ dependencies = [
  "sqlite-vec",
  "tempfile",
  "thiserror",
- "tokenizers 0.22.2",
  "tokio",
  "toml",
  "tower",
  "tower-http",
 ]
+
+[[package]]
+name = "mempal-agent-memory"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "mempal-embed"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "model2vec-rs",
+ "ort",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokenizers 0.22.2",
+ "tokio",
+]
+
+[[package]]
+name = "mempal-mcp-protocol"
+version = "0.8.0"
+
+[[package]]
+name = "mempal-search-core"
+version = "0.8.0"
 
 [[package]]
 name = "mime"
