@@ -1,0 +1,22 @@
+[package]
+name = "mempal-store-sqlite"
+version = "0.8.0"
+edition = "2024"
+license = "MIT"
+description = "SQLite storage layer for mempal agent memory."
+repository = "https://github.com/ZhangHanDong/mempal"
+homepage = "https://github.com/ZhangHanDong/mempal"
+documentation = "https://docs.rs/mempal-store-sqlite"
+rust-version = "1.85"
+keywords = ["memory", "sqlite", "agents", "search"]
+categories = ["database", "development-tools"]
+
+[dependencies]
+mempal-agent-memory = { version = "0.8.0", path = "../mempal-agent-memory" }
+mempal-search-core = { version = "0.8.0", path = "../mempal-search-core" }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlite-vec = "0.1.9"
+thiserror = "2"

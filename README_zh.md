@@ -231,11 +231,14 @@ mempal compress "Kai recommended Clerk over Auth0 based on pricing and DX"
 
 | Crate | 职责 |
 |-------|------|
-| `mempal` | 可安装 CLI + MCP/REST server、SQLite 存储、ingest、context、KG、cowork 总装层 |
+| `mempal` | 可安装 CLI package、REST 入口、legacy facade paths |
 | `mempal-embed` | 公共 `Embedder` / `EmbedderFactory` trait、API embedder、model2vec 与 ONNX 实现 |
 | `mempal-search-core` | 公共 FTS5 query escaping 与 RRF rank-fusion 基础能力 |
 | `mempal-agent-memory` | 公共 agent-memory 领域类型与 anchor helper |
 | `mempal-mcp-protocol` | 公共自描述 `MEMORY_PROTOCOL` 文本 |
+| `mempal-store-sqlite` | 公共 SQLite 存储层：schema、migration、`Database`、FTS5、sqlite-vec、KG、tunnels、cards、adoption tables |
+| `mempal-runtime` | 公共 runtime workflows：ingest、search orchestration、context、brief、knowledge、factcheck、projects、cowork、doctor、AAAK |
+| `mempal-mcp-server` | 公共 MCP server adapter 与工具 wiring |
 
 关键设计：
 - **model2vec-rs** 默认嵌入——零原生依赖，多语言（BGE-M3 蒸馏）
@@ -245,7 +248,9 @@ mempal compress "Kai recommended Clerk over Auth0 based on pricing and DX"
 - **重要性排序**——drawer 有 0-5 重要性评分，wake-up 按重要性排序
 - **语义去重**——ingest 时检测相似内容，warning 但不阻塞
 - **公共 workspace crates**——可复用库在同一 repo/workspace 内维护并以 versioned crates 发布，
-  `cargo install mempal` 继续作为 CLI 安装路径
+  `cargo install mempal` 继续作为 CLI 安装路径。P114 保持粗粒度拆分：storage、
+  runtime、MCP server 独立成 crate，但 knowledge、cowork、context 等功能族仍留在
+  `mempal-runtime`，不继续碎拆。
 
 ## 开发
 

@@ -203,23 +203,30 @@ pub fn parse_codex_jsonl(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::path::PathBuf;
+
+    fn fixture_path(relative: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("tests/fixtures/cowork")
+            .join(relative)
+    }
+
+    fn codex_fixture_dir() -> PathBuf {
+        fixture_path("codex")
+    }
 
     #[test]
     fn reads_session_meta_cwd_from_first_line() {
-        let fixture = Path::new(
-            "tests/fixtures/cowork/codex/2026/04/13/rollout-2026-04-13T12-00-00-fake.jsonl",
-        );
-        let cwd = read_session_cwd(fixture).expect("read cwd");
+        let fixture = fixture_path("codex/2026/04/13/rollout-2026-04-13T12-00-00-fake.jsonl");
+        let cwd = read_session_cwd(&fixture).expect("read cwd");
         assert_eq!(cwd, "/tmp/fake-project");
     }
 
     #[test]
     fn parses_codex_messages_filtering_event_and_reasoning() {
-        let fixture = Path::new(
-            "tests/fixtures/cowork/codex/2026/04/13/rollout-2026-04-13T12-00-00-fake.jsonl",
-        );
-        let (messages, truncated) = parse_codex_jsonl(fixture, None, 30).expect("parse");
+        let fixture = fixture_path("codex/2026/04/13/rollout-2026-04-13T12-00-00-fake.jsonl");
+        let (messages, truncated) = parse_codex_jsonl(&fixture, None, 30).expect("parse");
         // 8 lines total; 4 are valid response_item message entries
         // (2 user + 2 assistant), rest are session_meta / event_msg / reasoning.
         assert_eq!(messages.len(), 4);
@@ -233,10 +240,8 @@ mod tests {
 
     #[test]
     fn honors_limit_by_tail_and_sets_truncated_codex() {
-        let fixture = Path::new(
-            "tests/fixtures/cowork/codex/2026/04/13/rollout-2026-04-13T12-00-00-fake.jsonl",
-        );
-        let (messages, truncated) = parse_codex_jsonl(fixture, None, 2).expect("parse");
+        let fixture = fixture_path("codex/2026/04/13/rollout-2026-04-13T12-00-00-fake.jsonl");
+        let (messages, truncated) = parse_codex_jsonl(&fixture, None, 2).expect("parse");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].text, "codex: continue");
         assert_eq!(messages[1].text, "codex: continuing");
@@ -253,9 +258,9 @@ mod tests {
 
     #[test]
     fn walks_codex_dir_filtering_by_cwd() {
-        let base = Path::new("tests/fixtures/cowork/codex");
+        let base = codex_fixture_dir();
         let result =
-            find_latest_session_for_cwd_at(base, "/tmp/fake-project", FIXED_NOW_EPOCH_2026_04_13)
+            find_latest_session_for_cwd_at(&base, "/tmp/fake-project", FIXED_NOW_EPOCH_2026_04_13)
                 .expect("find session");
         assert!(result.is_some());
         let (path, _mtime) = result.unwrap();
@@ -267,9 +272,9 @@ mod tests {
 
     #[test]
     fn walks_codex_dir_excludes_other_projects() {
-        let base = Path::new("tests/fixtures/cowork/codex");
+        let base = codex_fixture_dir();
         let result =
-            find_latest_session_for_cwd_at(base, "/tmp/fake-project", FIXED_NOW_EPOCH_2026_04_13)
+            find_latest_session_for_cwd_at(&base, "/tmp/fake-project", FIXED_NOW_EPOCH_2026_04_13)
                 .expect("find session");
         let path = result.unwrap().0;
         assert!(!path.to_string_lossy().contains("otherproject"));
@@ -289,11 +294,11 @@ mod tests {
         // The fix widens the scan to [UTC_today - 7, UTC_today + 1] so
         // "UTC tomorrow" (which is "local today" for positive offsets) is
         // always included.
-        let base = Path::new("tests/fixtures/cowork/codex");
+        let base = codex_fixture_dir();
         // 2026-04-12T21:00Z = 2026-04-13T05:00 in Asia/Shanghai.
         // days_from_civil(2026, 4, 12) = 20555.
         let now_epoch = 20555_i64 * 86400 + 21 * 3600;
-        let result = find_latest_session_for_cwd_at(base, "/tmp/fake-project", now_epoch)
+        let result = find_latest_session_for_cwd_at(&base, "/tmp/fake-project", now_epoch)
             .expect("find session");
         assert!(
             result.is_some(),
@@ -316,10 +321,10 @@ mod tests {
         // UTC_today - 7). Use UTC_today = 2026-04-22:
         //   window = [2026-04-15, 2026-04-23]
         //   fixture 2026-04-13 is 2 days OLDER than the floor → excluded.
-        let base = Path::new("tests/fixtures/cowork/codex");
+        let base = codex_fixture_dir();
         // days_from_civil(2026, 4, 22) = 20565
         let now_epoch = 20565_i64 * 86400;
-        let result = find_latest_session_for_cwd_at(base, "/tmp/fake-project", now_epoch)
+        let result = find_latest_session_for_cwd_at(&base, "/tmp/fake-project", now_epoch)
             .expect("find session");
         assert!(
             result.is_none(),
