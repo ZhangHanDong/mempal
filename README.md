@@ -1,5 +1,12 @@
 # mempal
 
+[![Crates.io](https://img.shields.io/crates/v/mempal.svg)](https://crates.io/crates/mempal)
+[![Downloads](https://img.shields.io/crates/d/mempal.svg)](https://crates.io/crates/mempal)
+[![docs.rs](https://docs.rs/mempal/badge.svg)](https://docs.rs/mempal)
+[![CI](https://github.com/ZhangHanDong/mempal/actions/workflows/ci.yml/badge.svg)](https://github.com/ZhangHanDong/mempal/actions/workflows/ci.yml)
+[![Release](https://github.com/ZhangHanDong/mempal/actions/workflows/release.yml/badge.svg)](https://github.com/ZhangHanDong/mempal/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Project memory for coding agents. Single binary, `cargo install mempal`, find past decisions with citations in seconds.
 
 Latest release: **v0.8.0** (2026-07-08).

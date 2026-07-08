@@ -1,5 +1,12 @@
 # mempal
 
+[![Crates.io](https://img.shields.io/crates/v/mempal.svg)](https://crates.io/crates/mempal)
+[![下载量](https://img.shields.io/crates/d/mempal.svg)](https://crates.io/crates/mempal)
+[![docs.rs](https://docs.rs/mempal/badge.svg)](https://docs.rs/mempal)
+[![CI](https://github.com/ZhangHanDong/mempal/actions/workflows/ci.yml/badge.svg)](https://github.com/ZhangHanDong/mempal/actions/workflows/ci.yml)
+[![Release](https://github.com/ZhangHanDong/mempal/actions/workflows/release.yml/badge.svg)](https://github.com/ZhangHanDong/mempal/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Coding agent 的项目记忆工具。单二进制，`cargo install mempal`，10 秒内带出处找回历史决策。
 
 最新版本：**v0.8.0**（2026-07-08）。
