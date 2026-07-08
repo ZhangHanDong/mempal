@@ -1,0 +1,29 @@
+[package]
+name = "mempal-embed"
+version = "0.8.0"
+edition = "2024"
+license = "MIT"
+description = "Reusable embedding traits and implementations for mempal."
+repository = "https://github.com/ZhangHanDong/mempal"
+homepage = "https://github.com/ZhangHanDong/mempal"
+documentation = "https://docs.rs/mempal-embed"
+rust-version = "1.85"
+readme = "../../README.md"
+keywords = ["embedding", "agents", "memory", "mempal"]
+categories = ["development-tools"]
+
+[features]
+default = []
+model2vec = ["dep:model2vec-rs"]
+onnx = ["dep:ort", "dep:tokenizers"]
+
+[dependencies]
+async-trait = "0.1"
+model2vec-rs = { version = "0.1", optional = true }
+ort = { version = "2.0.0-rc.9", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokenizers = { version = "0.22", optional = true }
+tokio = { version = "1", features = ["fs", "rt"] }

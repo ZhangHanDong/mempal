@@ -231,14 +231,11 @@ mempal compress "Kai recommended Clerk over Auth0 based on pricing and DX"
 
 | Crate | 职责 |
 |-------|------|
-| `mempal-core` | 类型、SQLite schema v4、taxonomy、triples |
-| `mempal-embed` | Embedder trait（model2vec 默认，ort 可选） |
-| `mempal-ingest` | 格式检测、归一化、分块（5 种格式） |
-| `mempal-search` | 混合检索（BM25 + 向量 + RRF）、路由、tunnel |
-| `mempal-aaak` | AAAK 编解码（BNF 语法 + 往返验证） |
-| `mempal-mcp` | MCP 服务器（7 工具） |
-| `mempal-api` | REST API（feature-gated） |
-| `mempal-cli` | CLI 入口 |
+| `mempal` | 可安装 CLI + MCP/REST server、SQLite 存储、ingest、context、KG、cowork 总装层 |
+| `mempal-embed` | 公共 `Embedder` / `EmbedderFactory` trait、API embedder、model2vec 与 ONNX 实现 |
+| `mempal-search-core` | 公共 FTS5 query escaping 与 RRF rank-fusion 基础能力 |
+| `mempal-agent-memory` | 公共 agent-memory 领域类型与 anchor helper |
+| `mempal-mcp-protocol` | 公共自描述 `MEMORY_PROTOCOL` 文本 |
 
 关键设计：
 - **model2vec-rs** 默认嵌入——零原生依赖，多语言（BGE-M3 蒸馏）
@@ -247,6 +244,8 @@ mempal compress "Kai recommended Clerk over Auth0 based on pricing and DX"
 - **软删除** + 审计日志——`mempal delete` + `mempal purge`
 - **重要性排序**——drawer 有 0-5 重要性评分，wake-up 按重要性排序
 - **语义去重**——ingest 时检测相似内容，warning 但不阻塞
+- **公共 workspace crates**——可复用库在同一 repo/workspace 内维护并以 versioned crates 发布，
+  `cargo install mempal` 继续作为 CLI 安装路径
 
 ## 开发
 

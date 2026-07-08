@@ -1,0 +1,15 @@
+[package]
+name = "mempal-mcp-protocol"
+version = "0.8.0"
+edition = "2024"
+license = "MIT"
+description = "Self-describing MCP memory protocol text for mempal agents."
+repository = "https://github.com/ZhangHanDong/mempal"
+homepage = "https://github.com/ZhangHanDong/mempal"
+documentation = "https://docs.rs/mempal-mcp-protocol"
+rust-version = "1.85"
+readme = "../../README.md"
+keywords = ["mcp", "agents", "memory", "protocol", "mempal"]
+categories = ["development-tools"]
+
+[dependencies]
