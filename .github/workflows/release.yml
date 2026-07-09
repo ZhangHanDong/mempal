@@ -36,8 +36,8 @@ jobs:
       - name: cargo build --workspace --release --all-features
         run: cargo build --workspace --release --all-features
 
-      - name: Package crate
-        run: cargo package --locked
+      - name: Package crates
+        run: cargo package --workspace --locked
 
       - name: Collect release binary
         run: |

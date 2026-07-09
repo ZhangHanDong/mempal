@@ -24,13 +24,13 @@ Before using the CLI, keep four nouns straight:
 Install the latest released CLI from crates.io:
 
 ```bash
-cargo install mempal --version 0.8.0 --locked
+cargo install mempal --version 0.9.0 --locked
 ```
 
 Install with REST support:
 
 ```bash
-cargo install mempal --version 0.8.0 --locked --features rest
+cargo install mempal --version 0.9.0 --locked --features rest
 ```
 
 For development without installation:
