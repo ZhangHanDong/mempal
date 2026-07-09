@@ -155,12 +155,19 @@ fn extract_message(val: &Value) -> Option<PeekMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    fn fixture_path(relative: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("tests/fixtures/cowork")
+            .join(relative)
+    }
 
     #[test]
     fn reads_plain_text_and_structured_content() {
-        let fixture = Path::new("tests/fixtures/cowork/claude/session.jsonl");
-        let (messages, truncated) = parse_jsonl_messages(fixture, None, 30).expect("parse");
+        let fixture = fixture_path("claude/session.jsonl");
+        let (messages, truncated) = parse_jsonl_messages(&fixture, None, 30).expect("parse");
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].text, "Hello from user turn 1");
@@ -173,8 +180,8 @@ mod tests {
 
     #[test]
     fn filters_tool_use_blocks_and_is_meta_entries() {
-        let fixture = Path::new("tests/fixtures/cowork/claude/session_with_tools.jsonl");
-        let (messages, _) = parse_jsonl_messages(fixture, None, 30).expect("parse");
+        let fixture = fixture_path("claude/session_with_tools.jsonl");
+        let (messages, _) = parse_jsonl_messages(&fixture, None, 30).expect("parse");
         // Expected: u1 ("User turn with tool"), a1 ("Let me check"),
         //           a2 ("Here is the listing"), u4 ("Follow-up question")
         // Skipped:  u2 (only tool_result — no text block), u3 (isMeta:true)
@@ -193,8 +200,8 @@ mod tests {
 
     #[test]
     fn honors_limit_by_taking_tail_and_sets_truncated() {
-        let fixture = Path::new("tests/fixtures/cowork/claude/session.jsonl");
-        let (messages, truncated) = parse_jsonl_messages(fixture, None, 2).expect("parse");
+        let fixture = fixture_path("claude/session.jsonl");
+        let (messages, truncated) = parse_jsonl_messages(&fixture, None, 2).expect("parse");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].text, "Second user message");
         assert_eq!(messages[1].text, "Second assistant reply");
@@ -211,9 +218,9 @@ mod tests {
         // With a naive lexicographic string compare, `"...01:00:00Z"`,
         // `"...02:30:00Z"`, `"...05:00:00Z"` are all textually less than
         // `"...10:00:00+08:00"`, so the broken implementation drops all 3.
-        let fixture = Path::new("tests/fixtures/cowork/claude_since/session.jsonl");
+        let fixture = fixture_path("claude_since/session.jsonl");
         let since = Some("2026-04-13T10:00:00+08:00");
-        let (messages, _) = parse_jsonl_messages(fixture, since, 30).expect("parse");
+        let (messages, _) = parse_jsonl_messages(&fixture, since, 30).expect("parse");
         assert_eq!(
             messages.len(),
             2,

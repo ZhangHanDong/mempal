@@ -48,6 +48,14 @@ still owns the installable CLI binary, while reusable public crates live under
 - `mempal-search-core`: FTS5 query escaping and RRF rank fusion
 - `mempal-agent-memory`: memory domain types and anchor helpers
 - `mempal-mcp-protocol`: self-describing MCP protocol text
+- `mempal-store-sqlite`: SQLite schema, migrations, `Database`, FTS5, sqlite-vec, KG, tunnels, cards, and adoption tables
+- `mempal-runtime`: ingest, search orchestration, context, brief, knowledge, factcheck, projects, cowork, doctor, and AAAK workflows
+- `mempal-mcp-server`: MCP server adapter and tool wiring
+
+The split is intentionally coarse. The root `mempal` package remains the
+installable CLI/REST facade, and feature families such as knowledge, cowork,
+context, and factcheck stay grouped under `mempal-runtime` instead of becoming
+separate crates.
 
 ## Configuration
 

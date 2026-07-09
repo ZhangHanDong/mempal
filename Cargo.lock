@@ -1539,7 +1539,10 @@ dependencies = [
  "mempal-agent-memory",
  "mempal-embed",
  "mempal-mcp-protocol",
+ "mempal-mcp-server",
+ "mempal-runtime",
  "mempal-search-core",
+ "mempal-store-sqlite",
  "reqwest",
  "rmcp",
  "rusqlite",
@@ -1584,8 +1587,64 @@ name = "mempal-mcp-protocol"
 version = "0.8.0"
 
 [[package]]
+name = "mempal-mcp-server"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "mempal-runtime",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "mempal-runtime"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bimap",
+ "clap",
+ "ignore",
+ "jieba-rs",
+ "mempal-agent-memory",
+ "mempal-embed",
+ "mempal-mcp-protocol",
+ "mempal-search-core",
+ "mempal-store-sqlite",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+]
+
+[[package]]
 name = "mempal-search-core"
 version = "0.8.0"
+
+[[package]]
+name = "mempal-store-sqlite"
+version = "0.8.0"
+dependencies = [
+ "mempal-agent-memory",
+ "mempal-search-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlite-vec",
+ "thiserror",
+]
 
 [[package]]
 name = "mime"

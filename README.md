@@ -267,11 +267,14 @@ Chinese text uses jieba-rs POS tagging for proper word segmentation.
 
 | Crate | Responsibility |
 |-------|---------------|
-| `mempal` | Installable CLI + MCP/REST server, SQLite storage, ingest, context, KG, cowork orchestration |
+| `mempal` | Installable CLI package, REST entrypoint, and legacy facade paths |
 | `mempal-embed` | Public `Embedder` / `EmbedderFactory` traits, API embedder, model2vec and ONNX implementations |
 | `mempal-search-core` | Public FTS5 query escaping and RRF rank-fusion primitives |
 | `mempal-agent-memory` | Public agent-memory domain types and anchor helpers |
 | `mempal-mcp-protocol` | Public self-describing `MEMORY_PROTOCOL` text |
+| `mempal-store-sqlite` | Public SQLite storage layer: schema, migrations, `Database`, FTS5, sqlite-vec, KG, tunnels, cards, adoption tables |
+| `mempal-runtime` | Public runtime workflows: ingest, search orchestration, context, brief, knowledge, factcheck, projects, cowork, doctor, AAAK |
+| `mempal-mcp-server` | Public MCP server adapter and tool wiring for the runtime |
 
 Key design choices:
 - **model2vec-rs** default embedder — zero native deps, multilingual (BGE-M3 distilled)
@@ -281,7 +284,10 @@ Key design choices:
 - **Importance ranking** — drawers have 0-5 importance, wake-up sorts by importance
 - **Semantic dedup** — ingest warns (doesn't block) when similar content exists
 - **Public workspace crates** — reusable libraries are maintained in this repo and
-  published as versioned crates while `cargo install mempal` remains the CLI path
+  published as versioned crates while `cargo install mempal` remains the CLI path.
+  P114 keeps the split coarse: storage, runtime, and MCP server are separate
+  crates, but feature families such as knowledge, cowork, and context remain in
+  `mempal-runtime`.
 
 ## Development
 
