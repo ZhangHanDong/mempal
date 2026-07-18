@@ -50,6 +50,7 @@ pub struct SearchRequest {
     pub room: Option<String>,
 
     /// Maximum number of results to return. Defaults to 10 when omitted.
+    #[schemars(with = "Option<i64>")]
     pub top_k: Option<usize>,
 
     /// Optional memory kind filter (`evidence` or `knowledge`).
@@ -87,9 +88,11 @@ pub struct ContextRequest {
     pub cwd: Option<String>,
     pub include_evidence: Option<bool>,
     pub include_cards: Option<bool>,
+    #[schemars(with = "Option<i64>")]
     pub max_items: Option<usize>,
     /// Maximum number of `dao_tian` items to include. Defaults to 1; 0 disables
     /// the `dao_tian` section while preserving lower-tier context.
+    #[schemars(with = "Option<i64>")]
     pub dao_tian_limit: Option<usize>,
     /// P106: include the read-only `distill_suggestions` signal. Defaults to
     /// true; set false to omit it. Never changes the assembled sections.
@@ -111,6 +114,7 @@ pub struct ContextResponse {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DistillSuggestionDto {
     pub field: String,
+    #[schemars(with = "i64")]
     pub evidence_count: usize,
     pub sample_evidence_drawer_ids: Vec<String>,
     pub suggested_tier: String,
@@ -133,6 +137,7 @@ pub struct DoctorRequest {}
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DoctorResponse {
     pub current_version: String,
+    #[schemars(with = "i64")]
     pub supported_schema_version: u32,
     pub db: DoctorDbDto,
     pub install: DoctorInstallDto,
@@ -145,6 +150,7 @@ pub struct DoctorResponse {
 pub struct DoctorDbDto {
     pub path: String,
     pub exists: bool,
+    #[schemars(with = "Option<i64>")]
     pub schema_version: Option<u32>,
     pub compatible: bool,
     pub error: Option<String>,
@@ -176,7 +182,9 @@ pub struct BriefMcpRequest {
     pub field: Option<String>,
     pub domain: Option<String>,
     pub cwd: Option<String>,
+    #[schemars(with = "Option<i64>")]
     pub max_items: Option<usize>,
+    #[schemars(with = "Option<i64>")]
     pub dao_tian_limit: Option<usize>,
 }
 
@@ -198,10 +206,15 @@ pub struct BriefMcpResponse {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct BriefSummaryDto {
     pub narrative: String,
+    #[schemars(with = "i64")]
     pub key_fact_count: usize,
+    #[schemars(with = "i64")]
     pub evidence_count: usize,
+    #[schemars(with = "i64")]
     pub card_count: usize,
+    #[schemars(with = "i64")]
     pub unresolved_count: usize,
+    #[schemars(with = "i64")]
     pub uncertainty_count: usize,
 }
 
@@ -407,8 +420,11 @@ pub struct KnowledgeGateResponse {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct KnowledgeGateRequirementsDto {
+    #[schemars(with = "i64")]
     pub min_supporting_refs: usize,
+    #[schemars(with = "i64")]
     pub min_verification_refs: usize,
+    #[schemars(with = "i64")]
     pub min_teaching_refs: usize,
     pub reviewer_required: bool,
     pub counterexamples_block: bool,
@@ -416,9 +432,13 @@ pub struct KnowledgeGateRequirementsDto {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct KnowledgeGateEvidenceCountsDto {
+    #[schemars(with = "i64")]
     pub supporting: usize,
+    #[schemars(with = "i64")]
     pub counterexample: usize,
+    #[schemars(with = "i64")]
     pub teaching: usize,
+    #[schemars(with = "i64")]
     pub verification: usize,
 }
 
@@ -454,7 +474,9 @@ pub struct KnowledgeCardsRequest {
     pub anchor_kind: Option<String>,
     pub anchor_id: Option<String>,
     pub cwd: Option<String>,
+    #[schemars(with = "Option<i64>")]
     pub top_k: Option<usize>,
+    #[schemars(with = "Option<i64>")]
     pub evidence_top_k: Option<usize>,
 }
 
@@ -510,6 +532,7 @@ pub struct Phase3Request {
     pub note: Option<String>,
     #[schemars(schema_with = "free_form_object_schema")]
     pub metadata: Option<serde_json::Value>,
+    #[schemars(with = "Option<i64>")]
     pub limit: Option<usize>,
     pub candidate: Option<String>,
     #[schemars(schema_with = "free_form_object_schema")]
@@ -559,6 +582,7 @@ pub struct Phase3Response {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RuntimeAdoptionAnalyticsDto {
     pub writes: bool,
+    #[schemars(with = "i64")]
     pub total_events: usize,
     pub groups: Vec<RuntimeAdoptionAnalyticsGroupDto>,
 }
@@ -567,19 +591,28 @@ pub struct RuntimeAdoptionAnalyticsDto {
 pub struct RuntimeAdoptionAnalyticsGroupDto {
     pub track: String,
     pub feature: String,
+    #[schemars(with = "i64")]
     pub total: usize,
+    #[schemars(with = "i64")]
     pub used: usize,
+    #[schemars(with = "i64")]
     pub accepted: usize,
+    #[schemars(with = "i64")]
     pub rejected: usize,
+    #[schemars(with = "i64")]
     pub misses: usize,
+    #[schemars(with = "i64")]
     pub rollbacks: usize,
+    #[schemars(with = "i64")]
     pub contradictions: usize,
+    #[schemars(with = "i64")]
     pub neutral: usize,
     pub recommendation: String,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RuntimeAdoptionGuidanceDto {
+    #[schemars(with = "i64")]
     pub version: u32,
     pub recording_rule: String,
     pub required_fields: Vec<String>,
@@ -603,6 +636,7 @@ pub struct RuntimeAdoptionTrackGuidanceDto {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RuntimeAdoptionInstrumentationPolicyDto {
+    #[schemars(with = "i64")]
     pub version: u32,
     pub writes: bool,
     pub default_mode: String,
@@ -648,6 +682,7 @@ pub struct RuntimeAdoptionCheckedRecordDto {
 pub struct RuntimeAdoptionReviewReportDto {
     pub writes: bool,
     pub filters: RuntimeAdoptionReviewFiltersDto,
+    #[schemars(with = "i64")]
     pub total: usize,
     pub stats: RuntimeAdoptionSignalCountsDto,
     pub features: Vec<RuntimeAdoptionFeatureReviewDto>,
@@ -660,18 +695,27 @@ pub struct RuntimeAdoptionReviewFiltersDto {
     pub track: Option<String>,
     pub feature: Option<String>,
     pub signal: Option<String>,
+    #[schemars(with = "i64")]
     pub limit: usize,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RuntimeAdoptionSignalCountsDto {
+    #[schemars(with = "i64")]
     pub total: usize,
+    #[schemars(with = "i64")]
     pub used: usize,
+    #[schemars(with = "i64")]
     pub accepted: usize,
+    #[schemars(with = "i64")]
     pub rejected: usize,
+    #[schemars(with = "i64")]
     pub misses: usize,
+    #[schemars(with = "i64")]
     pub rollbacks: usize,
+    #[schemars(with = "i64")]
     pub contradictions: usize,
+    #[schemars(with = "i64")]
     pub neutral: usize,
 }
 
@@ -956,13 +1000,21 @@ pub struct RuntimeAdoptionEventDto {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct RuntimeAdoptionStatsDto {
+    #[schemars(with = "i64")]
     pub total: usize,
+    #[schemars(with = "i64")]
     pub used: usize,
+    #[schemars(with = "i64")]
     pub accepted: usize,
+    #[schemars(with = "i64")]
     pub rejected: usize,
+    #[schemars(with = "i64")]
     pub misses: usize,
+    #[schemars(with = "i64")]
     pub rollbacks: usize,
+    #[schemars(with = "i64")]
     pub contradictions: usize,
+    #[schemars(with = "i64")]
     pub neutral: usize,
 }
 
@@ -980,8 +1032,11 @@ pub struct ResearchAdapterPlanDto {
     pub valid: bool,
     pub report_id: String,
     pub title: String,
+    #[schemars(with = "i64")]
     pub source_count: usize,
+    #[schemars(with = "i64")]
     pub finding_count: usize,
+    #[schemars(with = "i64")]
     pub candidate_insight_count: usize,
     pub errors: Vec<String>,
 }
@@ -992,11 +1047,17 @@ pub struct ResearchIngestPlanDto {
     pub writes: bool,
     pub report_id: String,
     pub title: String,
+    #[schemars(with = "i64")]
     pub source_count: usize,
+    #[schemars(with = "i64")]
     pub finding_count: usize,
+    #[schemars(with = "i64")]
     pub candidate_insight_count: usize,
+    #[schemars(with = "i64")]
     pub planned_evidence_count: usize,
+    #[schemars(with = "i64")]
     pub created_count: usize,
+    #[schemars(with = "i64")]
     pub skipped_count: usize,
     pub errors: Vec<String>,
     pub evidence_drawers: Vec<ResearchEvidenceDrawerPlanDto>,
@@ -1006,6 +1067,7 @@ pub struct ResearchIngestPlanDto {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ResearchEvidenceDrawerPlanDto {
     pub drawer_id: String,
+    #[schemars(with = "i64")]
     pub finding_index: usize,
     pub source_file: String,
     pub created: bool,
@@ -1322,6 +1384,7 @@ pub struct SearchResultDto {
     /// Emotion tags derived from AAAK analysis. Always non-empty.
     pub emotions: Vec<String>,
     /// Importance derived from AAAK flags, normalized to the existing 2-4 scale.
+    #[schemars(with = "i64")]
     pub importance_stars: u8,
     pub memory_kind: String,
     pub domain: String,
@@ -1350,6 +1413,7 @@ pub struct ChunkNeighborsDto {
 pub struct NeighborChunkDto {
     pub drawer_id: String,
     pub content: String,
+    #[schemars(with = "i64")]
     pub chunk_index: u32,
 }
 
@@ -1458,6 +1522,7 @@ pub struct IngestResponse {
     /// Omitted in dry-run and when lock was not acquired. When > 0, a
     /// concurrent ingest of the same content serialized with this call.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
     pub lock_wait_ms: Option<u64>,
 }
 
@@ -1604,6 +1669,7 @@ pub struct TunnelsRequest {
     /// Filter for list: "passive", "explicit", or "all" (default).
     pub kind: Option<String>,
     /// Follow depth. Must be 1 or 2. Defaults to 1.
+    #[schemars(with = "Option<i64>")]
     pub max_hops: Option<u8>,
 }
 
@@ -1640,6 +1706,7 @@ pub struct TunnelDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub via_tunnel_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<i64>")]
     pub hop: Option<u8>,
 }
 
@@ -1672,6 +1739,7 @@ pub struct PeekPartnerRequest {
     pub tool: String,
 
     /// Maximum number of user+assistant messages to return. Default 30.
+    #[schemars(with = "Option<i64>")]
     pub limit: Option<usize>,
 
     /// Optional RFC3339 timestamp cutoff — only messages strictly newer than
@@ -1692,6 +1760,7 @@ pub struct SessionPeekRequest {
     pub tool: String,
 
     /// Maximum number of user+assistant messages to return. Default 30.
+    #[schemars(with = "Option<i64>")]
     pub limit: Option<usize>,
 
     /// Optional RFC3339 timestamp cutoff — only messages strictly newer than
@@ -1716,8 +1785,10 @@ pub struct ResumeRequest {
     /// Project name or fragment; matches a wing or a worktree-path basename.
     pub query: String,
     /// Recent evidence drawers to include (default 5).
+    #[schemars(with = "Option<i64>")]
     pub evidence_limit: Option<usize>,
     /// In-flight candidate knowledge drawers to include (default 5).
+    #[schemars(with = "Option<i64>")]
     pub candidate_limit: Option<usize>,
 }
 
@@ -1827,6 +1898,7 @@ pub struct CoworkPushResponse {
     pub target_tool: String,
     pub inbox_path: String,
     pub pushed_at: String,
+    #[schemars(with = "i64")]
     pub inbox_size_after: u64,
 }
 
@@ -1886,6 +1958,7 @@ pub struct CoworkBusRequest {
 
     /// Optional max number of latest events for action "events".
     #[serde(default)]
+    #[schemars(with = "Option<i64>")]
     pub limit: Option<usize>,
 
     /// Optional RFC3339 timestamp for deterministic list presence checks.
@@ -1898,6 +1971,7 @@ pub struct CoworkBusRequest {
 
     /// Optional line count for action "tmux_peek".
     #[serde(default)]
+    #[schemars(with = "Option<i64>")]
     pub lines: Option<usize>,
 
     /// Optional tmux reachability probe for action "doctor".
@@ -1971,7 +2045,9 @@ pub struct CoworkBusAgentDto {
     pub updated_at: String,
     pub last_seen_at: Option<String>,
     pub presence: String,
+    #[schemars(with = "i64")]
     pub pending_count: usize,
+    #[schemars(with = "i64")]
     pub pending_bytes: u64,
 }
 
@@ -1981,6 +2057,7 @@ pub struct CoworkBusDeliveryDto {
     pub target_agent_id: String,
     pub transport: String,
     pub inbox_path: Option<String>,
+    #[schemars(with = "Option<i64>")]
     pub inbox_size_after: Option<u64>,
     pub tmux_target: Option<String>,
     pub thread_id: Option<String>,
@@ -2038,6 +2115,7 @@ pub struct CoworkBusChannelDto {
 pub struct CoworkBusTmuxPeekDto {
     pub agent_id: String,
     pub tmux_target: String,
+    #[schemars(with = "i64")]
     pub lines: usize,
     pub content: String,
 }
@@ -2045,11 +2123,17 @@ pub struct CoworkBusTmuxPeekDto {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct CoworkBusDoctorDto {
     pub status: String,
+    #[schemars(with = "i64")]
     pub agent_count: usize,
+    #[schemars(with = "i64")]
     pub channel_count: usize,
+    #[schemars(with = "i64")]
     pub session_count: usize,
+    #[schemars(with = "i64")]
     pub stale_agents: usize,
+    #[schemars(with = "i64")]
     pub never_seen_agents: usize,
+    #[schemars(with = "i64")]
     pub pending_deliveries: usize,
     pub warnings: Vec<String>,
     pub tmux: Vec<CoworkBusTmuxProbeDto>,
@@ -2090,6 +2174,7 @@ pub struct CoworkBusHandoffFiltersDto {
     pub thread_id: Option<String>,
     pub channel: Option<String>,
     pub session_id: Option<String>,
+    #[schemars(with = "i64")]
     pub limit: usize,
 }
 
@@ -2098,6 +2183,7 @@ pub struct CoworkBusHandoffAgentDto {
     pub agent_id: String,
     pub tool: String,
     pub presence: String,
+    #[schemars(with = "i64")]
     pub pending_count: usize,
 }
 
@@ -2129,6 +2215,7 @@ pub struct FactCheckRequest {
 pub struct FactCheckResponse {
     pub issues: Vec<crate::factcheck::FactIssue>,
     pub checked_entities: Vec<String>,
+    #[schemars(with = "i64")]
     pub kg_triples_scanned: usize,
 }
 
