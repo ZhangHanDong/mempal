@@ -2627,7 +2627,7 @@ mod tests {
         SearchResult,
     };
 
-    use super::{SearchResultDto, StatusResponse};
+    use super::{RouteDecisionDto, SearchResponse, SearchResultDto, StatusResponse};
 
     fn sample_result(content: &str) -> SearchResult {
         SearchResult {
@@ -2695,6 +2695,91 @@ mod tests {
         let json = serde_json::to_value(&dto).expect("serialize dto");
 
         assert_eq!(json["tunnel_hints"], serde_json::json!([]));
+    }
+
+    /// 固化搜索结果 schema 必须要求返回 tunnel_hints 字段。
+    #[test]
+    fn test_search_result_tunnel_hints_is_schema_required() {
+        // 按客户端看到的 SearchResponse schema 定位 results 数组元素定义。
+        let schema = serde_json::to_value(rmcp::schemars::schema_for!(SearchResponse))
+            .expect("serialize search response schema");
+        let item_ref = schema
+            .pointer("/properties/results/items/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("results item schema ref");
+        let item_schema = schema
+            .pointer(item_ref.strip_prefix('#').expect("local schema ref"))
+            .expect("search result item schema");
+        let required = item_schema["required"]
+            .as_array()
+            .expect("search result required properties");
+
+        assert!(
+            required
+                .iter()
+                .any(|property| property.as_str() == Some("tunnel_hints")),
+            "search result schema must require tunnel_hints: {item_schema}"
+        );
+    }
+
+    /// 模拟 Ajv 校验，确保 schema 要求的搜索结果字段始终被序列化。
+    #[test]
+    fn test_search_response_required_props_always_serialized() {
+        // 覆盖所有 Vec 为空且所有 Option 为 None 的最小搜索结果。
+        let dto = SearchResultDto {
+            drawer_id: String::new(),
+            content: String::new(),
+            wing: String::new(),
+            room: None,
+            source_file: String::new(),
+            similarity: 0.0,
+            route: RouteDecisionDto {
+                wing: None,
+                room: None,
+                confidence: 0.0,
+                reason: String::new(),
+            },
+            tunnel_hints: Vec::new(),
+            neighbors: None,
+            entities: Vec::new(),
+            topics: Vec::new(),
+            flags: Vec::new(),
+            emotions: Vec::new(),
+            importance_stars: 0,
+            memory_kind: String::new(),
+            domain: String::new(),
+            field: String::new(),
+            statement: None,
+            tier: None,
+            status: None,
+            anchor_kind: String::new(),
+            anchor_id: String::new(),
+            parent_anchor_id: None,
+        };
+        // 读取客户端契约中的 required 列表，并与实际 structured content 对照。
+        let schema = serde_json::to_value(rmcp::schemars::schema_for!(SearchResponse))
+            .expect("serialize search response schema");
+        let item_ref = schema
+            .pointer("/properties/results/items/$ref")
+            .and_then(serde_json::Value::as_str)
+            .expect("results item schema ref");
+        let item_schema = schema
+            .pointer(item_ref.strip_prefix('#').expect("local schema ref"))
+            .expect("search result item schema");
+        let required = item_schema["required"]
+            .as_array()
+            .expect("search result required properties");
+        let json = serde_json::to_value(&dto).expect("serialize search result");
+        let object = json.as_object().expect("search result object");
+
+        for property in required {
+            // 每个 required 属性都必须出现在实际 JSON 对象中，即使值为空。
+            let property_name = property.as_str().expect("required property name");
+            assert!(
+                object.contains_key(property_name),
+                "required property `{property_name}` missing from serialized search result: {json}"
+            );
+        }
     }
 
     #[test]
