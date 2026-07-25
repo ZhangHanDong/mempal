@@ -174,37 +174,70 @@ fn collect_messages_dfs(
 }
 
 fn normalize_codex_jsonl(content: &str, strip_noise: bool) -> Result<NormalizeOutput> {
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    let mut noise_bytes_stripped = 0_u64;
+    let mut response_items: Vec<(String, String)> = Vec::new();
+    let mut legacy_events: Vec<(String, String)> = Vec::new();
 
     for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let value: Value = serde_json::from_str(line)?;
-        if value.get("type").and_then(Value::as_str) != Some("event_msg") {
-            continue;
-        }
+        let record_type = value.get("type").and_then(Value::as_str).unwrap_or("");
         let Some(payload) = value.get("payload") else {
             continue;
         };
-        let msg_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
-        let message = payload
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
-        let message = if strip_noise {
+        match record_type {
+            "response_item" => {
+                if payload.get("type").and_then(Value::as_str) != Some("message") {
+                    continue;
+                }
+
+                let role = payload.get("role").and_then(Value::as_str).unwrap_or("");
+                if role != "user" && role != "assistant" {
+                    continue;
+                }
+
+                let Some(message) = payload.get("content").and_then(extract_content_text) else {
+                    continue;
+                };
+                let message = message.trim();
+                if message.is_empty() {
+                    continue;
+                }
+
+                response_items.push((role.to_string(), message.to_string()));
+            }
+            "event_msg" => {
+                let msg_type = payload.get("type").and_then(Value::as_str).unwrap_or("");
+                let message = payload
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if message.is_empty() {
+                    continue;
+                }
+
+                match msg_type {
+                    "user_message" => legacy_events.push(("user".to_string(), message.to_string())),
+                    "agent_message" => {
+                        legacy_events.push(("assistant".to_string(), message.to_string()))
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut pairs = if response_items.is_empty() {
+        legacy_events
+    } else {
+        response_items
+    };
+    let mut noise_bytes_stripped = 0_u64;
+    if strip_noise {
+        for (_, message) in &mut pairs {
             let stripped = strip_codex_rollout_noise(message);
             noise_bytes_stripped += message.len().saturating_sub(stripped.len()) as u64;
-            stripped
-        } else {
-            message.to_string()
-        };
-        if message.is_empty() {
-            continue;
-        }
-        match msg_type {
-            "user_message" => pairs.push(("user".to_string(), message)),
-            "agent_message" => pairs.push(("assistant".to_string(), message)),
-            _ => {}
+            *message = stripped;
         }
     }
 
@@ -269,4 +302,33 @@ fn render_transcript(items: impl IntoIterator<Item = (String, String)>) -> Strin
     }
 
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_codex_jsonl;
+
+    #[test]
+    fn codex_normalize_prefers_response_item_messages() {
+        let content = r#"{"timestamp":"2026-04-19T10:37:36.000Z","type":"session_meta","payload":{"cwd":"/tmp/project"}}
+{"timestamp":"2026-04-19T10:37:36.050Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer instructions"}]}}
+{"timestamp":"2026-04-19T10:37:36.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"first line"},{"type":"input_text","text":"second line"}]}}
+{"timestamp":"2026-04-19T10:37:36.150Z","type":"event_msg","payload":{"type":"user_message","message":"duplicate legacy user"}}
+{"timestamp":"2026-04-19T10:37:36.200Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}}
+{"timestamp":"2026-04-19T10:37:36.250Z","type":"event_msg","payload":{"type":"agent_message","message":"duplicate legacy assistant"}}
+{"timestamp":"2026-04-19T10:37:36.300Z","type":"compacted","payload":{"summary":"trimmed"}}"#;
+
+        let normalized = normalize_codex_jsonl(content, true).expect("normalize codex");
+        assert_eq!(normalized.content, "> first line\nsecond line\nanswer");
+    }
+
+    #[test]
+    fn codex_normalize_falls_back_to_legacy_event_messages() {
+        let content = r#"{"timestamp":"2026-04-13T12:00:00Z","type":"session_meta","payload":{"cwd":"/tmp/project"}}
+{"timestamp":"2026-04-13T12:00:10Z","type":"event_msg","payload":{"type":"user_message","message":"legacy hello"}}
+{"timestamp":"2026-04-13T12:00:20Z","type":"event_msg","payload":{"type":"agent_message","message":"legacy hi"}}"#;
+
+        let normalized = normalize_codex_jsonl(content, true).expect("normalize codex");
+        assert_eq!(normalized.content, "> legacy hello\nlegacy hi");
+    }
 }
