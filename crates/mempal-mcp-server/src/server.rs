@@ -5018,6 +5018,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_all_tool_schemas_avoid_unsigned_integer_formats() {
+        let (_tempdir, _db_path, server) = setup_server();
+        for tool in server.tool_router.list_all() {
+            let input = serde_json::to_string(&tool.input_schema).expect("serialize input schema");
+            assert!(
+                !input.contains("\"uint"),
+                "tool {} input schema contains unsigned integer format: {input}",
+                tool.name
+            );
+            if let Some(output_schema) = &tool.output_schema {
+                let output =
+                    serde_json::to_string(output_schema).expect("serialize output schema");
+                assert!(
+                    !output.contains("\"uint"),
+                    "tool {} output schema contains unsigned integer format: {output}",
+                    tool.name
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_mcp_doctor_reports_runtime_tools() {
         let (_tempdir, _db_path, server) = setup_server();

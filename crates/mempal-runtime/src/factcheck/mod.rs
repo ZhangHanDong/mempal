@@ -24,6 +24,7 @@ pub enum FactIssue {
     SimilarNameConflict {
         mentioned: String,
         known_entity: String,
+        #[schemars(with = "i64")]
         edit_distance: usize,
     },
     RelationContradiction {
@@ -47,6 +48,7 @@ pub enum FactIssue {
 pub struct FactCheckReport {
     pub issues: Vec<FactIssue>,
     pub checked_entities: Vec<String>,
+    #[schemars(with = "i64")]
     pub kg_triples_scanned: usize,
 }
 
