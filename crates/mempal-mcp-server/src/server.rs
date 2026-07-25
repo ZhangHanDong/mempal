@@ -5029,8 +5029,7 @@ mod tests {
                 tool.name
             );
             if let Some(output_schema) = &tool.output_schema {
-                let output =
-                    serde_json::to_string(output_schema).expect("serialize output schema");
+                let output = serde_json::to_string(output_schema).expect("serialize output schema");
                 assert!(
                     !output.contains("\"uint"),
                     "tool {} output schema contains unsigned integer format: {output}",

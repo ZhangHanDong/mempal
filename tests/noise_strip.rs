@@ -204,7 +204,71 @@ async fn test_normalize_version_bump_triggers_reindex_opportunity() {
         )
         .expect("read normalize_version");
     assert_eq!(version, CURRENT_NORMALIZE_VERSION);
-    assert_eq!(CURRENT_NORMALIZE_VERSION, 2);
+    // P115: PR #7 (response_item preference + shared block-text extraction)
+    // plus the codex wrapper strip changed normalize output; version 3 lets
+    // `reindex --stale` find sources normalized under the old rules.
+    assert_eq!(CURRENT_NORMALIZE_VERSION, 3);
+}
+
+#[test]
+fn test_codex_runtime_preamble_wrappers_stripped() {
+    let content = "<user_instructions>\nAGENTS.md boilerplate\n</user_instructions>\nreal request\n<environment_context>\n<cwd>/tmp/x</cwd>\n</environment_context>\nmore work";
+
+    let stripped = strip_codex_rollout_noise(content);
+
+    assert!(!stripped.contains("AGENTS.md boilerplate"), "{stripped}");
+    assert!(!stripped.contains("user_instructions"), "{stripped}");
+    assert!(!stripped.contains("environment_context"), "{stripped}");
+    assert!(!stripped.contains("<cwd>"), "{stripped}");
+    assert!(stripped.contains("real request"), "{stripped}");
+    assert!(stripped.contains("more work"), "{stripped}");
+}
+
+#[test]
+fn test_codex_all_wrapper_tags_stripped() {
+    for tag in [
+        "INSTRUCTIONS",
+        "user_instructions",
+        "environment_context",
+        "recommended_plugins",
+        "turn_aborted",
+    ] {
+        let content = format!("before\n<{tag}>\nboilerplate payload\n</{tag}>\nafter");
+
+        let stripped = strip_codex_rollout_noise(&content);
+
+        assert!(
+            !stripped.contains("boilerplate payload") && !stripped.contains(tag),
+            "wrapper <{tag}> not stripped: {stripped}"
+        );
+        assert!(stripped.contains("before"), "{stripped}");
+        assert!(stripped.contains("after"), "{stripped}");
+    }
+}
+
+#[test]
+fn test_codex_wrapper_only_message_strips_to_blank() {
+    let content = "<recommended_plugins>\nplugin list here\n</recommended_plugins>";
+
+    let stripped = strip_codex_rollout_noise(content);
+
+    assert!(
+        stripped.trim().is_empty(),
+        "wrapper-only content should strip to blank: {stripped:?}"
+    );
+}
+
+#[test]
+fn test_codex_wrapper_inside_code_fence_preserved() {
+    let content = "```xml\n<environment_context>sample</environment_context>\n```\ndone";
+
+    let stripped = strip_codex_rollout_noise(content);
+
+    assert!(
+        stripped.contains("<environment_context>sample</environment_context>"),
+        "{stripped}"
+    );
+    assert!(stripped.contains("done"), "{stripped}");
 }
 
 #[test]

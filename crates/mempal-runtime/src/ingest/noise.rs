@@ -1,25 +1,55 @@
 use serde_json::Value;
 
-const SYSTEM_REMINDER_OPEN: &str = "<system-reminder>";
-const SYSTEM_REMINDER_CLOSE: &str = "</system-reminder>";
+const SYSTEM_REMINDER_TAG: &str = "system-reminder";
+
+/// Codex runtime preamble wrappers injected as user/developer messages
+/// (issue #10): AGENTS.md instructions, environment context, plugin
+/// recommendations, and turn-abort markers.
+const CODEX_WRAPPER_TAGS: &[&str] = &[
+    "INSTRUCTIONS",
+    "user_instructions",
+    "environment_context",
+    "recommended_plugins",
+    "turn_aborted",
+];
+
+struct MarkerPair {
+    open: String,
+    close: String,
+}
+
+impl MarkerPair {
+    fn for_tag(tag: &str) -> Self {
+        Self {
+            open: format!("<{tag}>"),
+            close: format!("</{tag}>"),
+        }
+    }
+}
 
 pub fn strip_claude_jsonl_noise(content: &str) -> String {
-    let without_system_reminders = strip_system_reminders(content);
+    let markers = [MarkerPair::for_tag(SYSTEM_REMINDER_TAG)];
+    let without_system_reminders = strip_marker_blocks(content, &markers);
     strip_noise_lines(&without_system_reminders, true)
 }
 
 pub fn strip_codex_rollout_noise(content: &str) -> String {
-    strip_noise_lines(content, false)
+    let markers: Vec<MarkerPair> = CODEX_WRAPPER_TAGS
+        .iter()
+        .map(|tag| MarkerPair::for_tag(tag))
+        .collect();
+    let without_wrappers = strip_marker_blocks(content, &markers);
+    strip_noise_lines(&without_wrappers, false)
 }
 
-fn strip_system_reminders(content: &str) -> String {
+fn strip_marker_blocks(content: &str, markers: &[MarkerPair]) -> String {
     let mut output = String::with_capacity(content.len());
     let mut in_code_block = false;
-    let mut skipping_reminder = false;
+    let mut skipping: Option<usize> = None;
 
     for line in content.split_inclusive('\n') {
         let line_without_newline = line.strip_suffix('\n').unwrap_or(line);
-        if !skipping_reminder && is_code_fence(line_without_newline) {
+        if skipping.is_none() && is_code_fence(line_without_newline) {
             in_code_block = !in_code_block;
             output.push_str(line);
             continue;
@@ -29,38 +59,50 @@ fn strip_system_reminders(content: &str) -> String {
             continue;
         }
 
-        output.push_str(&strip_system_reminders_from_line(
-            line,
-            &mut skipping_reminder,
-        ));
+        output.push_str(&strip_marker_blocks_from_line(line, markers, &mut skipping));
     }
 
     output
 }
 
-fn strip_system_reminders_from_line(line: &str, skipping_reminder: &mut bool) -> String {
+fn strip_marker_blocks_from_line(
+    line: &str,
+    markers: &[MarkerPair],
+    skipping: &mut Option<usize>,
+) -> String {
     let mut output = String::new();
     let mut remaining = line;
 
     loop {
-        if *skipping_reminder {
-            let Some(end) = remaining.find(SYSTEM_REMINDER_CLOSE) else {
+        if let Some(active) = *skipping {
+            let close = markers[active].close.as_str();
+            let Some(end) = remaining.find(close) else {
                 return output;
             };
-            remaining = &remaining[end + SYSTEM_REMINDER_CLOSE.len()..];
-            *skipping_reminder = false;
+            remaining = &remaining[end + close.len()..];
+            *skipping = None;
         }
 
-        let Some(start) = remaining.find(SYSTEM_REMINDER_OPEN) else {
+        let earliest_open = markers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, marker)| {
+                remaining
+                    .find(marker.open.as_str())
+                    .map(|position| (position, index))
+            })
+            .min();
+        let Some((start, index)) = earliest_open else {
             output.push_str(remaining);
             return output;
         };
         output.push_str(&remaining[..start]);
-        let after_open = &remaining[start + SYSTEM_REMINDER_OPEN.len()..];
-        if let Some(end) = after_open.find(SYSTEM_REMINDER_CLOSE) {
-            remaining = &after_open[end + SYSTEM_REMINDER_CLOSE.len()..];
+        let marker = &markers[index];
+        let after_open = &remaining[start + marker.open.len()..];
+        if let Some(end) = after_open.find(marker.close.as_str()) {
+            remaining = &after_open[end + marker.close.len()..];
         } else {
-            *skipping_reminder = true;
+            *skipping = Some(index);
             return output;
         }
     }
