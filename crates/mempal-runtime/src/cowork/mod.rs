@@ -8,6 +8,7 @@ pub mod claude;
 pub mod codex;
 pub mod inbox;
 pub mod peek;
+pub mod receipts;
 
 pub use bus::{
     AgentRecord, AgentRegistry, AgentStatus, AgentStatusSummary, BusError, BusEvent,
@@ -17,5 +18,10 @@ pub use bus::{
 };
 pub use inbox::{
     InboxError, InboxMessage, MAX_MESSAGE_SIZE, MAX_PENDING_MESSAGES, MAX_TOTAL_INBOX_BYTES,
+    PushOutcome,
 };
 pub use peek::{PeekError, PeekMessage, PeekRequest, PeekResponse, Tool, peek_partner};
+pub use receipts::{
+    DrainMeta, MAX_RECEIPT_EVENTS, MessageReceiptState, ReceiptEvent, drain_with_receipt,
+    message_states,
+};

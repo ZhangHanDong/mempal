@@ -48,6 +48,72 @@ pub struct InboxMessage {
     pub thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+    /// P116 delivery receipt handle. Absent on pre-P116 inbox lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+}
+
+/// Result of a receipt-tracked push (P116).
+#[derive(Debug, Clone)]
+pub struct PushOutcome {
+    pub inbox_path: PathBuf,
+    pub inbox_size_after: u64,
+    pub message_id: String,
+}
+
+/// Deterministic receipt handle: `msg_` + first 12 hex of SHA-256 over
+/// `pushed_at`, `from`, and `content` (null-byte separated).
+pub fn build_message_id(pushed_at: &str, from: &str, content: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(pushed_at.as_bytes());
+    hasher.update([0]);
+    hasher.update(from.as_bytes());
+    hasher.update([0]);
+    hasher.update(content.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    format!("msg_{}", &digest[..12])
+}
+
+/// Push like [`push`], then best-effort append a `queued` receipt event
+/// (P116). Receipt IO failures never fail the push.
+pub fn push_with_receipt(
+    mempal_home: &Path,
+    caller: Tool,
+    target: Tool,
+    cwd: &Path,
+    content: String,
+    pushed_at: String,
+) -> Result<PushOutcome, InboxError> {
+    let message_id = build_message_id(&pushed_at, caller.dir_name(), &content);
+    let (inbox_path, inbox_size_after) = push_message(
+        mempal_home,
+        caller,
+        target,
+        cwd,
+        content,
+        pushed_at.clone(),
+        Some(message_id.clone()),
+    )?;
+
+    let event = super::receipts::ReceiptEvent {
+        event: super::receipts::EVENT_QUEUED.to_string(),
+        message_id: Some(message_id.clone()),
+        from: caller.dir_name().to_string(),
+        to: target.dir_name().to_string(),
+        at: pushed_at,
+        injected_as: None,
+        hook_runtime: None,
+    };
+    // Receipts are observability; never fail the push over them.
+    let _ = super::receipts::append_event(mempal_home, cwd, &event);
+
+    Ok(PushOutcome {
+        inbox_path,
+        inbox_size_after,
+        message_id,
+    })
 }
 
 /// Resolve ~/.mempal using the HOME env var. Matches the existing
@@ -117,6 +183,19 @@ pub fn push(
     content: String,
     pushed_at: String,
 ) -> Result<(PathBuf, u64), InboxError> {
+    push_message(mempal_home, caller, target, cwd, content, pushed_at, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_message(
+    mempal_home: &Path,
+    caller: Tool,
+    target: Tool,
+    cwd: &Path,
+    content: String,
+    pushed_at: String,
+    message_id: Option<String>,
+) -> Result<(PathBuf, u64), InboxError> {
     use std::fs;
     use std::io::Write;
 
@@ -149,6 +228,7 @@ pub fn push(
         content,
         thread_id: None,
         channel: None,
+        message_id,
     };
     let line = serde_json::to_string(&msg)?;
     // writeln! appends exactly 1 byte for `\n`
@@ -433,6 +513,7 @@ mod tests {
             content: String::new(),
             thread_id: None,
             channel: None,
+            message_id: None,
         };
         let empty_line_bytes = serde_json::to_string(&probe).unwrap().len() + 1;
         assert!(
@@ -512,6 +593,7 @@ mod tests {
             content: String::new(),
             thread_id: None,
             channel: None,
+            message_id: None,
         };
         let probe_empty_line_bytes = serde_json::to_string(&probe).unwrap().len() as u64 + 1;
 
@@ -752,6 +834,7 @@ mod tests {
                 content: "first".into(),
                 thread_id: None,
                 channel: None,
+                message_id: None,
             },
             InboxMessage {
                 pushed_at: "2026-04-15T01:01:00Z".into(),
@@ -759,6 +842,7 @@ mod tests {
                 content: "second".into(),
                 thread_id: None,
                 channel: None,
+                message_id: None,
             },
         ];
         let out = format_plain(Tool::Codex, &msgs);
@@ -777,6 +861,7 @@ mod tests {
             content: "test\nwith\nnewlines and \"quotes\"".into(),
             thread_id: None,
             channel: None,
+            message_id: None,
         }];
         let out = format_codex_hook_json(Tool::Claude, &msgs).unwrap();
 

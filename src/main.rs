@@ -308,12 +308,32 @@ enum Commands {
         /// or "codex-hook-json" for Codex native hook envelope.
         #[arg(long, default_value = "plain")]
         format: String,
+
+        /// Optional hook runtime label recorded in delivery receipts
+        /// (e.g. "claude UserPromptSubmit"). P116.
+        #[arg(long)]
+        hook_runtime: Option<String>,
     },
     /// Show current cowork inbox state for both targets at the given cwd
     /// (read-only — does NOT drain).
     CoworkStatus {
         #[arg(long)]
         cwd: PathBuf,
+    },
+    /// Show pair-push delivery receipts for the given cwd: per-message
+    /// pending / drained / lost states derived from the receipts log (P116,
+    /// read-only).
+    CoworkReceipts {
+        #[arg(long)]
+        cwd: PathBuf,
+
+        /// Maximum number of messages to show (newest first).
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Output format: "plain" or "json".
+        #[arg(long, default_value = "plain")]
+        format: String,
     },
     /// Print the multi-agent cowork runbook.
     CoworkRunbook {
@@ -1269,11 +1289,15 @@ async fn run() -> Result<()> {
             cwd,
             cwd_source,
             format,
+            hook_runtime,
         } => {
-            return cowork_drain_command(target, cwd, cwd_source, format);
+            return cowork_drain_command(target, cwd, cwd_source, format, hook_runtime);
         }
         Commands::CoworkStatus { cwd } => {
             return cowork_status_command(cwd);
+        }
+        Commands::CoworkReceipts { cwd, limit, format } => {
+            return cowork_receipts_command(cwd, limit, format);
         }
         Commands::CoworkRunbook { format } => {
             return static_runbook_command(
@@ -1661,6 +1685,7 @@ async fn run() -> Result<()> {
         // Cowork commands were already dispatched above and returned early.
         Commands::CoworkDrain { .. }
         | Commands::CoworkStatus { .. }
+        | Commands::CoworkReceipts { .. }
         | Commands::CoworkRunbook { .. }
         | Commands::CoworkInstallHooks { .. }
         | Commands::CoworkRegister { .. }
@@ -6828,9 +6853,11 @@ fn cowork_drain_command(
     cwd: Option<PathBuf>,
     cwd_source: Option<String>,
     format: String,
+    hook_runtime: Option<String>,
 ) -> Result<()> {
     use mempal::cowork::Tool;
     use mempal::cowork::inbox;
+    use mempal::cowork::receipts::{self, DrainMeta};
 
     let inner: Result<(), Box<dyn std::error::Error>> = (|| {
         let target_tool = Tool::from_target_str(&target)
@@ -6857,7 +6884,13 @@ fn cowork_drain_command(
             (Some(_), Some(_)) => unreachable!("clap conflicts_with prevents this"),
         };
 
-        let messages = inbox::drain(&mempal_home, target_tool, &resolved_cwd)?;
+        let meta = DrainMeta {
+            injected_as: format.clone(),
+            hook_runtime,
+            drained_at: mempal::cowork::peek::format_rfc3339(std::time::SystemTime::now()),
+        };
+        let messages =
+            receipts::drain_with_receipt(&mempal_home, target_tool, &resolved_cwd, &meta)?;
         if messages.is_empty() {
             return Ok(());
         }
@@ -6915,6 +6948,74 @@ fn cowork_status_command(cwd: PathBuf) -> Result<()> {
                 println!("  from {} @ {}: {}", msg.from, msg.pushed_at, msg.content);
             }
         }
+    }
+
+    // P116 receipts summary — derived, read-only.
+    if let Ok(states) = mempal::cowork::receipts::message_states(&mempal_home, &cwd) {
+        let count_of = |status: &str| states.iter().filter(|s| s.status == status).count();
+        println!();
+        println!(
+            "receipts: {} pending, {} drained, {} lost (see `mempal cowork-receipts --cwd {}`)",
+            count_of("pending"),
+            count_of("drained"),
+            count_of("lost"),
+            cwd.display()
+        );
+    }
+    Ok(())
+}
+
+/// `mempal cowork-receipts` — P116 read-only delivery receipt view for the
+/// pair-push channel: joins queued/drained events with the live inboxes.
+fn cowork_receipts_command(cwd: PathBuf, limit: Option<usize>, format: String) -> Result<()> {
+    use mempal::cowork::inbox;
+    use mempal::cowork::receipts;
+
+    let mempal_home = inbox::mempal_home();
+    let mut states = receipts::message_states(&mempal_home, &cwd)
+        .map_err(|e| anyhow::anyhow!("cowork-receipts: {e}"))?;
+    if let Some(limit) = limit {
+        states.truncate(limit);
+    }
+
+    match format.as_str() {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&states)?);
+        }
+        "plain" => {
+            if states.is_empty() {
+                println!("no delivery receipts for {}", cwd.display());
+                return Ok(());
+            }
+            let count_of = |status: &str| states.iter().filter(|s| s.status == status).count();
+            println!(
+                "{} message{} ({} pending, {} drained, {} lost)",
+                states.len(),
+                if states.len() == 1 { "" } else { "s" },
+                count_of("pending"),
+                count_of("drained"),
+                count_of("lost"),
+            );
+            for state in &states {
+                let id = state.message_id.as_deref().unwrap_or("<pre-P116>");
+                let queued = state.queued_at.as_deref().unwrap_or("-");
+                let mut line = format!(
+                    "{:8} {} {} -> {} queued={}",
+                    state.status, id, state.from, state.to, queued
+                );
+                if let Some(drained_at) = &state.drained_at {
+                    line.push_str(&format!(" drained={drained_at}"));
+                }
+                if let Some(injected_as) = &state.injected_as {
+                    line.push_str(&format!(" injected_as={injected_as}"));
+                }
+                if let Some(hook_runtime) = &state.hook_runtime {
+                    line.push_str(&format!(" hook_runtime={hook_runtime:?}"));
+                }
+                println!("{line}");
+            }
+        }
+        other => anyhow::bail!("unsupported --format value: {other}"),
     }
     Ok(())
 }

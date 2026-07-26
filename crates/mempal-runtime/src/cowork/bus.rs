@@ -1274,6 +1274,7 @@ fn append_to_agent_inbox(
         content: content.to_string(),
         thread_id: metadata.thread_id.map(str::to_string),
         channel: metadata.channel.map(str::to_string),
+        message_id: None,
     };
     let line = serde_json::to_string(&msg)?;
     let prospective_count = existing_count + 1;

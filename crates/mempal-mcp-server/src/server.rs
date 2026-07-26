@@ -3096,7 +3096,7 @@ impl MempalMcpServer {
         let cwd = PathBuf::from(&request.cwd);
         let pushed_at = current_rfc3339();
 
-        let (path, size) = crate::cowork::inbox::push(
+        let outcome = crate::cowork::inbox::push_with_receipt(
             &mempal_home,
             caller_tool,
             target,
@@ -3116,9 +3116,10 @@ impl MempalMcpServer {
 
         Ok(Json(CoworkPushResponse {
             target_tool: target.dir_name().to_string(),
-            inbox_path: path.to_string_lossy().to_string(),
+            inbox_path: outcome.inbox_path.to_string_lossy().to_string(),
             pushed_at,
-            inbox_size_after: size,
+            inbox_size_after: outcome.inbox_size_after,
+            message_id: outcome.message_id,
         }))
     }
 
@@ -5029,8 +5030,7 @@ mod tests {
                 tool.name
             );
             if let Some(output_schema) = &tool.output_schema {
-                let output =
-                    serde_json::to_string(output_schema).expect("serialize output schema");
+                let output = serde_json::to_string(output_schema).expect("serialize output schema");
                 assert!(
                     !output.contains("\"uint"),
                     "tool {} output schema contains unsigned integer format: {output}",
@@ -8299,6 +8299,46 @@ mod tests {
             std::env::set_var("TMUX_LOG", &log_path);
         }
         log_path
+    }
+
+    #[tokio::test]
+    async fn test_mcp_push_returns_message_id_and_schema_requires_it() {
+        let (tempdir, _db_path, server) = setup_server();
+        let (mempal_home, repo, _guard) = setup_cowork_home(&tempdir).await;
+        *server.client_name.lock().unwrap() = Some("codex-mcp-client".to_string());
+
+        let response = server
+            .mempal_cowork_push(Parameters(CoworkPushRequest {
+                content: "receipt handle test".into(),
+                target_tool: Some("claude".into()),
+                cwd: repo.to_string_lossy().into_owned(),
+            }))
+            .await
+            .expect("push with receipt");
+
+        // P116: sender gets a receipt handle immediately.
+        assert!(
+            response.0.message_id.starts_with("msg_"),
+            "expected msg_ prefixed receipt handle, got: {:?}",
+            response.0.message_id
+        );
+
+        // The receipt handle must round-trip into a queued receipt state.
+        let states = mempal_runtime::cowork::receipts::message_states(&mempal_home, &repo).unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(
+            states[0].message_id.as_deref(),
+            Some(response.0.message_id.as_str())
+        );
+        assert_eq!(states[0].status, "pending");
+
+        // Contract pin: message_id is schema-required.
+        let schema = serde_json::to_value(rmcp::schemars::schema_for!(CoworkPushResponse)).unwrap();
+        let required = schema["required"].as_array().expect("required list");
+        assert!(
+            required.iter().any(|p| p.as_str() == Some("message_id")),
+            "message_id must be schema-required: {schema}"
+        );
     }
 
     #[tokio::test]
