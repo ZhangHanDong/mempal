@@ -88,6 +88,34 @@ pub fn append_event(
     cwd: &Path,
     event: &ReceiptEvent,
 ) -> Result<(), InboxError> {
+    let _guard = acquire_receipts_lock(mempal_home, cwd);
+    append_event_assuming_locked(mempal_home, cwd, event)
+}
+
+/// Acquire the per-project receipts flock. `None` on failure — receipts are
+/// best-effort observability, so callers proceed unlocked rather than block
+/// delivery. Callers holding this guard must use
+/// [`append_event_assuming_locked`]; nesting [`append_event`] inside would
+/// self-deadlock until the lock timeout.
+pub(crate) fn acquire_receipts_lock(
+    mempal_home: &Path,
+    cwd: &Path,
+) -> Option<crate::ingest::lock::IngestLock> {
+    let path = receipts_path(mempal_home, cwd).ok()?;
+    let lock_key = format!("receipts-{}", crate::ingest::lock::source_key(&path));
+    crate::ingest::lock::acquire_source_lock(
+        mempal_home,
+        &lock_key,
+        std::time::Duration::from_secs(5),
+    )
+    .ok()
+}
+
+pub(crate) fn append_event_assuming_locked(
+    mempal_home: &Path,
+    cwd: &Path,
+    event: &ReceiptEvent,
+) -> Result<(), InboxError> {
     use std::fs;
     use std::io::Write;
 
@@ -95,14 +123,6 @@ pub fn append_event(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-
-    let lock_key = format!("receipts-{}", crate::ingest::lock::source_key(&path));
-    let _guard = crate::ingest::lock::acquire_source_lock(
-        mempal_home,
-        &lock_key,
-        std::time::Duration::from_secs(5),
-    )
-    .ok();
 
     let mut events = load_events(mempal_home, cwd)?;
     events.push(event.clone());
@@ -208,6 +228,7 @@ pub fn message_states(
     }
 
     let mut states = Vec::new();
+    let mut leftover_live: Vec<(String, InFlightRef)> = Vec::new();
     for (id, queued_events) in queued_by_id {
         let mut drained_events = drained_by_id.remove(&id).unwrap_or_default();
         let mut drained_iter = drained_events.drain(..);
@@ -242,6 +263,11 @@ pub fn message_states(
         for event in drained_iter {
             states.push(orphan_drained_state(event));
         }
+        // Live rows beyond the queued count (duplicate-id remnants) must
+        // not be silently dropped — they are demonstrably pending.
+        if let Some(id) = id {
+            leftover_live.extend(live.into_iter().map(|entry| (id.clone(), entry)));
+        }
     }
 
     // Drained events whose id never had a queued event (legacy lines).
@@ -253,19 +279,20 @@ pub fn message_states(
 
     // Live inbox messages with no queued receipt at all — the best-effort
     // `queued` write failed, but the message demonstrably exists.
-    for (id, refs) in in_flight {
-        for entry in refs {
-            states.push(MessageReceiptState {
-                message_id: Some(id.clone()),
-                from: entry.from,
-                to: entry.target.to_string(),
-                queued_at: Some(entry.pushed_at),
-                drained_at: None,
-                injected_as: None,
-                hook_runtime: None,
-                status: "pending".to_string(),
-            });
-        }
+    let orphan_live = in_flight
+        .into_iter()
+        .flat_map(|(id, refs)| refs.into_iter().map(move |entry| (id.clone(), entry)));
+    for (id, entry) in orphan_live.chain(leftover_live) {
+        states.push(MessageReceiptState {
+            message_id: Some(id),
+            from: entry.from,
+            to: entry.target.to_string(),
+            queued_at: Some(entry.pushed_at),
+            drained_at: None,
+            injected_as: None,
+            hook_runtime: None,
+            status: "pending".to_string(),
+        });
     }
 
     // Newest queued_at first; rows without queued_at sink to the end.
@@ -686,6 +713,88 @@ mod tests {
             events.len(),
             MAX_RECEIPT_EVENTS,
             "480 serialized appends must settle exactly at the cap"
+        );
+    }
+
+    #[test]
+    fn concurrent_same_input_pushes_get_unique_ids() {
+        // Codex re-review P1: id selection read used-ids without holding the
+        // lock, so concurrent identical pushes could pick the same handle
+        // (16 concurrent pushes yielded only 3 unique ids in their repro).
+        let (tmp_home, repo) = tmpdir_with_git();
+        let home = tmp_home.path().to_path_buf();
+
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let home = home.clone();
+                let repo = repo.clone();
+                std::thread::spawn(move || {
+                    inbox::push_with_receipt(
+                        &home,
+                        Tool::Claude,
+                        Tool::Codex,
+                        &repo,
+                        "identical burst".to_string(),
+                        "2026-07-27T00:00:00Z".to_string(),
+                    )
+                    .map(|outcome| outcome.message_id)
+                })
+            })
+            .collect();
+
+        let ids: Vec<String> = handles
+            .into_iter()
+            .map(|h| h.join().unwrap().expect("push"))
+            .collect();
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(
+            unique.len(),
+            16,
+            "all concurrent pushes must get unique handles, got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn extra_live_rows_beyond_queued_still_pending() {
+        // Codex re-review P2: with N live inbox lines sharing an id but only
+        // M<N queued events, the leftover live rows were dropped from the
+        // join instead of surfacing as pending.
+        let (tmp_home, repo) = tmpdir_with_git();
+
+        let path = inbox::inbox_path(tmp_home.path(), Tool::Codex, &repo).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            concat!(
+                "{\"pushed_at\":\"2026-07-27T01:00:00Z\",\"from\":\"claude\",\"content\":\"a\",\"message_id\":\"msg_dup2\"}\n",
+                "{\"pushed_at\":\"2026-07-27T01:00:01Z\",\"from\":\"claude\",\"content\":\"b\",\"message_id\":\"msg_dup2\"}\n",
+            ),
+        )
+        .unwrap();
+        append_event(
+            tmp_home.path(),
+            &repo,
+            &ReceiptEvent {
+                event: EVENT_QUEUED.to_string(),
+                message_id: Some("msg_dup2".to_string()),
+                from: "claude".to_string(),
+                to: "codex".to_string(),
+                at: "2026-07-27T01:00:00Z".to_string(),
+                injected_as: None,
+                hook_runtime: None,
+            },
+        )
+        .unwrap();
+
+        let states = message_states(tmp_home.path(), &repo).unwrap();
+        assert_eq!(
+            states.len(),
+            2,
+            "2 live rows + 1 queued must yield 2 states, got {states:?}"
+        );
+        assert!(
+            states.iter().all(|s| s.status == "pending"),
+            "all rows must be pending: {states:?}"
         );
     }
 

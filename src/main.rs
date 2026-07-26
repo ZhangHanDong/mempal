@@ -6901,9 +6901,17 @@ fn cowork_drain_command(
             "codex-hook-json" => inbox::format_codex_hook_json(partner, &messages)?,
             _ => unreachable!("format validated before drain"),
         };
-        print!("{out}");
-        // Record `drained` receipts only after the hook output was written —
-        // a receipt must never claim injection that did not happen.
+        // Explicit write_all + flush: `print!` is line-buffered and the
+        // codex-hook-json envelope has no trailing newline, so a failed
+        // stdout would otherwise look like a successful injection.
+        {
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(out.as_bytes())?;
+            stdout.flush()?;
+        }
+        // Record `drained` receipts only after the hook output was actually
+        // flushed — a receipt must never claim injection that did not happen.
         let meta = DrainMeta {
             injected_as: format.clone(),
             hook_runtime,

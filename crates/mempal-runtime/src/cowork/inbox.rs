@@ -86,6 +86,13 @@ pub fn push_with_receipt(
     content: String,
     pushed_at: String,
 ) -> Result<PushOutcome, InboxError> {
+    // Hold the per-project receipts lock across id selection, the inbox
+    // write, AND the queued receipt append: without it two concurrent
+    // identical pushes can both read the same used-id set and pick the
+    // same handle. Lock failure degrades to unlocked (delivery must never
+    // block on observability).
+    let _guard = super::receipts::acquire_receipts_lock(mempal_home, cwd);
+
     let base_id = build_message_id(&pushed_at, caller.dir_name(), &content);
     // `pushed_at` is second-precision, so same-second identical pushes
     // would collide. Uniquify against handles already visible in the
@@ -118,7 +125,7 @@ pub fn push_with_receipt(
         hook_runtime: None,
     };
     // Receipts are observability; never fail the push over them.
-    let _ = super::receipts::append_event(mempal_home, cwd, &event);
+    let _ = super::receipts::append_event_assuming_locked(mempal_home, cwd, &event);
 
     Ok(PushOutcome {
         inbox_path,

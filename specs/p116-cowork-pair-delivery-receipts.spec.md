@@ -47,6 +47,8 @@ while keeping its zero-DB, ephemeral, file-based design.
   multiset-safe (k-th queued pairs with k-th drained per id), and live
   inbox messages whose `queued` receipt was lost still surface as
   `pending` rows.
+- `bus.rs` is touched compile-only: the new `InboxMessage.message_id`
+  field is filled with `None`; bus event/delivery semantics are unchanged.
 - `cowork-drain` validates `--format` BEFORE the destructive drain rename,
   and records `drained` receipts only after the hook output has been
   written to stdout — an invalid format must lose no messages and write no
@@ -70,8 +72,7 @@ while keeping its zero-DB, ephemeral, file-based design.
 - crates/mempal-runtime/src/cowork/inbox.rs
 - crates/mempal-runtime/src/cowork/receipts.rs
 - crates/mempal-runtime/src/cowork/mod.rs
-- crates/mempal-runtime/src/cowork/bus.rs (compile-only: fill the new
-  `InboxMessage.message_id` field with `None`; no semantics change)
+- crates/mempal-runtime/src/cowork/bus.rs
 - crates/mempal-mcp-server/src/tools.rs
 - crates/mempal-mcp-server/src/server.rs
 - src/main.rs
@@ -98,14 +99,24 @@ Rule: receipt-handle  Every push yields a unique, trackable receipt handle
 
 Scenario: message_id is deterministic over its inputs
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::message_id_is_deterministic_and_prefixed
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::message_id_is_deterministic_and_prefixed
   Given the same pushed_at, from, and content
   When build_message_id runs twice
   Then both calls return the same `msg_` + 12-hex handle
 
+Scenario: concurrent identical pushes get unique handles
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::concurrent_same_input_pushes_get_unique_ids
+  Given 16 concurrent pushes with identical content, from, and pushed_at
+  When all pushes complete
+  Then all 16 receipt handles are unique
+
 Scenario: same-second identical pushes get distinct handles
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::same_second_identical_pushes_get_distinct_ids_and_both_drain
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::same_second_identical_pushes_get_distinct_ids_and_both_drain
   Given two pushes with identical content, from, and second-precision pushed_at
   When both are pushed with receipts and then drained
   Then the two receipt handles differ
@@ -113,14 +124,16 @@ Scenario: same-second identical pushes get distinct handles
 
 Scenario: push records a queued receipt event
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::push_returns_message_id_and_appends_queued_event
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::push_returns_message_id_and_appends_queued_event
   Given an empty project inbox
   When push_with_receipt succeeds
   Then the receipts log contains one queued event carrying the returned handle
 
 Scenario: MCP push returns the schema-required handle
   Test:
-    Filter: cargo test -p mempal-mcp-server --lib test_mcp_push_returns_message_id_and_schema_requires_it
+    Package: mempal-mcp-server
+    Filter: test_mcp_push_returns_message_id_and_schema_requires_it
   Given an MCP client recognized as codex
   When mempal_cowork_push succeeds
   Then the response message_id starts with msg_
@@ -130,22 +143,34 @@ Rule: drain-receipts  Drains record how messages were injected — and only then
 
 Scenario: drain records injected_as and hook_runtime per message
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::drain_with_receipt_appends_drained_events_with_meta
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::drain_with_receipt_appends_drained_events_with_meta
   Given one pushed message
   When drain_with_receipt runs with injected_as and hook_runtime metadata
   Then one drained event per message carries that metadata
 
 Scenario: pre-P116 inbox lines drain with a null-handle receipt
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::legacy_inbox_line_without_message_id_still_drains_with_receipt
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::legacy_inbox_line_without_message_id_still_drains_with_receipt
   Given an inbox line written before message_id existed
   When drain_with_receipt runs
   Then the message drains normally
   And its drained event has no message_id
 
+Scenario: a drain whose stdout write fails records no drained receipt
+  Test:
+    Package: mempal
+    Filter: cowork_drain_stdout_failure_writes_no_drained_receipt
+  Given one pending message and an unwritable stdout
+  When `mempal cowork-drain --format codex-hook-json` runs
+  Then the command exits 0 with an error on stderr
+  And the message state is lost, not drained
+
 Scenario: invalid drain format loses no messages and writes no receipt
   Test:
-    Filter: cargo test --test cowork_receipts cowork_drain_invalid_format_preserves_inbox_and_writes_no_receipt
+    Package: mempal
+    Filter: cowork_drain_invalid_format_preserves_inbox_and_writes_no_receipt
   Level: integration
   Given one pending message in the codex inbox
   When `mempal cowork-drain --format codex-hook-jsn` runs
@@ -157,21 +182,32 @@ Rule: derived-states  Message state is derived from events plus live inboxes
 
 Scenario: states cover pending, drained, and lost
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::message_states_derives_pending_drained_and_lost
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::message_states_derives_pending_drained_and_lost
   Given queued messages that are respectively still in the inbox, drained, and vanished
   When message_states runs
   Then the three messages report pending, drained, and lost respectively
 
 Scenario: duplicate ids join as a multiset
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::duplicate_id_events_join_as_multiset
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::duplicate_id_events_join_as_multiset
   Given two queued and two drained events sharing one id
   When message_states runs
   Then both rows report drained
 
+Scenario: live rows beyond the queued count still report pending
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::extra_live_rows_beyond_queued_still_pending
+  Given two live inbox lines sharing an id but only one queued event
+  When message_states runs
+  Then both rows surface as pending
+
 Scenario: a live message with no queued receipt still reports pending
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::inbox_message_without_queued_receipt_still_reported_pending
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::inbox_message_without_queued_receipt_still_reported_pending
   Given an inbox line whose best-effort queued receipt write failed
   When message_states runs
   Then the message surfaces as pending with its inbox metadata
@@ -180,14 +216,16 @@ Rule: receipts-log  The log rotates at the cap even under concurrency
 
 Scenario: rotation keeps the newest events under the cap
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::receipts_rotation_keeps_newest_events_under_cap
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::receipts_rotation_keeps_newest_events_under_cap
   Given more than 400 appended events
   When load_events runs
   Then exactly 400 events remain and the newest survives
 
 Scenario: concurrent appends settle at the cap
   Test:
-    Filter: cargo test -p mempal-runtime --lib cowork::receipts::tests::concurrent_appends_never_exceed_cap
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::concurrent_appends_never_exceed_cap
   Given 8 threads appending 480 events in total
   When all appends complete
   Then the log holds exactly 400 events
@@ -196,7 +234,8 @@ Rule: cli-surface  Receipts are inspectable read-only from the CLI
 
 Scenario: cowork-receipts tracks a message from pending to drained
   Test:
-    Filter: cargo test --test cowork_receipts cowork_receipts_tracks_pending_then_drained
+    Package: mempal
+    Filter: cowork_receipts_tracks_pending_then_drained
   Level: integration
   Given a pushed message
   When cowork-receipts runs before and after cowork-drain --hook-runtime

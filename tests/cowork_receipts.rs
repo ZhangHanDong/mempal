@@ -118,6 +118,75 @@ fn cowork_receipts_tracks_pending_then_drained() {
 }
 
 #[test]
+fn cowork_drain_stdout_failure_writes_no_drained_receipt() {
+    // Codex re-review P1: `print!` is line-buffered and codex-hook-json has
+    // no trailing newline, so with an unwritable stdout the output silently
+    // stayed in the buffer and the message was still marked drained. Drain
+    // must record `drained` only after the hook output actually flushed.
+    let (home, repo) = tmp_home_and_repo();
+    let mempal_home = home.path().join(".mempal");
+
+    inbox::push_with_receipt(
+        &mempal_home,
+        Tool::Claude,
+        Tool::Codex,
+        &repo,
+        "never injected".to_string(),
+        "2026-07-27T02:00:00Z".to_string(),
+    )
+    .expect("push with receipt");
+
+    // A pipe whose read end is already closed makes the child's stdout
+    // flush fail deterministically with EPIPE. (A read-only file is NOT a
+    // valid vector here: Rust std masks EBADF on stdout — handle_ebadf in
+    // library/std/src/io/stdio.rs — so only EPIPE-class failures surface.)
+    let (reader, writer) = std::io::pipe().expect("create pipe");
+    drop(reader);
+    let drain = Command::new(mempal_bin())
+        .args([
+            "cowork-drain",
+            "--target",
+            "codex",
+            "--cwd",
+            repo.to_str().expect("utf8"),
+            "--format",
+            "codex-hook-json",
+        ])
+        .env("HOME", home.path())
+        .stdout(std::process::Stdio::from(writer))
+        .output()
+        .expect("run cowork-drain with broken-pipe stdout");
+    // hook graceful-degrade contract: still exit 0, error on stderr
+    assert!(drain.status.success());
+    assert!(
+        String::from_utf8_lossy(&drain.stderr).contains("cowork-drain"),
+        "stderr should carry the write failure"
+    );
+
+    // the message was consumed by the drain rename, but the receipt must
+    // NOT claim injection — the state is lost, not drained
+    let states_out = Command::new(mempal_bin())
+        .args([
+            "cowork-receipts",
+            "--cwd",
+            repo.to_str().expect("utf8"),
+            "--format",
+            "json",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("run cowork-receipts");
+    let states: serde_json::Value =
+        serde_json::from_slice(&states_out.stdout).expect("json output");
+    let list = states.as_array().expect("array of states");
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        list[0]["status"], "lost",
+        "an un-flushed drain must not be recorded as drained: {states}"
+    );
+}
+
+#[test]
 fn cowork_drain_invalid_format_preserves_inbox_and_writes_no_receipt() {
     // Codex review P1: an invalid --format must be rejected BEFORE the
     // destructive drain rename — no message loss, no false drained receipt.
