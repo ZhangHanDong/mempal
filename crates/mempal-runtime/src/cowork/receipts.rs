@@ -77,6 +77,12 @@ pub fn receipts_path(mempal_home: &Path, cwd: &Path) -> Result<PathBuf, InboxErr
 
 /// Append one event, rotating in place so the file never holds more than
 /// MAX_RECEIPT_EVENTS (newest win).
+///
+/// The load-decide-append/rewrite section is serialized with the P9 flock
+/// (Unix; Windows lock is a documented no-op) so concurrent push/drain
+/// cannot exceed the cap or lose a fresh event to a racing rewrite. If the
+/// lock itself cannot be acquired the append proceeds unlocked — delivery
+/// observability beats strict rotation.
 pub fn append_event(
     mempal_home: &Path,
     cwd: &Path,
@@ -89,6 +95,14 @@ pub fn append_event(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+
+    let lock_key = format!("receipts-{}", crate::ingest::lock::source_key(&path));
+    let _guard = crate::ingest::lock::acquire_source_lock(
+        mempal_home,
+        &lock_key,
+        std::time::Duration::from_secs(5),
+    )
+    .ok();
 
     let mut events = load_events(mempal_home, cwd)?;
     events.push(event.clone());
@@ -142,12 +156,20 @@ pub fn message_states(
     mempal_home: &Path,
     cwd: &Path,
 ) -> Result<Vec<MessageReceiptState>, InboxError> {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
+
+    struct InFlightRef {
+        target: &'static str,
+        from: String,
+        pushed_at: String,
+    }
 
     let events = load_events(mempal_home, cwd)?;
 
-    // Receipt handles still sitting in a live inbox file are pending.
-    let mut in_flight: HashSet<String> = HashSet::new();
+    // Receipt handles still sitting in a live inbox file are pending. Keep
+    // one entry per line (multiset) plus enough metadata to surface
+    // messages whose `queued` receipt write failed.
+    let mut in_flight: HashMap<String, Vec<InFlightRef>> = HashMap::new();
     for target in [Tool::Claude, Tool::Codex] {
         let path = inbox::inbox_path(mempal_home, target, cwd)?;
         let Ok(content) = std::fs::read_to_string(&path) else {
@@ -157,72 +179,111 @@ pub fn message_states(
             if let Ok(message) = serde_json::from_str::<inbox::InboxMessage>(line.trim())
                 && let Some(id) = message.message_id
             {
-                in_flight.insert(id);
+                in_flight.entry(id).or_default().push(InFlightRef {
+                    target: target.dir_name(),
+                    from: message.from,
+                    pushed_at: message.pushed_at,
+                });
             }
         }
     }
 
-    let mut drained_by_id: HashMap<String, &ReceiptEvent> = HashMap::new();
-    let mut orphan_drained: Vec<&ReceiptEvent> = Vec::new();
-    for event in events.iter().filter(|e| e.event == EVENT_DRAINED) {
-        match &event.message_id {
-            Some(id) => {
-                drained_by_id.insert(id.clone(), event);
-            }
-            None => orphan_drained.push(event),
+    // Multiset join: k-th queued event pairs with k-th drained event per
+    // id, so duplicate ids (legacy lines, rotation remnants) never make a
+    // successfully drained message look lost.
+    let mut queued_by_id: HashMap<Option<String>, Vec<&ReceiptEvent>> = HashMap::new();
+    let mut drained_by_id: HashMap<Option<String>, Vec<&ReceiptEvent>> = HashMap::new();
+    for event in &events {
+        match event.event.as_str() {
+            EVENT_QUEUED => queued_by_id
+                .entry(event.message_id.clone())
+                .or_default()
+                .push(event),
+            EVENT_DRAINED => drained_by_id
+                .entry(event.message_id.clone())
+                .or_default()
+                .push(event),
+            _ => {}
         }
     }
 
     let mut states = Vec::new();
-    for queued in events.iter().filter(|e| e.event == EVENT_QUEUED) {
-        let drained = queued
-            .message_id
+    for (id, queued_events) in queued_by_id {
+        let mut drained_events = drained_by_id.remove(&id).unwrap_or_default();
+        let mut drained_iter = drained_events.drain(..);
+        let mut live = id
             .as_ref()
-            .and_then(|id| drained_by_id.remove(id));
-        let status = if drained.is_some() {
-            "drained"
-        } else if queued
-            .message_id
-            .as_ref()
-            .is_some_and(|id| in_flight.contains(id))
-        {
-            "pending"
-        } else {
-            "lost"
-        };
-        states.push(MessageReceiptState {
-            message_id: queued.message_id.clone(),
-            from: queued.from.clone(),
-            to: queued.to.clone(),
-            queued_at: Some(queued.at.clone()),
-            drained_at: drained.map(|e| e.at.clone()),
-            injected_as: drained.and_then(|e| e.injected_as.clone()),
-            hook_runtime: drained.and_then(|e| e.hook_runtime.clone()),
-            status: status.to_string(),
-        });
+            .and_then(|id| in_flight.remove(id))
+            .unwrap_or_default();
+
+        for queued in queued_events {
+            let drained = drained_iter.next();
+            let status = if drained.is_some() {
+                "drained"
+            } else if !live.is_empty() {
+                live.pop();
+                "pending"
+            } else {
+                "lost"
+            };
+            states.push(MessageReceiptState {
+                message_id: queued.message_id.clone(),
+                from: queued.from.clone(),
+                to: queued.to.clone(),
+                queued_at: Some(queued.at.clone()),
+                drained_at: drained.map(|e| e.at.clone()),
+                injected_as: drained.and_then(|e| e.injected_as.clone()),
+                hook_runtime: drained.and_then(|e| e.hook_runtime.clone()),
+                status: status.to_string(),
+            });
+        }
+
+        // Drained events beyond the queued count (rotated-away queued rows).
+        for event in drained_iter {
+            states.push(orphan_drained_state(event));
+        }
     }
 
-    // Drained events with no queued counterpart (legacy lines, rotated-away
-    // queued events) still deserve a row.
-    for event in orphan_drained
-        .into_iter()
-        .chain(drained_by_id.into_values())
-    {
-        states.push(MessageReceiptState {
-            message_id: event.message_id.clone(),
-            from: event.from.clone(),
-            to: event.to.clone(),
-            queued_at: None,
-            drained_at: Some(event.at.clone()),
-            injected_as: event.injected_as.clone(),
-            hook_runtime: event.hook_runtime.clone(),
-            status: "drained".to_string(),
-        });
+    // Drained events whose id never had a queued event (legacy lines).
+    for (_, drained_events) in drained_by_id {
+        for event in drained_events {
+            states.push(orphan_drained_state(event));
+        }
+    }
+
+    // Live inbox messages with no queued receipt at all — the best-effort
+    // `queued` write failed, but the message demonstrably exists.
+    for (id, refs) in in_flight {
+        for entry in refs {
+            states.push(MessageReceiptState {
+                message_id: Some(id.clone()),
+                from: entry.from,
+                to: entry.target.to_string(),
+                queued_at: Some(entry.pushed_at),
+                drained_at: None,
+                injected_as: None,
+                hook_runtime: None,
+                status: "pending".to_string(),
+            });
+        }
     }
 
     // Newest queued_at first; rows without queued_at sink to the end.
     states.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
     Ok(states)
+}
+
+fn orphan_drained_state(event: &ReceiptEvent) -> MessageReceiptState {
+    MessageReceiptState {
+        message_id: event.message_id.clone(),
+        from: event.from.clone(),
+        to: event.to.clone(),
+        queued_at: None,
+        drained_at: Some(event.at.clone()),
+        injected_as: event.injected_as.clone(),
+        hook_runtime: event.hook_runtime.clone(),
+        status: "drained".to_string(),
+    }
 }
 
 /// Drain the pair inbox exactly like `inbox::drain`, then best-effort append
@@ -234,7 +295,21 @@ pub fn drain_with_receipt(
     meta: &DrainMeta,
 ) -> Result<Vec<inbox::InboxMessage>, InboxError> {
     let messages = inbox::drain(mempal_home, target, cwd)?;
-    for message in &messages {
+    record_drained(mempal_home, target, cwd, &messages, meta);
+    Ok(messages)
+}
+
+/// Best-effort append one `drained` receipt event per message. Split out of
+/// [`drain_with_receipt`] so callers that must emit the hook output BEFORE
+/// claiming injection (e.g. the `cowork-drain` CLI) can record afterwards.
+pub fn record_drained(
+    mempal_home: &Path,
+    target: Tool,
+    cwd: &Path,
+    messages: &[inbox::InboxMessage],
+    meta: &DrainMeta,
+) {
+    for message in messages {
         let event = ReceiptEvent {
             event: EVENT_DRAINED.to_string(),
             message_id: message.message_id.clone(),
@@ -247,7 +322,6 @@ pub fn drain_with_receipt(
         // Receipts are observability; never fail the drain over them.
         let _ = append_event(mempal_home, cwd, &event);
     }
-    Ok(messages)
 }
 
 #[cfg(test)]
@@ -453,6 +527,165 @@ mod tests {
         assert_eq!(
             events.last().unwrap().message_id.as_deref(),
             Some(format!("msg_{:012}", MAX_RECEIPT_EVENTS + 24).as_str())
+        );
+    }
+
+    #[test]
+    fn same_second_identical_pushes_get_distinct_ids_and_both_drain() {
+        // Codex review P1: MCP pushed_at is second-precision, so two pushes
+        // of the same content in the same second must NOT share a receipt
+        // handle (the join would misreport one of them as lost).
+        let (tmp_home, repo) = tmpdir_with_git();
+
+        let first = inbox::push_with_receipt(
+            tmp_home.path(),
+            Tool::Claude,
+            Tool::Codex,
+            &repo,
+            "same body".to_string(),
+            rfc3339(0),
+        )
+        .unwrap();
+        let second = inbox::push_with_receipt(
+            tmp_home.path(),
+            Tool::Claude,
+            Tool::Codex,
+            &repo,
+            "same body".to_string(),
+            rfc3339(0),
+        )
+        .unwrap();
+
+        assert_ne!(
+            first.message_id, second.message_id,
+            "same-second identical pushes must get distinct receipt handles"
+        );
+
+        let meta = DrainMeta {
+            injected_as: "plain".to_string(),
+            hook_runtime: None,
+            drained_at: rfc3339(1),
+        };
+        let messages = drain_with_receipt(tmp_home.path(), Tool::Codex, &repo, &meta).unwrap();
+        assert_eq!(messages.len(), 2);
+
+        let states = message_states(tmp_home.path(), &repo).unwrap();
+        assert_eq!(states.len(), 2, "{states:?}");
+        assert!(
+            states.iter().all(|s| s.status == "drained"),
+            "both same-second messages must report drained: {states:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_id_events_join_as_multiset() {
+        // Backstop for rotation/legacy paths where duplicate ids can still
+        // appear in the log: k-th queued pairs with k-th drained instead of
+        // a last-write-wins HashMap.
+        let (tmp_home, repo) = tmpdir_with_git();
+        for n in 0..2 {
+            append_event(
+                tmp_home.path(),
+                &repo,
+                &ReceiptEvent {
+                    event: EVENT_QUEUED.to_string(),
+                    message_id: Some("msg_dup".to_string()),
+                    from: "claude".to_string(),
+                    to: "codex".to_string(),
+                    at: rfc3339(n),
+                    injected_as: None,
+                    hook_runtime: None,
+                },
+            )
+            .unwrap();
+        }
+        for n in 2..4 {
+            append_event(
+                tmp_home.path(),
+                &repo,
+                &ReceiptEvent {
+                    event: EVENT_DRAINED.to_string(),
+                    message_id: Some("msg_dup".to_string()),
+                    from: "claude".to_string(),
+                    to: "codex".to_string(),
+                    at: rfc3339(n),
+                    injected_as: Some("plain".to_string()),
+                    hook_runtime: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let states = message_states(tmp_home.path(), &repo).unwrap();
+        assert_eq!(states.len(), 2, "{states:?}");
+        assert!(
+            states.iter().all(|s| s.status == "drained"),
+            "both duplicate-id messages must report drained: {states:?}"
+        );
+    }
+
+    #[test]
+    fn inbox_message_without_queued_receipt_still_reported_pending() {
+        // Codex review P2: a best-effort queued write can fail; a message
+        // sitting in the live inbox must still surface as pending.
+        let (tmp_home, repo) = tmpdir_with_git();
+
+        let path = inbox::inbox_path(tmp_home.path(), Tool::Codex, &repo).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "{\"pushed_at\":\"2026-07-26T03:00:00Z\",\"from\":\"claude\",\"content\":\"receipt write failed\",\"message_id\":\"msg_orphan000001\"}\n",
+        )
+        .unwrap();
+
+        let states = message_states(tmp_home.path(), &repo).unwrap();
+        assert_eq!(states.len(), 1, "{states:?}");
+        assert_eq!(states[0].message_id.as_deref(), Some("msg_orphan000001"));
+        assert_eq!(states[0].status, "pending");
+        assert_eq!(states[0].to, "codex");
+        assert_eq!(states[0].queued_at.as_deref(), Some("2026-07-26T03:00:00Z"));
+    }
+
+    #[test]
+    fn concurrent_appends_never_exceed_cap() {
+        // Codex review P2: unlocked load-decide-append lets two writers at
+        // 399 events both append. Appends are flock-serialized on Unix.
+        let (tmp_home, repo) = tmpdir_with_git();
+        let home = tmp_home.path().to_path_buf();
+
+        let handles: Vec<_> = (0..8)
+            .map(|thread| {
+                let home = home.clone();
+                let repo = repo.clone();
+                std::thread::spawn(move || {
+                    for n in 0..60 {
+                        append_event(
+                            &home,
+                            &repo,
+                            &ReceiptEvent {
+                                event: EVENT_QUEUED.to_string(),
+                                message_id: Some(format!("msg_t{thread:02}n{n:03}")),
+                                from: "claude".to_string(),
+                                to: "codex".to_string(),
+                                at: format!("2026-07-26T04:{thread:02}:{n:02}Z"),
+                                injected_as: None,
+                                hook_runtime: None,
+                            },
+                        )
+                        .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let events = load_events(&home, &repo).unwrap();
+        assert_eq!(
+            events.len(),
+            MAX_RECEIPT_EVENTS,
+            "480 serialized appends must settle exactly at the cap"
         );
     }
 

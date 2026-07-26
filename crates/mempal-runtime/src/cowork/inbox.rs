@@ -86,7 +86,18 @@ pub fn push_with_receipt(
     content: String,
     pushed_at: String,
 ) -> Result<PushOutcome, InboxError> {
-    let message_id = build_message_id(&pushed_at, caller.dir_name(), &content);
+    let base_id = build_message_id(&pushed_at, caller.dir_name(), &content);
+    // `pushed_at` is second-precision, so same-second identical pushes
+    // would collide. Uniquify against handles already visible in the
+    // receipts log and the live inboxes (best-effort: an unreadable
+    // receipts log must not block delivery).
+    let used_ids = collect_used_message_ids(mempal_home, cwd);
+    let mut message_id = base_id.clone();
+    let mut suffix = 2;
+    while used_ids.contains(&message_id) {
+        message_id = format!("{base_id}-{suffix}");
+        suffix += 1;
+    }
     let (inbox_path, inbox_size_after) = push_message(
         mempal_home,
         caller,
@@ -114,6 +125,31 @@ pub fn push_with_receipt(
         inbox_size_after,
         message_id,
     })
+}
+
+/// Every message_id currently visible in the receipts log or a live inbox
+/// for this project identity. Best-effort: IO errors yield an empty set.
+fn collect_used_message_ids(mempal_home: &Path, cwd: &Path) -> std::collections::HashSet<String> {
+    let mut used = std::collections::HashSet::new();
+    if let Ok(events) = super::receipts::load_events(mempal_home, cwd) {
+        used.extend(events.into_iter().filter_map(|event| event.message_id));
+    }
+    for target in [Tool::Claude, Tool::Codex] {
+        let Ok(path) = inbox_path(mempal_home, target, cwd) else {
+            continue;
+        };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in content.lines() {
+            if let Ok(message) = serde_json::from_str::<InboxMessage>(line.trim())
+                && let Some(id) = message.message_id
+            {
+                used.insert(id);
+            }
+        }
+    }
+    used
 }
 
 /// Resolve ~/.mempal using the HOME env var. Matches the existing

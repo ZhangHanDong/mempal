@@ -6862,6 +6862,11 @@ fn cowork_drain_command(
     let inner: Result<(), Box<dyn std::error::Error>> = (|| {
         let target_tool = Tool::from_target_str(&target)
             .ok_or_else(|| format!("invalid target `{target}`: expected claude|codex"))?;
+        // Validate the output format BEFORE the destructive drain rename —
+        // a typo'd --format must lose no messages and write no receipts.
+        if !matches!(format.as_str(), "plain" | "codex-hook-json") {
+            return Err(format!("unknown format: {format}").into());
+        }
         let mempal_home = inbox::mempal_home();
 
         let resolved_cwd: PathBuf = match (cwd, cwd_source.as_deref()) {
@@ -6884,13 +6889,7 @@ fn cowork_drain_command(
             (Some(_), Some(_)) => unreachable!("clap conflicts_with prevents this"),
         };
 
-        let meta = DrainMeta {
-            injected_as: format.clone(),
-            hook_runtime,
-            drained_at: mempal::cowork::peek::format_rfc3339(std::time::SystemTime::now()),
-        };
-        let messages =
-            receipts::drain_with_receipt(&mempal_home, target_tool, &resolved_cwd, &meta)?;
+        let messages = inbox::drain(&mempal_home, target_tool, &resolved_cwd)?;
         if messages.is_empty() {
             return Ok(());
         }
@@ -6900,9 +6899,17 @@ fn cowork_drain_command(
         let out = match format.as_str() {
             "plain" => inbox::format_plain(partner, &messages),
             "codex-hook-json" => inbox::format_codex_hook_json(partner, &messages)?,
-            _ => return Err(format!("unknown format: {format}").into()),
+            _ => unreachable!("format validated before drain"),
         };
         print!("{out}");
+        // Record `drained` receipts only after the hook output was written —
+        // a receipt must never claim injection that did not happen.
+        let meta = DrainMeta {
+            injected_as: format.clone(),
+            hook_runtime,
+            drained_at: mempal::cowork::peek::format_rfc3339(std::time::SystemTime::now()),
+        };
+        receipts::record_drained(&mempal_home, target_tool, &resolved_cwd, &messages, &meta);
         Ok(())
     })();
 

@@ -116,3 +116,74 @@ fn cowork_receipts_tracks_pending_then_drained() {
         "plain output missing state: {text}"
     );
 }
+
+#[test]
+fn cowork_drain_invalid_format_preserves_inbox_and_writes_no_receipt() {
+    // Codex review P1: an invalid --format must be rejected BEFORE the
+    // destructive drain rename — no message loss, no false drained receipt.
+    let (home, repo) = tmp_home_and_repo();
+    let mempal_home = home.path().join(".mempal");
+
+    inbox::push_with_receipt(
+        &mempal_home,
+        Tool::Claude,
+        Tool::Codex,
+        &repo,
+        "must survive typo".to_string(),
+        "2026-07-26T05:00:00Z".to_string(),
+    )
+    .expect("push with receipt");
+
+    let drain = Command::new(mempal_bin())
+        .args([
+            "cowork-drain",
+            "--target",
+            "codex",
+            "--cwd",
+            repo.to_str().expect("utf8"),
+            "--format",
+            "codex-hook-jsn",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("run cowork-drain with bad format");
+    // hook graceful-degrade contract: still exit 0, error on stderr
+    assert!(drain.status.success());
+    assert!(
+        String::from_utf8_lossy(&drain.stderr).contains("format"),
+        "stderr should mention the format error"
+    );
+
+    // message must still be in the inbox
+    let inbox_path = inbox::inbox_path(&mempal_home, Tool::Codex, &repo).expect("inbox path");
+    assert!(
+        inbox_path.exists(),
+        "invalid format must not consume the inbox"
+    );
+    assert!(
+        fs::read_to_string(&inbox_path)
+            .expect("read inbox")
+            .contains("must survive typo")
+    );
+
+    // and no drained receipt may exist
+    let states_out = Command::new(mempal_bin())
+        .args([
+            "cowork-receipts",
+            "--cwd",
+            repo.to_str().expect("utf8"),
+            "--format",
+            "json",
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("run cowork-receipts");
+    let states: serde_json::Value =
+        serde_json::from_slice(&states_out.stdout).expect("json output");
+    let list = states.as_array().expect("array of states");
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        list[0]["status"], "pending",
+        "no drained receipt may be recorded for a failed drain: {states}"
+    );
+}
