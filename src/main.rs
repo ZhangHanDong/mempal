@@ -1297,7 +1297,7 @@ async fn run() -> Result<()> {
             return cowork_status_command(cwd);
         }
         Commands::CoworkReceipts { cwd, limit, format } => {
-            return cowork_receipts_command(cwd, limit, format);
+            return cowork_receipts_command(&cwd, limit, &format);
         }
         Commands::CoworkRunbook { format } => {
             return static_runbook_command(
@@ -6965,39 +6965,55 @@ fn cowork_status_command(cwd: PathBuf) -> Result<()> {
         }
     }
 
-    // P116 receipts summary — derived, read-only.
-    if let Ok(states) = mempal::cowork::receipts::message_states(&mempal_home, &cwd) {
-        let count_of = |status: &str| states.iter().filter(|s| s.status == status).count();
-        println!();
-        println!(
-            "receipts: {} pending, {} drained, {} lost (see `mempal cowork-receipts --cwd {}`)",
-            count_of("pending"),
-            count_of("drained"),
-            count_of("lost"),
-            cwd.display()
-        );
+    // P116 receipts summary — derived, read-only, and kept separate per
+    // target so an operator can see which partner inbox needs attention.
+    println!();
+    match mempal::cowork::receipts::message_states(&mempal_home, &cwd) {
+        Ok(states) => {
+            for target in [Tool::Claude, Tool::Codex] {
+                let count_of = |status: &str| {
+                    states
+                        .iter()
+                        .filter(|state| {
+                            state.to == target.dir_name() && state.status.as_str() == status
+                        })
+                        .count()
+                };
+                println!(
+                    "{} receipts: {} pending, {} drained, {} lost",
+                    target.dir_name(),
+                    count_of("pending"),
+                    count_of("drained"),
+                    count_of("lost")
+                );
+            }
+            println!("see `mempal cowork-receipts --cwd {}`", cwd.display());
+        }
+        Err(error) => println!("receipts: unavailable ({error})"),
     }
     Ok(())
 }
 
 /// `mempal cowork-receipts` — P116 read-only delivery receipt view for the
 /// pair-push channel: joins queued/drained events with the live inboxes.
-fn cowork_receipts_command(cwd: PathBuf, limit: Option<usize>, format: String) -> Result<()> {
+fn cowork_receipts_command(cwd: &Path, limit: Option<usize>, format: &str) -> Result<()> {
     use mempal::cowork::inbox;
     use mempal::cowork::receipts;
 
     let mempal_home = inbox::mempal_home();
-    let mut states = receipts::message_states(&mempal_home, &cwd)
+    let mut states = receipts::message_states(&mempal_home, cwd)
         .map_err(|e| anyhow::anyhow!("cowork-receipts: {e}"))?;
     if let Some(limit) = limit {
         states.truncate(limit);
     }
 
-    match format.as_str() {
+    match format {
         "json" => {
             println!("{}", serde_json::to_string_pretty(&states)?);
         }
         "plain" => {
+            use std::fmt::Write as _;
+
             if states.is_empty() {
                 println!("no delivery receipts for {}", cwd.display());
                 return Ok(());
@@ -7019,13 +7035,13 @@ fn cowork_receipts_command(cwd: PathBuf, limit: Option<usize>, format: String) -
                     state.status, id, state.from, state.to, queued
                 );
                 if let Some(drained_at) = &state.drained_at {
-                    line.push_str(&format!(" drained={drained_at}"));
+                    write!(&mut line, " drained={drained_at}")?;
                 }
                 if let Some(injected_as) = &state.injected_as {
-                    line.push_str(&format!(" injected_as={injected_as}"));
+                    write!(&mut line, " injected_as={injected_as}")?;
                 }
                 if let Some(hook_runtime) = &state.hook_runtime {
-                    line.push_str(&format!(" hook_runtime={hook_runtime:?}"));
+                    write!(&mut line, " hook_runtime={hook_runtime:?}")?;
                 }
                 println!("{line}");
             }

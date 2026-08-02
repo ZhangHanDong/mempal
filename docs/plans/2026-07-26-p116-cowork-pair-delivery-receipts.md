@@ -22,11 +22,17 @@ partner "没看到消息" 时无法区分未入队 / 未 drain / 已 drain 注�
 2. **GREEN（最小实现）**
    - `InboxMessage.message_id: Option<String>`（serde default）；
      `build_message_id`；`push` 返回值带 id 并写 queued 回执（best-effort）；
-     `drain_with_receipt` 包装既有 drain 语义并写 drained 回执。
+     drain 与 `record_drained` 保持两阶段 API，调用者仅在注入成功后写
+     drained 回执。
+   - receipt 锁不可用或为 Windows no-op 时，用进程号 + 纳秒时间戳 +
+     原子序号降级后缀保持成功 push 的 handle 唯一性；used-id 来源读取或
+     解析不完整时也走同一路径，不信任残缺快照。
    - `receipts.rs`：`receipts_path` / `append_event` / `load_events` /
      `message_states` / 轮转。
+   - 状态查询只把 `NotFound` 当成 inbox 缺失；其他读取失败显式返回，
+     避免把不可读 live inbox 误报为 `lost`；同秒事件用稳定全序打破并列。
    - CLI：新 `cowork-receipts`；`cowork-drain --hook-runtime`；
-     `cowork-status` 加回执 summary 行。
+     `cowork-status` 按 target 各加一行回执 summary。
    - MCP：push handler 返回 `message_id`。
 3. **验证**：workspace `cargo test`、`cargo clippy`、`cargo fmt --check`。
 4. **收尾**：AGENTS.md / CLAUDE.md inventory；commit → PR（refs #81）；

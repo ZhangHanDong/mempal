@@ -1,14 +1,16 @@
 //! Delivery receipts for the P8 cowork pair-push channel (P116).
 //!
-//! Append-only observability log answering "did the partner ever see that
-//! handoff?" (GitHub issue #81). `push` records a `queued` event, `drain`
-//! records one `drained` event per message; message state (pending /
-//! drained / lost) is derived by joining events with the live inbox —
-//! nothing is stored in palace.db and delivery semantics are unchanged.
+//! Bounded observability event log answering "did the partner ever see that
+//! handoff?" (GitHub issue #81). `push` records a `queued` event; after
+//! successful injection, the drain caller records one `drained` event per
+//! message. Message state (pending / drained / lost) is derived by joining
+//! events with the live inbox — nothing is stored in palace.db and delivery
+//! semantics are unchanged.
 //!
 //! Spec: specs/p116-cowork-pair-delivery-receipts.spec.md
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::inbox::{self, InboxError};
@@ -66,6 +68,11 @@ pub struct MessageReceiptState {
 }
 
 /// `<mempal_home>/cowork-inbox/receipts/<encoded_project_identity>.jsonl`.
+///
+/// # Errors
+///
+/// Returns [`InboxError`] when `cwd` cannot be encoded as a valid project
+/// identity.
 pub fn receipts_path(mempal_home: &Path, cwd: &Path) -> Result<PathBuf, InboxError> {
     let identity = inbox::project_identity(cwd);
     let encoded = inbox::encode_project_identity(&identity)?;
@@ -76,13 +83,18 @@ pub fn receipts_path(mempal_home: &Path, cwd: &Path) -> Result<PathBuf, InboxErr
 }
 
 /// Append one event, rotating in place so the file never holds more than
-/// MAX_RECEIPT_EVENTS (newest win).
+/// [`MAX_RECEIPT_EVENTS`] (newest win).
 ///
-/// The load-decide-append/rewrite section is serialized with the P9 flock
-/// (Unix; Windows lock is a documented no-op) so concurrent push/drain
-/// cannot exceed the cap or lose a fresh event to a racing rewrite. If the
-/// lock itself cannot be acquired the append proceeds unlocked — delivery
-/// observability beats strict rotation.
+/// On Unix, the load-decide-append/rewrite section is serialized with the P9
+/// flock so concurrent push/drain cannot exceed the cap or lose a fresh event
+/// to a racing rewrite. Windows retains P9's documented no-op; if effective
+/// locking is unavailable, the append proceeds unlocked — delivery
+/// observability beats strict concurrent rotation.
+///
+/// # Errors
+///
+/// Returns [`InboxError`] when the receipt path cannot be encoded or the
+/// receipt log cannot be read, serialized, or written.
 pub fn append_event(
     mempal_home: &Path,
     cwd: &Path,
@@ -149,51 +161,58 @@ pub(crate) fn append_event_assuming_locked(
 
 /// Load all events for this project identity (oldest first). Missing file
 /// yields an empty Vec; malformed lines are skipped.
+///
+/// # Errors
+///
+/// Returns [`InboxError`] when the receipt path cannot be encoded or an
+/// existing receipt log cannot be read.
 pub fn load_events(mempal_home: &Path, cwd: &Path) -> Result<Vec<ReceiptEvent>, InboxError> {
+    load_events_with_completeness(mempal_home, cwd).map(|(events, _)| events)
+}
+
+pub(crate) fn load_events_with_completeness(
+    mempal_home: &Path,
+    cwd: &Path,
+) -> Result<(Vec<ReceiptEvent>, bool), InboxError> {
     let path = receipts_path(mempal_home, cwd)?;
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((Vec::new(), true)),
         Err(e) => return Err(e.into()),
     };
 
     let mut events = Vec::new();
+    let mut is_complete = true;
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if let Ok(event) = serde_json::from_str::<ReceiptEvent>(trimmed) {
-            events.push(event);
+        match serde_json::from_str::<ReceiptEvent>(trimmed) {
+            Ok(event) => events.push(event),
+            Err(_) => is_complete = false,
         }
     }
-    Ok(events)
+    Ok((events, is_complete))
 }
 
-/// Join receipt events with the live inbox files into per-message states,
-/// newest queued_at first.
-pub fn message_states(
+struct InFlightRef {
+    target: &'static str,
+    from: String,
+    pushed_at: String,
+}
+
+fn load_in_flight(
     mempal_home: &Path,
     cwd: &Path,
-) -> Result<Vec<MessageReceiptState>, InboxError> {
-    use std::collections::HashMap;
-
-    struct InFlightRef {
-        target: &'static str,
-        from: String,
-        pushed_at: String,
-    }
-
-    let events = load_events(mempal_home, cwd)?;
-
-    // Receipt handles still sitting in a live inbox file are pending. Keep
-    // one entry per line (multiset) plus enough metadata to surface
-    // messages whose `queued` receipt write failed.
+) -> Result<HashMap<String, Vec<InFlightRef>>, InboxError> {
     let mut in_flight: HashMap<String, Vec<InFlightRef>> = HashMap::new();
     for target in [Tool::Claude, Tool::Codex] {
         let path = inbox::inbox_path(mempal_home, target, cwd)?;
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
         };
         for line in content.lines() {
             if let Ok(message) = serde_json::from_str::<inbox::InboxMessage>(line.trim())
@@ -207,6 +226,27 @@ pub fn message_states(
             }
         }
     }
+    Ok(in_flight)
+}
+
+/// Join receipt events with the live inbox files into per-message states,
+/// newest `queued_at` first.
+///
+/// # Errors
+///
+/// Returns [`InboxError`] when receipt or live-inbox state cannot be read.
+/// A missing inbox is valid; other inbox read errors are surfaced so they
+/// cannot be misreported as `lost` delivery.
+pub fn message_states(
+    mempal_home: &Path,
+    cwd: &Path,
+) -> Result<Vec<MessageReceiptState>, InboxError> {
+    let events = load_events(mempal_home, cwd)?;
+
+    // Receipt handles still sitting in a live inbox file are pending. Keep
+    // one entry per line (multiset) plus enough metadata to surface
+    // messages whose `queued` receipt write failed.
+    let mut in_flight = load_in_flight(mempal_home, cwd)?;
 
     // Multiset join: k-th queued event pairs with k-th drained event per
     // id, so duplicate ids (legacy lines, rotation remnants) never make a
@@ -239,7 +279,7 @@ pub fn message_states(
 
         for queued in queued_events {
             let drained = drained_iter.next();
-            let status = if drained.is_some() {
+            let delivery_status = if drained.is_some() {
                 "drained"
             } else if !live.is_empty() {
                 live.pop();
@@ -255,7 +295,7 @@ pub fn message_states(
                 drained_at: drained.map(|e| e.at.clone()),
                 injected_as: drained.and_then(|e| e.injected_as.clone()),
                 hook_runtime: drained.and_then(|e| e.hook_runtime.clone()),
-                status: status.to_string(),
+                status: delivery_status.to_string(),
             });
         }
 
@@ -295,8 +335,20 @@ pub fn message_states(
         });
     }
 
-    // Newest queued_at first; rows without queued_at sink to the end.
-    states.sort_by(|a, b| b.queued_at.cmp(&a.queued_at));
+    // Newest queued_at first; rows without queued_at sink to the end. The
+    // remaining fields provide a stable total order for same-second events
+    // after their randomized HashMap grouping.
+    states.sort_by(|a, b| {
+        b.queued_at
+            .cmp(&a.queued_at)
+            .then_with(|| a.message_id.cmp(&b.message_id))
+            .then_with(|| a.from.cmp(&b.from))
+            .then_with(|| a.to.cmp(&b.to))
+            .then_with(|| a.drained_at.cmp(&b.drained_at))
+            .then_with(|| a.status.cmp(&b.status))
+            .then_with(|| a.injected_as.cmp(&b.injected_as))
+            .then_with(|| a.hook_runtime.cmp(&b.hook_runtime))
+    });
     Ok(states)
 }
 
@@ -313,22 +365,9 @@ fn orphan_drained_state(event: &ReceiptEvent) -> MessageReceiptState {
     }
 }
 
-/// Drain the pair inbox exactly like `inbox::drain`, then best-effort append
-/// one `drained` receipt event per message using `meta`.
-pub fn drain_with_receipt(
-    mempal_home: &Path,
-    target: Tool,
-    cwd: &Path,
-    meta: &DrainMeta,
-) -> Result<Vec<inbox::InboxMessage>, InboxError> {
-    let messages = inbox::drain(mempal_home, target, cwd)?;
-    record_drained(mempal_home, target, cwd, &messages, meta);
-    Ok(messages)
-}
-
-/// Best-effort append one `drained` receipt event per message. Split out of
-/// [`drain_with_receipt`] so callers that must emit the hook output BEFORE
-/// claiming injection (e.g. the `cowork-drain` CLI) can record afterwards.
+/// Best-effort append one `drained` receipt event per message. Callers must
+/// invoke this only after the drained messages were successfully injected;
+/// keeping drain and receipt recording separate makes that ordering explicit.
 pub fn record_drained(
     mempal_home: &Path,
     target: Tool,
@@ -410,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn drain_with_receipt_appends_drained_events_with_meta() {
+    fn record_drained_appends_drained_events_with_meta() {
         let (tmp_home, repo) = tmpdir_with_git();
         let outcome = inbox::push_with_receipt(
             tmp_home.path(),
@@ -427,7 +466,9 @@ mod tests {
             hook_runtime: Some("codex UserPromptSubmit".to_string()),
             drained_at: rfc3339(5),
         };
-        let messages = drain_with_receipt(tmp_home.path(), Tool::Codex, &repo, &meta).unwrap();
+        let messages = inbox::drain(tmp_home.path(), Tool::Codex, &repo).unwrap();
+        // Simulate successful injection before recording the receipt.
+        record_drained(tmp_home.path(), Tool::Codex, &repo, &messages, &meta);
         assert_eq!(messages.len(), 1);
         assert_eq!(
             messages[0].message_id.as_deref(),
@@ -479,7 +520,8 @@ mod tests {
             hook_runtime: None,
             drained_at: rfc3339(2),
         };
-        drain_with_receipt(tmp_home.path(), Tool::Claude, &repo, &meta).unwrap();
+        let messages = inbox::drain(tmp_home.path(), Tool::Claude, &repo).unwrap();
+        record_drained(tmp_home.path(), Tool::Claude, &repo, &messages, &meta);
 
         // lost: queued, then inbox file vanishes without a drained event
         let lost = inbox::push_with_receipt(
@@ -529,6 +571,41 @@ mod tests {
         let mut sorted = queued_order.clone();
         sorted.sort_by(|a, b| b.cmp(a));
         assert_eq!(queued_order, sorted);
+    }
+
+    #[test]
+    fn message_states_orders_equal_timestamps_by_message_id() {
+        let (tmp_home, repo) = tmpdir_with_git();
+        for id in [
+            "msg_h", "msg_c", "msg_f", "msg_a", "msg_g", "msg_d", "msg_b", "msg_e",
+        ] {
+            append_event(
+                tmp_home.path(),
+                &repo,
+                &ReceiptEvent {
+                    event: EVENT_QUEUED.to_string(),
+                    message_id: Some(id.to_string()),
+                    from: "claude".to_string(),
+                    to: "codex".to_string(),
+                    at: rfc3339(0),
+                    injected_as: None,
+                    hook_runtime: None,
+                },
+            )
+            .unwrap();
+        }
+
+        let states = message_states(tmp_home.path(), &repo).unwrap();
+        let ids: Vec<_> = states
+            .iter()
+            .map(|state| state.message_id.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                "msg_a", "msg_b", "msg_c", "msg_d", "msg_e", "msg_f", "msg_g", "msg_h"
+            ]
+        );
     }
 
     #[test]
@@ -593,7 +670,8 @@ mod tests {
             hook_runtime: None,
             drained_at: rfc3339(1),
         };
-        let messages = drain_with_receipt(tmp_home.path(), Tool::Codex, &repo, &meta).unwrap();
+        let messages = inbox::drain(tmp_home.path(), Tool::Codex, &repo).unwrap();
+        record_drained(tmp_home.path(), Tool::Codex, &repo, &messages, &meta);
         assert_eq!(messages.len(), 2);
 
         let states = message_states(tmp_home.path(), &repo).unwrap();
@@ -674,6 +752,36 @@ mod tests {
     }
 
     #[test]
+    fn message_states_does_not_report_lost_when_live_inbox_is_unreadable() {
+        let (tmp_home, repo) = tmpdir_with_git();
+        append_event(
+            tmp_home.path(),
+            &repo,
+            &ReceiptEvent {
+                event: EVENT_QUEUED.to_string(),
+                message_id: Some("msg_unreadable".to_string()),
+                from: "claude".to_string(),
+                to: "codex".to_string(),
+                at: rfc3339(0),
+                injected_as: None,
+                hook_runtime: None,
+            },
+        )
+        .unwrap();
+
+        // A directory at the inbox file path gives a deterministic read
+        // error on every supported platform without permission tricks.
+        let path = inbox::inbox_path(tmp_home.path(), Tool::Codex, &repo).unwrap();
+        fs::create_dir_all(&path).unwrap();
+
+        assert!(
+            message_states(tmp_home.path(), &repo).is_err(),
+            "an unreadable live inbox must not be treated as absent/lost"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn concurrent_appends_never_exceed_cap() {
         // Codex review P2: unlocked load-decide-append lets two writers at
         // 399 events both append. Appends are flock-serialized on Unix.
@@ -723,12 +831,15 @@ mod tests {
         // (16 concurrent pushes yielded only 3 unique ids in their repro).
         let (tmp_home, repo) = tmpdir_with_git();
         let home = tmp_home.path().to_path_buf();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
 
         let handles: Vec<_> = (0..16)
             .map(|_| {
                 let home = home.clone();
                 let repo = repo.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
                 std::thread::spawn(move || {
+                    barrier.wait();
                     inbox::push_with_receipt(
                         &home,
                         Tool::Claude,
@@ -751,6 +862,102 @@ mod tests {
             unique.len(),
             16,
             "all concurrent pushes must get unique handles, got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn concurrent_same_input_pushes_stay_unique_when_receipts_lock_is_unavailable() {
+        let (tmp_home, repo) = tmpdir_with_git();
+        let home = tmp_home.path().to_path_buf();
+        // Force `acquire_source_lock` to fail before opening its lock file.
+        // Receipt observability is best-effort, but the handle returned from
+        // a successful push must still be unique and trackable.
+        fs::write(home.join("locks"), "not a directory").unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let home = home.clone();
+                let repo = repo.clone();
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    inbox::push_with_receipt(
+                        &home,
+                        Tool::Claude,
+                        Tool::Codex,
+                        &repo,
+                        "identical unlocked burst".to_string(),
+                        "2026-07-27T00:00:00Z".to_string(),
+                    )
+                    .map(|outcome| outcome.message_id)
+                })
+            })
+            .collect();
+
+        let ids: Vec<String> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap().expect("push"))
+            .collect();
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(
+            unique.len(),
+            16,
+            "successful pushes must keep unique handles without the lock: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn push_uses_fallback_id_when_used_id_snapshot_is_incomplete() {
+        let (tmp_home, repo) = tmpdir_with_git();
+        let receipt_path = receipts_path(tmp_home.path(), &repo).unwrap();
+        // A directory at the log file path makes used-id collection fail,
+        // while the target inbox remains writable and delivery can succeed.
+        fs::create_dir_all(&receipt_path).unwrap();
+        let pushed_at = "2026-07-27T00:10:00Z";
+        let content = "incomplete used-id snapshot";
+        let base_id = inbox::build_message_id(pushed_at, "claude", content);
+
+        let outcome = inbox::push_with_receipt(
+            tmp_home.path(),
+            Tool::Claude,
+            Tool::Codex,
+            &repo,
+            content.to_string(),
+            pushed_at.to_string(),
+        )
+        .expect("delivery must not fail with receipt IO");
+
+        assert_ne!(
+            outcome.message_id, base_id,
+            "an incomplete used-id snapshot must not trust the deterministic base"
+        );
+        assert!(outcome.message_id.starts_with(&format!("{base_id}-u")));
+    }
+
+    #[test]
+    fn push_uses_fallback_id_when_receipt_log_contains_malformed_lines() {
+        let (tmp_home, repo) = tmpdir_with_git();
+        let receipt_path = receipts_path(tmp_home.path(), &repo).unwrap();
+        fs::create_dir_all(receipt_path.parent().unwrap()).unwrap();
+        fs::write(&receipt_path, "{not valid receipt json}\n").unwrap();
+        let pushed_at = "2026-07-27T00:11:00Z";
+        let content = "malformed used-id snapshot";
+        let base_id = inbox::build_message_id(pushed_at, "claude", content);
+
+        let outcome = inbox::push_with_receipt(
+            tmp_home.path(),
+            Tool::Claude,
+            Tool::Codex,
+            &repo,
+            content.to_string(),
+            pushed_at.to_string(),
+        )
+        .expect("delivery must not fail with malformed receipt lines");
+
+        assert!(
+            outcome.message_id.starts_with(&format!("{base_id}-u")),
+            "malformed receipt lines make the used-id snapshot incomplete"
         );
     }
 
@@ -799,7 +1006,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_inbox_line_without_message_id_still_drains_with_receipt() {
+    fn legacy_inbox_line_without_message_id_still_records_receipt() {
         let (tmp_home, repo) = tmpdir_with_git();
 
         // hand-write a pre-P116 inbox line (no message_id field)
@@ -816,7 +1023,8 @@ mod tests {
             hook_runtime: None,
             drained_at: rfc3339(9),
         };
-        let messages = drain_with_receipt(tmp_home.path(), Tool::Codex, &repo, &meta).unwrap();
+        let messages = inbox::drain(tmp_home.path(), Tool::Codex, &repo).unwrap();
+        record_drained(tmp_home.path(), Tool::Codex, &repo, &messages, &meta);
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "old style");
         assert_eq!(messages[0].message_id, None);

@@ -169,7 +169,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p112-session-peek.spec.md` | 完成 | P112 explicit MCP session peek：新增 `mempal_session_peek` 显式按 `tool + cwd` 只读读取本地 Claude/Codex session，支持同工具/跨项目场景，同时保持 `mempal_peek_partner` self-peek 保护不变 |
 | `specs/p113-public-workspace-crates.spec.md` | 完成 | P113 public multi-crate workspace split：保留 root `mempal` CLI 包，同时新增公开可发布的 `mempal-embed` / `mempal-search-core` / `mempal-agent-memory` / `mempal-mcp-protocol` workspace crates，并通过 legacy facade path 兼容现有 API |
 | `specs/p114-coarse-workspace-split.spec.md` | 完成 | P114 coarse workspace split：新增公开可发布的 `mempal-store-sqlite` / `mempal-runtime` / `mempal-mcp-server` 三个粗粒度 crate，把 SQLite storage、runtime workflows、MCP server wiring 从 root 拆出，同时保留 root CLI 和 legacy facade paths |
-| `specs/p116-cowork-pair-delivery-receipts.spec.md` | 完成 | P116 cowork pair-push delivery receipts：pair 通道每条 push 生成确定性 `message_id`（`CoworkPushResponse` 返回），push/drain 写 append-only receipts log，`mempal cowork-receipts` / `cowork-status` 汇总 pending/drained/lost，`cowork-drain --hook-runtime` 记录注入 runtime（GitHub #81） |
+| `specs/p116-cowork-pair-delivery-receipts.spec.md` | 完成 | P116 cowork pair-push delivery receipts：pair 通道每条 push 基于确定性 base 生成唯一 `message_id`（`CoworkPushResponse` 返回），push/drain 写有界 receipts event log，`mempal cowork-receipts` / `cowork-status` 汇总 pending/drained/lost，`cowork-drain --hook-runtime` 记录注入 runtime（GitHub #81） |
 
 ### 当前 Spec（草稿，未实现）
 

@@ -16,6 +16,9 @@ pub const MAX_MESSAGE_SIZE: usize = 8 * 1024;
 pub const MAX_PENDING_MESSAGES: usize = 16;
 pub const MAX_TOTAL_INBOX_BYTES: u64 = 32 * 1024;
 
+static UNLOCKED_MESSAGE_ID_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Debug, thiserror::Error)]
 pub enum InboxError {
     #[error("message content exceeds {MAX_MESSAGE_SIZE} bytes: got {0} bytes")]
@@ -63,6 +66,7 @@ pub struct PushOutcome {
 
 /// Deterministic receipt handle: `msg_` + first 12 hex of SHA-256 over
 /// `pushed_at`, `from`, and `content` (null-byte separated).
+#[must_use]
 pub fn build_message_id(pushed_at: &str, from: &str, content: &str) -> String {
     use sha2::{Digest, Sha256};
 
@@ -78,6 +82,11 @@ pub fn build_message_id(pushed_at: &str, from: &str, content: &str) -> String {
 
 /// Push like [`push`], then best-effort append a `queued` receipt event
 /// (P116). Receipt IO failures never fail the push.
+///
+/// # Errors
+///
+/// Returns [`InboxError`] when the push violates inbox validation or the
+/// inbox message itself cannot be serialized or written.
 pub fn push_with_receipt(
     mempal_home: &Path,
     caller: Tool,
@@ -89,22 +98,24 @@ pub fn push_with_receipt(
     // Hold the per-project receipts lock across id selection, the inbox
     // write, AND the queued receipt append: without it two concurrent
     // identical pushes can both read the same used-id set and pick the
-    // same handle. Lock failure degrades to unlocked (delivery must never
-    // block on observability).
-    let _guard = super::receipts::acquire_receipts_lock(mempal_home, cwd);
+    // same handle. Lock failure switches id selection to a collision-
+    // resistant fallback and leaves receipt IO best-effort.
+    let guard = super::receipts::acquire_receipts_lock(mempal_home, cwd);
+    // P9's Windows implementation deliberately returns a no-op guard. It
+    // keeps the same API shape but does not serialize id selection.
+    let id_selection_is_serialized = guard.is_some() && cfg!(unix);
 
     let base_id = build_message_id(&pushed_at, caller.dir_name(), &content);
     // `pushed_at` is second-precision, so same-second identical pushes
     // would collide. Uniquify against handles already visible in the
     // receipts log and the live inboxes (best-effort: an unreadable
     // receipts log must not block delivery).
-    let used_ids = collect_used_message_ids(mempal_home, cwd);
-    let mut message_id = base_id.clone();
-    let mut suffix = 2;
-    while used_ids.contains(&message_id) {
-        message_id = format!("{base_id}-{suffix}");
-        suffix += 1;
-    }
+    let (used_ids, used_id_snapshot_is_complete) = collect_used_message_ids(mempal_home, cwd);
+    let message_id = if id_selection_is_serialized && used_id_snapshot_is_complete {
+        next_serialized_message_id(&base_id, &used_ids)
+    } else {
+        next_unserialized_message_id(&base_id, &used_ids)
+    };
     let (inbox_path, inbox_size_after) = push_message(
         mempal_home,
         caller,
@@ -134,29 +145,84 @@ pub fn push_with_receipt(
     })
 }
 
-/// Every message_id currently visible in the receipts log or a live inbox
-/// for this project identity. Best-effort: IO errors yield an empty set.
-fn collect_used_message_ids(mempal_home: &Path, cwd: &Path) -> std::collections::HashSet<String> {
+fn next_serialized_message_id(
+    base_id: &str,
+    used_ids: &std::collections::HashSet<String>,
+) -> String {
+    let mut message_id = base_id.to_string();
+    let mut suffix = 2;
+    while used_ids.contains(&message_id) {
+        message_id = format!("{base_id}-{suffix}");
+        suffix += 1;
+    }
+    message_id
+}
+
+/// Select a collision-resistant handle when the receipts lock is missing or
+/// is the documented Windows no-op. Concurrent local processes have distinct
+/// process ids, while the atomic counter separates threads in one process;
+/// wall-clock nanos also defend against process-id reuse across launches.
+fn next_unserialized_message_id(
+    base_id: &str,
+    used_ids: &std::collections::HashSet<String>,
+) -> String {
+    use std::sync::atomic::Ordering;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    loop {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let sequence = UNLOCKED_MESSAGE_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = format!("{base_id}-u{:x}-{nanos:x}-{sequence:x}", std::process::id());
+        if !used_ids.contains(&candidate) {
+            return candidate;
+        }
+    }
+}
+
+/// Every `message_id` currently visible in the receipts log or a live inbox,
+/// plus whether every source was read successfully. Callers must not trust a
+/// deterministic candidate when the snapshot is incomplete.
+fn collect_used_message_ids(
+    mempal_home: &Path,
+    cwd: &Path,
+) -> (std::collections::HashSet<String>, bool) {
     let mut used = std::collections::HashSet::new();
-    if let Ok(events) = super::receipts::load_events(mempal_home, cwd) {
-        used.extend(events.into_iter().filter_map(|event| event.message_id));
+    let mut is_complete = true;
+    match super::receipts::load_events_with_completeness(mempal_home, cwd) {
+        Ok((events, receipts_are_complete)) => {
+            used.extend(events.into_iter().filter_map(|event| event.message_id));
+            is_complete &= receipts_are_complete;
+        }
+        Err(_) => is_complete = false,
     }
     for target in [Tool::Claude, Tool::Codex] {
         let Ok(path) = inbox_path(mempal_home, target, cwd) else {
+            is_complete = false;
             continue;
         };
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                is_complete = false;
+                continue;
+            }
         };
         for line in content.lines() {
-            if let Ok(message) = serde_json::from_str::<InboxMessage>(line.trim())
-                && let Some(id) = message.message_id
-            {
-                used.insert(id);
+            match serde_json::from_str::<InboxMessage>(line.trim()) {
+                Ok(message) => {
+                    if let Some(id) = message.message_id {
+                        used.insert(id);
+                    }
+                }
+                Err(_) => is_complete = false,
             }
         }
     }
-    used
+    (used, is_complete)
 }
 
 /// Resolve ~/.mempal using the HOME env var. Matches the existing

@@ -22,6 +22,5 @@ pub use inbox::{
 };
 pub use peek::{PeekError, PeekMessage, PeekRequest, PeekResponse, Tool, peek_partner};
 pub use receipts::{
-    DrainMeta, MAX_RECEIPT_EVENTS, MessageReceiptState, ReceiptEvent, drain_with_receipt,
-    message_states,
+    DrainMeta, MAX_RECEIPT_EVENTS, MessageReceiptState, ReceiptEvent, message_states,
 };

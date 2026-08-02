@@ -118,6 +118,60 @@ fn cowork_receipts_tracks_pending_then_drained() {
 }
 
 #[test]
+fn cowork_status_summarizes_receipts_per_target() {
+    let (home, repo) = tmp_home_and_repo();
+    let mempal_home = home.path().join(".mempal");
+
+    inbox::push_with_receipt(
+        &mempal_home,
+        Tool::Claude,
+        Tool::Codex,
+        &repo,
+        "pending for codex".to_string(),
+        "2026-07-26T02:10:00Z".to_string(),
+    )
+    .expect("push to codex");
+    inbox::push_with_receipt(
+        &mempal_home,
+        Tool::Codex,
+        Tool::Claude,
+        &repo,
+        "drained by claude".to_string(),
+        "2026-07-26T02:10:01Z".to_string(),
+    )
+    .expect("push to claude");
+
+    let drain = Command::new(mempal_bin())
+        .args([
+            "cowork-drain",
+            "--target",
+            "claude",
+            "--cwd",
+            repo.to_str().expect("utf8"),
+        ])
+        .env("HOME", home.path())
+        .output()
+        .expect("drain claude inbox");
+    assert!(drain.status.success());
+
+    let status = Command::new(mempal_bin())
+        .args(["cowork-status", "--cwd", repo.to_str().expect("utf8")])
+        .env("HOME", home.path())
+        .output()
+        .expect("run cowork-status");
+    assert!(status.status.success());
+    let text = String::from_utf8_lossy(&status.stdout);
+    assert!(
+        text.contains("claude receipts: 0 pending, 1 drained, 0 lost"),
+        "missing claude receipt summary: {text}"
+    );
+    assert!(
+        text.contains("codex receipts: 1 pending, 0 drained, 0 lost"),
+        "missing codex receipt summary: {text}"
+    );
+}
+
+#[test]
 fn cowork_drain_stdout_failure_writes_no_drained_receipt() {
     // Codex re-review P1: `print!` is line-buffered and codex-hook-json has
     // no trailing newline, so with an unwritable stdout the output silently
@@ -136,12 +190,26 @@ fn cowork_drain_stdout_failure_writes_no_drained_receipt() {
     )
     .expect("push with receipt");
 
-    // A pipe whose read end is already closed makes the child's stdout
-    // flush fail deterministically with EPIPE. (A read-only file is NOT a
-    // valid vector here: Rust std masks EBADF on stdout — handle_ebadf in
-    // library/std/src/io/stdio.rs — so only EPIPE-class failures surface.)
-    let (reader, writer) = std::io::pipe().expect("create pipe");
-    drop(reader);
+    // Reuse a helper child's piped stdin as the drain's stdout after the
+    // helper exits. Its read end is then closed, so the drain's flush fails
+    // deterministically with a broken-pipe error. This stays cross-platform
+    // and compatible with the workspace's Rust 1.85 MSRV (`std::io::pipe`
+    // was stabilized later). A read-only file is NOT a valid vector here:
+    // Rust std masks EBADF on stdout, so only broken-pipe failures surface.
+    let mut helper = Command::new(mempal_bin())
+        .arg("--help")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn pipe-reader helper");
+    let writer = helper.stdin.take().expect("take helper stdin");
+    assert!(
+        helper
+            .wait()
+            .expect("wait for pipe-reader helper")
+            .success()
+    );
     let drain = Command::new(mempal_bin())
         .args([
             "cowork-drain",
