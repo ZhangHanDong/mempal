@@ -4,7 +4,7 @@ use thiserror::Error;
 use super::detect::{Format, extract_content_text, extract_message_text};
 use super::noise::{strip_claude_jsonl_noise, strip_codex_rollout_noise};
 
-pub const CURRENT_NORMALIZE_VERSION: u32 = 2;
+pub const CURRENT_NORMALIZE_VERSION: u32 = 3;
 
 pub type Result<T> = std::result::Result<T, NormalizeError>;
 
@@ -320,6 +320,19 @@ mod tests {
 
         let normalized = normalize_codex_jsonl(content, true).expect("normalize codex");
         assert_eq!(normalized.content, "> first line\nsecond line\nanswer");
+    }
+
+    #[test]
+    fn codex_normalize_drops_runtime_preamble_user_messages() {
+        // Issue #10: Codex injects runtime preamble as role=user messages;
+        // wrapper-only messages must not become transcript lines.
+        let content = r#"{"timestamp":"2026-07-26T10:00:00.000Z","type":"session_meta","payload":{"cwd":"/tmp/project"}}
+{"timestamp":"2026-07-26T10:00:00.100Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\nAGENTS.md content\n</user_instructions>"}]}}
+{"timestamp":"2026-07-26T10:00:00.200Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n<cwd>/tmp/project</cwd>\n</environment_context>\nfix the bug"}]}}
+{"timestamp":"2026-07-26T10:00:00.300Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#;
+
+        let normalized = normalize_codex_jsonl(content, true).expect("normalize codex");
+        assert_eq!(normalized.content, "> fix the bug\ndone");
     }
 
     #[test]
