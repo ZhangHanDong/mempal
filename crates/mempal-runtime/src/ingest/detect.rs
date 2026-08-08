@@ -31,7 +31,7 @@ pub fn detect_format(content: &str) -> Format {
 
 fn is_codex_jsonl(content: &str) -> bool {
     let mut has_session_meta = false;
-    let mut has_activity = false;
+    let mut has_message_record = false;
 
     for line in content.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
@@ -39,15 +39,15 @@ fn is_codex_jsonl(content: &str) -> bool {
         };
         match value.get("type").and_then(Value::as_str) {
             Some("session_meta") => has_session_meta = true,
-            Some("event_msg" | "response_item" | "turn_context" | "compacted") => {
-                has_activity = true
-            }
-            Some(_) => {} // tolerate newer rollout record types
+            Some("event_msg" | "response_item") => has_message_record = true,
+            // Tolerate turn_context/compacted and newer rollout record types,
+            // but they are not evidence of a Codex rollout on their own.
+            Some(_) => {}
             None => return false,
         }
     }
 
-    has_session_meta && has_activity
+    has_session_meta && has_message_record
 }
 
 fn is_slack_json(content: &str) -> bool {
@@ -142,6 +142,17 @@ pub(crate) fn extract_content_text(value: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{Format, detect_format};
+
+    #[test]
+    fn rejects_codex_rollout_without_message_records() {
+        // session_meta plus non-message records only: turn_context/compacted
+        // are tolerated context, not sufficient evidence of a Codex rollout.
+        let content = r#"{"timestamp":"2026-07-26T10:00:00.000Z","type":"session_meta","payload":{"cwd":"/tmp/project"}}
+{"timestamp":"2026-07-26T10:00:00.100Z","type":"turn_context","payload":{"cwd":"/tmp/project"}}
+{"timestamp":"2026-07-26T10:00:00.200Z","type":"compacted","payload":{"summary":"trimmed"}}"#;
+
+        assert_eq!(detect_format(content), Format::PlainText);
+    }
 
     #[test]
     fn detects_current_codex_rollout_with_turn_context_and_compacted() {
