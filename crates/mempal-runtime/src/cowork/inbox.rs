@@ -16,6 +16,9 @@ pub const MAX_MESSAGE_SIZE: usize = 8 * 1024;
 pub const MAX_PENDING_MESSAGES: usize = 16;
 pub const MAX_TOTAL_INBOX_BYTES: u64 = 32 * 1024;
 
+static UNLOCKED_MESSAGE_ID_COUNTER: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Debug, thiserror::Error)]
 pub enum InboxError {
     #[error("message content exceeds {MAX_MESSAGE_SIZE} bytes: got {0} bytes")]
@@ -48,6 +51,178 @@ pub struct InboxMessage {
     pub thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<String>,
+    /// P116 delivery receipt handle. Absent on pre-P116 inbox lines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+}
+
+/// Result of a receipt-tracked push (P116).
+#[derive(Debug, Clone)]
+pub struct PushOutcome {
+    pub inbox_path: PathBuf,
+    pub inbox_size_after: u64,
+    pub message_id: String,
+}
+
+/// Deterministic receipt handle: `msg_` + first 12 hex of SHA-256 over
+/// `pushed_at`, `from`, and `content` (null-byte separated).
+#[must_use]
+pub fn build_message_id(pushed_at: &str, from: &str, content: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(pushed_at.as_bytes());
+    hasher.update([0]);
+    hasher.update(from.as_bytes());
+    hasher.update([0]);
+    hasher.update(content.as_bytes());
+    let digest = format!("{:x}", hasher.finalize());
+    format!("msg_{}", &digest[..12])
+}
+
+/// Push like [`push`], then best-effort append a `queued` receipt event
+/// (P116). Receipt IO failures never fail the push.
+///
+/// # Errors
+///
+/// Returns [`InboxError`] when the push violates inbox validation or the
+/// inbox message itself cannot be serialized or written.
+pub fn push_with_receipt(
+    mempal_home: &Path,
+    caller: Tool,
+    target: Tool,
+    cwd: &Path,
+    content: String,
+    pushed_at: String,
+) -> Result<PushOutcome, InboxError> {
+    // Hold the per-project receipts lock across id selection, the inbox
+    // write, AND the queued receipt append: without it two concurrent
+    // identical pushes can both read the same used-id set and pick the
+    // same handle. Lock failure switches id selection to a collision-
+    // resistant fallback and leaves receipt IO best-effort.
+    let guard = super::receipts::acquire_receipts_lock(mempal_home, cwd);
+    // P9's Windows implementation deliberately returns a no-op guard. It
+    // keeps the same API shape but does not serialize id selection.
+    let id_selection_is_serialized = guard.is_some() && cfg!(unix);
+
+    let base_id = build_message_id(&pushed_at, caller.dir_name(), &content);
+    // `pushed_at` is second-precision, so same-second identical pushes
+    // would collide. Uniquify against handles already visible in the
+    // receipts log and the live inboxes (best-effort: an unreadable
+    // receipts log must not block delivery).
+    let (used_ids, used_id_snapshot_is_complete) = collect_used_message_ids(mempal_home, cwd);
+    let message_id = if id_selection_is_serialized && used_id_snapshot_is_complete {
+        next_serialized_message_id(&base_id, &used_ids)
+    } else {
+        next_unserialized_message_id(&base_id, &used_ids)
+    };
+    let (inbox_path, inbox_size_after) = push_message(
+        mempal_home,
+        caller,
+        target,
+        cwd,
+        content,
+        pushed_at.clone(),
+        Some(message_id.clone()),
+    )?;
+
+    let event = super::receipts::ReceiptEvent {
+        event: super::receipts::EVENT_QUEUED.to_string(),
+        message_id: Some(message_id.clone()),
+        from: caller.dir_name().to_string(),
+        to: target.dir_name().to_string(),
+        at: pushed_at,
+        injected_as: None,
+        hook_runtime: None,
+    };
+    // Receipts are observability; never fail the push over them.
+    let _ = super::receipts::append_event_assuming_locked(mempal_home, cwd, &event);
+
+    Ok(PushOutcome {
+        inbox_path,
+        inbox_size_after,
+        message_id,
+    })
+}
+
+fn next_serialized_message_id(
+    base_id: &str,
+    used_ids: &std::collections::HashSet<String>,
+) -> String {
+    let mut message_id = base_id.to_string();
+    let mut suffix = 2;
+    while used_ids.contains(&message_id) {
+        message_id = format!("{base_id}-{suffix}");
+        suffix += 1;
+    }
+    message_id
+}
+
+/// Select a collision-resistant handle when the receipts lock is missing or
+/// is the documented Windows no-op. Concurrent local processes have distinct
+/// process ids, while the atomic counter separates threads in one process;
+/// wall-clock nanos also defend against process-id reuse across launches.
+fn next_unserialized_message_id(
+    base_id: &str,
+    used_ids: &std::collections::HashSet<String>,
+) -> String {
+    use std::sync::atomic::Ordering;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    loop {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        let sequence = UNLOCKED_MESSAGE_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = format!("{base_id}-u{:x}-{nanos:x}-{sequence:x}", std::process::id());
+        if !used_ids.contains(&candidate) {
+            return candidate;
+        }
+    }
+}
+
+/// Every `message_id` currently visible in the receipts log or a live inbox,
+/// plus whether every source was read successfully. Callers must not trust a
+/// deterministic candidate when the snapshot is incomplete.
+fn collect_used_message_ids(
+    mempal_home: &Path,
+    cwd: &Path,
+) -> (std::collections::HashSet<String>, bool) {
+    let mut used = std::collections::HashSet::new();
+    let mut is_complete = true;
+    match super::receipts::load_events_with_completeness(mempal_home, cwd) {
+        Ok((events, receipts_are_complete)) => {
+            used.extend(events.into_iter().filter_map(|event| event.message_id));
+            is_complete &= receipts_are_complete;
+        }
+        Err(_) => is_complete = false,
+    }
+    for target in [Tool::Claude, Tool::Codex] {
+        let Ok(path) = inbox_path(mempal_home, target, cwd) else {
+            is_complete = false;
+            continue;
+        };
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                is_complete = false;
+                continue;
+            }
+        };
+        for line in content.lines() {
+            match serde_json::from_str::<InboxMessage>(line.trim()) {
+                Ok(message) => {
+                    if let Some(id) = message.message_id {
+                        used.insert(id);
+                    }
+                }
+                Err(_) => is_complete = false,
+            }
+        }
+    }
+    (used, is_complete)
 }
 
 /// Resolve ~/.mempal using the HOME env var. Matches the existing
@@ -117,6 +292,19 @@ pub fn push(
     content: String,
     pushed_at: String,
 ) -> Result<(PathBuf, u64), InboxError> {
+    push_message(mempal_home, caller, target, cwd, content, pushed_at, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_message(
+    mempal_home: &Path,
+    caller: Tool,
+    target: Tool,
+    cwd: &Path,
+    content: String,
+    pushed_at: String,
+    message_id: Option<String>,
+) -> Result<(PathBuf, u64), InboxError> {
     use std::fs;
     use std::io::Write;
 
@@ -149,6 +337,7 @@ pub fn push(
         content,
         thread_id: None,
         channel: None,
+        message_id,
     };
     let line = serde_json::to_string(&msg)?;
     // writeln! appends exactly 1 byte for `\n`
@@ -433,6 +622,7 @@ mod tests {
             content: String::new(),
             thread_id: None,
             channel: None,
+            message_id: None,
         };
         let empty_line_bytes = serde_json::to_string(&probe).unwrap().len() + 1;
         assert!(
@@ -512,6 +702,7 @@ mod tests {
             content: String::new(),
             thread_id: None,
             channel: None,
+            message_id: None,
         };
         let probe_empty_line_bytes = serde_json::to_string(&probe).unwrap().len() as u64 + 1;
 
@@ -752,6 +943,7 @@ mod tests {
                 content: "first".into(),
                 thread_id: None,
                 channel: None,
+                message_id: None,
             },
             InboxMessage {
                 pushed_at: "2026-04-15T01:01:00Z".into(),
@@ -759,6 +951,7 @@ mod tests {
                 content: "second".into(),
                 thread_id: None,
                 channel: None,
+                message_id: None,
             },
         ];
         let out = format_plain(Tool::Codex, &msgs);
@@ -777,6 +970,7 @@ mod tests {
             content: "test\nwith\nnewlines and \"quotes\"".into(),
             thread_id: None,
             channel: None,
+            message_id: None,
         }];
         let out = format_codex_hook_json(Tool::Claude, &msgs).unwrap();
 

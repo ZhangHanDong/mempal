@@ -308,12 +308,32 @@ enum Commands {
         /// or "codex-hook-json" for Codex native hook envelope.
         #[arg(long, default_value = "plain")]
         format: String,
+
+        /// Optional hook runtime label recorded in delivery receipts
+        /// (e.g. "claude UserPromptSubmit"). P116.
+        #[arg(long)]
+        hook_runtime: Option<String>,
     },
     /// Show current cowork inbox state for both targets at the given cwd
     /// (read-only — does NOT drain).
     CoworkStatus {
         #[arg(long)]
         cwd: PathBuf,
+    },
+    /// Show pair-push delivery receipts for the given cwd: per-message
+    /// pending / drained / lost states derived from the receipts log (P116,
+    /// read-only).
+    CoworkReceipts {
+        #[arg(long)]
+        cwd: PathBuf,
+
+        /// Maximum number of messages to show (newest first).
+        #[arg(long)]
+        limit: Option<usize>,
+
+        /// Output format: "plain" or "json".
+        #[arg(long, default_value = "plain")]
+        format: String,
     },
     /// Print the multi-agent cowork runbook.
     CoworkRunbook {
@@ -1269,11 +1289,15 @@ async fn run() -> Result<()> {
             cwd,
             cwd_source,
             format,
+            hook_runtime,
         } => {
-            return cowork_drain_command(target, cwd, cwd_source, format);
+            return cowork_drain_command(target, cwd, cwd_source, format, hook_runtime);
         }
         Commands::CoworkStatus { cwd } => {
             return cowork_status_command(cwd);
+        }
+        Commands::CoworkReceipts { cwd, limit, format } => {
+            return cowork_receipts_command(&cwd, limit, &format);
         }
         Commands::CoworkRunbook { format } => {
             return static_runbook_command(
@@ -1661,6 +1685,7 @@ async fn run() -> Result<()> {
         // Cowork commands were already dispatched above and returned early.
         Commands::CoworkDrain { .. }
         | Commands::CoworkStatus { .. }
+        | Commands::CoworkReceipts { .. }
         | Commands::CoworkRunbook { .. }
         | Commands::CoworkInstallHooks { .. }
         | Commands::CoworkRegister { .. }
@@ -6828,13 +6853,20 @@ fn cowork_drain_command(
     cwd: Option<PathBuf>,
     cwd_source: Option<String>,
     format: String,
+    hook_runtime: Option<String>,
 ) -> Result<()> {
     use mempal::cowork::Tool;
     use mempal::cowork::inbox;
+    use mempal::cowork::receipts::{self, DrainMeta};
 
     let inner: Result<(), Box<dyn std::error::Error>> = (|| {
         let target_tool = Tool::from_target_str(&target)
             .ok_or_else(|| format!("invalid target `{target}`: expected claude|codex"))?;
+        // Validate the output format BEFORE the destructive drain rename —
+        // a typo'd --format must lose no messages and write no receipts.
+        if !matches!(format.as_str(), "plain" | "codex-hook-json") {
+            return Err(format!("unknown format: {format}").into());
+        }
         let mempal_home = inbox::mempal_home();
 
         let resolved_cwd: PathBuf = match (cwd, cwd_source.as_deref()) {
@@ -6867,9 +6899,25 @@ fn cowork_drain_command(
         let out = match format.as_str() {
             "plain" => inbox::format_plain(partner, &messages),
             "codex-hook-json" => inbox::format_codex_hook_json(partner, &messages)?,
-            _ => return Err(format!("unknown format: {format}").into()),
+            _ => unreachable!("format validated before drain"),
         };
-        print!("{out}");
+        // Explicit write_all + flush: `print!` is line-buffered and the
+        // codex-hook-json envelope has no trailing newline, so a failed
+        // stdout would otherwise look like a successful injection.
+        {
+            use std::io::Write;
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(out.as_bytes())?;
+            stdout.flush()?;
+        }
+        // Record `drained` receipts only after the hook output was actually
+        // flushed — a receipt must never claim injection that did not happen.
+        let meta = DrainMeta {
+            injected_as: format.clone(),
+            hook_runtime,
+            drained_at: mempal::cowork::peek::format_rfc3339(std::time::SystemTime::now()),
+        };
+        receipts::record_drained(&mempal_home, target_tool, &resolved_cwd, &messages, &meta);
         Ok(())
     })();
 
@@ -6915,6 +6963,90 @@ fn cowork_status_command(cwd: PathBuf) -> Result<()> {
                 println!("  from {} @ {}: {}", msg.from, msg.pushed_at, msg.content);
             }
         }
+    }
+
+    // P116 receipts summary — derived, read-only, and kept separate per
+    // target so an operator can see which partner inbox needs attention.
+    println!();
+    match mempal::cowork::receipts::message_states(&mempal_home, &cwd) {
+        Ok(states) => {
+            for target in [Tool::Claude, Tool::Codex] {
+                let count_of = |status: &str| {
+                    states
+                        .iter()
+                        .filter(|state| {
+                            state.to == target.dir_name() && state.status.as_str() == status
+                        })
+                        .count()
+                };
+                println!(
+                    "{} receipts: {} pending, {} drained, {} lost",
+                    target.dir_name(),
+                    count_of("pending"),
+                    count_of("drained"),
+                    count_of("lost")
+                );
+            }
+            println!("see `mempal cowork-receipts --cwd {}`", cwd.display());
+        }
+        Err(error) => println!("receipts: unavailable ({error})"),
+    }
+    Ok(())
+}
+
+/// `mempal cowork-receipts` — P116 read-only delivery receipt view for the
+/// pair-push channel: joins queued/drained events with the live inboxes.
+fn cowork_receipts_command(cwd: &Path, limit: Option<usize>, format: &str) -> Result<()> {
+    use mempal::cowork::inbox;
+    use mempal::cowork::receipts;
+
+    let mempal_home = inbox::mempal_home();
+    let mut states = receipts::message_states(&mempal_home, cwd)
+        .map_err(|e| anyhow::anyhow!("cowork-receipts: {e}"))?;
+    if let Some(limit) = limit {
+        states.truncate(limit);
+    }
+
+    match format {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&states)?);
+        }
+        "plain" => {
+            use std::fmt::Write as _;
+
+            if states.is_empty() {
+                println!("no delivery receipts for {}", cwd.display());
+                return Ok(());
+            }
+            let count_of = |status: &str| states.iter().filter(|s| s.status == status).count();
+            println!(
+                "{} message{} ({} pending, {} drained, {} lost)",
+                states.len(),
+                if states.len() == 1 { "" } else { "s" },
+                count_of("pending"),
+                count_of("drained"),
+                count_of("lost"),
+            );
+            for state in &states {
+                let id = state.message_id.as_deref().unwrap_or("<pre-P116>");
+                let queued = state.queued_at.as_deref().unwrap_or("-");
+                let mut line = format!(
+                    "{:8} {} {} -> {} queued={}",
+                    state.status, id, state.from, state.to, queued
+                );
+                if let Some(drained_at) = &state.drained_at {
+                    write!(&mut line, " drained={drained_at}")?;
+                }
+                if let Some(injected_as) = &state.injected_as {
+                    write!(&mut line, " injected_as={injected_as}")?;
+                }
+                if let Some(hook_runtime) = &state.hook_runtime {
+                    write!(&mut line, " hook_runtime={hook_runtime:?}")?;
+                }
+                println!("{line}");
+            }
+        }
+        other => anyhow::bail!("unsupported --format value: {other}"),
     }
     Ok(())
 }

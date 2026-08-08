@@ -1,0 +1,304 @@
+spec: task
+name: "P116: cowork pair-push delivery receipts"
+inherits: project
+tags: [cowork, inbox, receipts, cli, mcp, observability]
+estimate: 1d
+---
+
+## Intent
+
+P116 answers GitHub issue #81: the P8 pair channel (`mempal_cowork_push` +
+hook-driven `cowork-drain`) is honest about at-next-UserPromptSubmit delivery,
+but leaves no audit trail. When a partner says "I never saw that handoff",
+nobody can tell whether the message was never queued, queued but never
+drained, or drained and injected. P88 already gives the multi-agent bus a
+delivery ack/status surface; P116 ports the receipt idea to the pair channel
+while keeping its zero-DB, ephemeral, file-based design.
+
+## Decisions
+
+- Every pair push gets a deterministic base `message_id`:
+  `msg_` + first 12 hex of SHA-256 over `pushed_at`, `from`, and `content`
+  (null-byte separated), matching the `build_triple_id` hashing pattern.
+  Because `pushed_at` is second-precision, `push_with_receipt` uniquifies
+  the handle against ids already present in the receipts log and the live
+  inboxes (`-2`, `-3`, … suffix) so same-second identical pushes never
+  share a handle. If the receipts lock is unavailable, or is the documented
+  Windows no-op, the suffix instead combines process id, wall-clock nanos,
+  and a process-local atomic sequence so successful concurrent pushes still
+  return distinct handles without making receipt IO a delivery prerequisite.
+  The same fallback applies when any used-id source cannot be read or parsed;
+  an incomplete snapshot is never trusted for deterministic suffix selection.
+  `InboxMessage.message_id` is `Option<String>` with serde default so
+  pre-P116 inbox lines still parse and drain.
+- `mempal_cowork_push` returns the `message_id` in `CoworkPushResponse`
+  (always serialized, schema-required) so the sender holds a receipt handle
+  immediately.
+- New bounded receipts event log per project identity:
+  `~/.mempal/cowork-inbox/receipts/<encoded_project_identity>.jsonl`.
+  `push` appends a `queued` event; after drained messages are successfully
+  injected, the drain caller appends one `drained` event per message carrying
+  `injected_as` (the drain output format) and an optional `hook_runtime` label.
+- Receipt writes are best-effort observability: an IO failure appending a
+  receipt must never fail or roll back the push/drain itself.
+- Receipts rotate in place: keep at most the newest 400 events per project
+  file. On Unix, appends are serialized with the existing P9
+  `ingest::lock` flock, so the cap holds under concurrent push/drain.
+  Windows retains P9's documented no-op lock; if serialization is unavailable
+  on either platform, the append proceeds unlocked — delivery observability
+  beats strict concurrent rotation, while sequential rotation still applies.
+- Message state is derived, not stored: join `queued`/`drained` events with
+  the live inbox content — `drained` event → `drained`; queued and still
+  present in the target inbox → `pending`; queued, absent from inbox, no
+  drained event → `lost` (the documented drain crash window). The join is
+  multiset-safe (k-th queued pairs with k-th drained per id), and live
+  inbox messages whose `queued` receipt was lost still surface as
+  `pending` rows. Only `NotFound` means an inbox is absent; other inbox read
+  errors fail the query instead of fabricating `lost` states. Results are
+  newest-first with a stable total-order tie break for same-second events.
+- `bus.rs` is touched compile-only: the new `InboxMessage.message_id`
+  field is filled with `None`; bus event/delivery semantics are unchanged.
+- `cowork-drain` validates `--format` BEFORE the destructive drain rename,
+  and records `drained` receipts only after the hook output has been
+  written to stdout — an invalid format must lose no messages and write no
+  false receipt (exit stays 0 per the hook graceful-degrade contract).
+- New read-only CLI `mempal cowork-receipts --cwd <path> [--limit N]
+  [--format plain|json]` prints per-message states newest-first plus counts.
+  `cowork-status` output gains a one-line receipts summary per target.
+- `cowork-drain` gains optional `--hook-runtime <label>` recorded verbatim in
+  drained events. Installed hook templates are NOT changed in P116 (avoids
+  stale-entry churn in `cowork-install-hooks` self-heal); users may add the
+  flag manually.
+- Explicitly out of scope, documented here per issue #81 triage:
+  runtime-side "injected but ignored" detection (unknowable in-process;
+  `codex_hooks` flag issues stay covered by install-hooks warning + doctor),
+  `persisted_drawer_id` receipts (persistence is the explicit P96 capture
+  path), and TTL/supersede (`stale_if`) semantics (no evidence yet).
+
+## Boundaries
+
+### Allowed Changes
+- crates/mempal-runtime/src/cowork/inbox.rs
+- crates/mempal-runtime/src/cowork/receipts.rs
+- crates/mempal-runtime/src/cowork/mod.rs
+- crates/mempal-runtime/src/cowork/bus.rs
+- crates/mempal-mcp-server/src/tools.rs
+- crates/mempal-mcp-server/src/server.rs
+- src/main.rs
+- src/cowork/mod.rs
+- tests/cowork_receipts.rs
+- specs/p116-cowork-pair-delivery-receipts.spec.md
+- docs/plans/2026-07-26-p116-cowork-pair-delivery-receipts.md
+- AGENTS.md
+- CLAUDE.md
+
+### Forbidden
+- Do not write receipts (or anything else) to palace.db; the pair channel
+  stays file-based and ephemeral.
+- Do not change the P84-P101 bus (`cowork/bus.rs`) event/delivery semantics.
+- Do not change drain's at-most-once winner-takes-all rename semantics or
+  the inbox size/count caps.
+- Do not modify the installed hook script templates or
+  `cowork-install-hooks` behavior.
+- Do not break parsing of pre-P116 inbox jsonl lines.
+
+## Acceptance Criteria
+
+Rule: receipt-handle  Every push yields a unique, trackable receipt handle
+
+Scenario: message_id is deterministic over its inputs
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::message_id_is_deterministic_and_prefixed
+  Given the same pushed_at, from, and content
+  When build_message_id runs twice
+  Then both calls return the same `msg_` + 12-hex handle
+
+Scenario: concurrent identical pushes get unique handles
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::concurrent_same_input_pushes_get_unique_ids
+  Given 16 concurrent pushes with identical content, from, and pushed_at
+  When all pushes complete
+  Then all 16 receipt handles are unique
+
+Scenario: lock failure does not duplicate successful push handles
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::concurrent_same_input_pushes_stay_unique_when_receipts_lock_is_unavailable
+  Given 16 concurrent identical pushes and an unavailable receipts lock
+  When all pushes still succeed under the best-effort receipt policy
+  Then all 16 returned receipt handles are unique
+
+Scenario: incomplete used-id snapshot selects a fallback handle
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::push_uses_fallback_id_when_used_id_snapshot_is_incomplete
+  Level: integration
+  Given a receipts path that cannot be read as a log file
+  When a pair push still succeeds under the best-effort receipt policy
+  Then its handle uses the collision-resistant fallback instead of the deterministic base
+
+Scenario: malformed receipt lines make the used-id snapshot incomplete
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::push_uses_fallback_id_when_receipt_log_contains_malformed_lines
+  Given a receipts log containing a malformed non-empty line
+  When a pair push still succeeds under the best-effort receipt policy
+  Then its handle uses the collision-resistant fallback instead of the deterministic base
+
+Scenario: same-second identical pushes get distinct handles
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::same_second_identical_pushes_get_distinct_ids_and_both_drain
+  Given two pushes with identical content, from, and second-precision pushed_at
+  When both are pushed with receipts and then drained
+  Then the two receipt handles differ
+  And both messages report status drained
+
+Scenario: push records a queued receipt event
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::push_returns_message_id_and_appends_queued_event
+  Given an empty project inbox
+  When push_with_receipt succeeds
+  Then the receipts log contains one queued event carrying the returned handle
+
+Scenario: MCP push returns the schema-required handle
+  Test:
+    Package: mempal-mcp-server
+    Filter: test_mcp_push_returns_message_id_and_schema_requires_it
+    Targets: crates/mempal-mcp-server/src/server.rs handler and tools.rs response schema
+  Given an MCP client recognized as codex
+  When mempal_cowork_push succeeds
+  Then the response message_id starts with msg_
+  And message_id is in the CoworkPushResponse schema required list
+
+Rule: drain-receipts  Drains record how messages were injected — and only then
+
+Scenario: drain records injected_as and hook_runtime per message
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::record_drained_appends_drained_events_with_meta
+  Given one pushed message
+  When the message is drained and record_drained runs after simulated injection
+  Then one drained event per message carries that metadata
+
+Scenario: pre-P116 inbox lines drain with a null-handle receipt
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::legacy_inbox_line_without_message_id_still_records_receipt
+  Given an inbox line written before message_id existed
+  When it is drained and then passed to record_drained
+  Then the message drains normally
+  And its drained event has no message_id
+
+Scenario: a drain whose stdout write fails records no drained receipt
+  Test:
+    Package: mempal
+    Filter: cowork_drain_stdout_failure_writes_no_drained_receipt
+  Given one pending message and an unwritable stdout
+  When `mempal cowork-drain --format codex-hook-json` runs
+  Then the command exits 0 with an error on stderr
+  And the message state is lost, not drained
+
+Scenario: invalid drain format loses no messages and writes no receipt
+  Test:
+    Package: mempal
+    Filter: cowork_drain_invalid_format_preserves_inbox_and_writes_no_receipt
+  Level: integration
+  Given one pending message in the codex inbox
+  When `mempal cowork-drain --format codex-hook-jsn` runs
+  Then the command exits 0 with a format error on stderr
+  And the inbox file still contains the message
+  And the receipt state remains pending
+
+Rule: derived-states  Message state is derived from events plus live inboxes
+
+Scenario: states cover pending, drained, and lost
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::message_states_derives_pending_drained_and_lost
+  Given queued messages that are respectively still in the inbox, drained, and vanished
+  When message_states runs
+  Then the three messages report pending, drained, and lost respectively
+
+Scenario: equal timestamps have deterministic message-id order
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::message_states_orders_equal_timestamps_by_message_id
+  Given receipt events with distinct message ids and the same queued timestamp
+  When message_states runs
+  Then rows are ordered lexically by message id
+
+Scenario: duplicate ids join as a multiset
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::duplicate_id_events_join_as_multiset
+  Given two queued and two drained events sharing one id
+  When message_states runs
+  Then both rows report drained
+
+Scenario: live rows beyond the queued count still report pending
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::extra_live_rows_beyond_queued_still_pending
+  Given two live inbox lines sharing an id but only one queued event
+  When message_states runs
+  Then both rows surface as pending
+
+Scenario: a live message with no queued receipt still reports pending
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::inbox_message_without_queued_receipt_still_reported_pending
+  Given an inbox line whose best-effort queued receipt write failed
+  When message_states runs
+  Then the message surfaces as pending with its inbox metadata
+
+Scenario: unreadable live inbox is not misreported as lost
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::message_states_does_not_report_lost_when_live_inbox_is_unreadable
+  Level: integration
+  Given a queued receipt and a live inbox path that cannot be read as a file
+  When message_states runs
+  Then the query returns an IO error instead of a lost state
+
+Rule: receipts-log  The log rotates at the cap, including Unix concurrency
+
+Scenario: rotation keeps the newest events under the cap
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::receipts_rotation_keeps_newest_events_under_cap
+  Given more than 400 appended events
+  When load_events runs
+  Then exactly 400 events remain and the newest survives
+
+Scenario: concurrent appends settle at the cap
+  Test:
+    Package: mempal-runtime
+    Filter: cowork::receipts::tests::concurrent_appends_never_exceed_cap
+  Given an effective Unix receipts flock and 8 threads appending 480 events in total
+  When all appends complete
+  Then the log holds exactly 400 events
+
+Rule: cli-surface  Receipts are inspectable read-only from the CLI
+
+Scenario: cowork-status separates receipt counts by target
+  Test:
+    Package: mempal
+    Filter: cowork_status_summarizes_receipts_per_target
+  Level: integration
+  Given one pending message for codex and one drained message for claude
+  When cowork-status runs
+  Then it prints independent pending/drained/lost counts for each target
+
+Scenario: cowork-receipts tracks a message from pending to drained
+  Test:
+    Package: mempal
+    Filter: cowork_receipts_tracks_pending_then_drained
+  Level: integration
+  Given a pushed message
+  When cowork-receipts runs before and after cowork-drain --hook-runtime
+  Then the json output moves from pending to drained with injected_as and hook_runtime
+  And the plain output mentions the drained state

@@ -1900,6 +1900,8 @@ pub struct CoworkPushResponse {
     pub pushed_at: String,
     #[schemars(with = "i64")]
     pub inbox_size_after: u64,
+    /// P116 delivery receipt handle; track it via `mempal cowork-receipts`.
+    pub message_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
