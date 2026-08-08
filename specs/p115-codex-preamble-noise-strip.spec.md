@@ -72,7 +72,8 @@ Rule: wrapper-strip  Codex runtime preamble wrappers never enter memory
 
 Scenario: each wrapper tag block is stripped with surrounding text kept
   Test:
-    Filter: cargo test --test noise_strip test_codex_all_wrapper_tags_stripped
+    Package: mempal
+    Filter: test_codex_all_wrapper_tags_stripped
   Given content wrapping boilerplate in each of INSTRUCTIONS, user_instructions, environment_context, recommended_plugins, and turn_aborted tags
   When strip_codex_rollout_noise runs
   Then the wrapper block and its payload are removed
@@ -80,7 +81,8 @@ Scenario: each wrapper tag block is stripped with surrounding text kept
 
 Scenario: multi-line wrapper blocks strip while real text survives
   Test:
-    Filter: cargo test --test noise_strip test_codex_runtime_preamble_wrappers_stripped
+    Package: mempal
+    Filter: test_codex_runtime_preamble_wrappers_stripped
   Given a user_instructions block, real request text, and an environment_context block
   When strip_codex_rollout_noise runs
   Then both wrapper blocks are removed entirely
@@ -88,21 +90,24 @@ Scenario: multi-line wrapper blocks strip while real text survives
 
 Scenario: wrapper-only content strips to blank
   Test:
-    Filter: cargo test --test noise_strip test_codex_wrapper_only_message_strips_to_blank
+    Package: mempal
+    Filter: test_codex_wrapper_only_message_strips_to_blank
   Given content that is exactly one recommended_plugins block
   When strip_codex_rollout_noise runs
   Then the result is blank
 
 Scenario: wrapper tags inside code fences are preserved
   Test:
-    Filter: cargo test --test noise_strip test_codex_wrapper_inside_code_fence_preserved
+    Package: mempal
+    Filter: test_codex_wrapper_inside_code_fence_preserved
   Given an environment_context tag inside a fenced code block
   When strip_codex_rollout_noise runs
   Then the fenced content is preserved verbatim
 
 Scenario: preamble-only user messages produce no transcript line
   Test:
-    Filter: cargo test -p mempal-runtime --lib ingest::normalize::tests::codex_normalize_drops_runtime_preamble_user_messages
+    Package: mempal-runtime
+    Filter: ingest::normalize::tests::codex_normalize_drops_runtime_preamble_user_messages
   Given a rollout whose user messages are a user_instructions block and an environment_context block followed by real text
   When normalize_codex_jsonl runs with noise stripping
   Then only the real user text and assistant reply appear in the transcript
@@ -111,7 +116,8 @@ Rule: normalize-version  Old sources become reachable for re-normalization
 
 Scenario: the normalize version is pinned at 3
   Test:
-    Filter: cargo test --test noise_strip test_normalize_version_bump_triggers_reindex_opportunity
+    Package: mempal
+    Filter: test_normalize_version_bump_triggers_reindex_opportunity
   Given a drawer stored with normalize_version 1
   When reindex --stale runs
   Then the source is re-normalized
@@ -121,14 +127,16 @@ Rule: codex-detection  Detection needs message-bearing evidence
 
 Scenario: session_meta plus context-only records is not Codex
   Test:
-    Filter: cargo test -p mempal-runtime --lib ingest::detect::tests::rejects_codex_rollout_without_message_records
+    Package: mempal-runtime
+    Filter: ingest::detect::tests::rejects_codex_rollout_without_message_records
   Given a JSONL file with only session_meta, turn_context, and compacted records
   When detect_format runs
   Then the format is PlainText
 
 Scenario: current rollouts with new record types still detect
   Test:
-    Filter: cargo test -p mempal-runtime --lib ingest::detect::tests::detects_current_codex_rollout_with_turn_context_and_compacted
+    Package: mempal-runtime
+    Filter: ingest::detect::tests::detects_current_codex_rollout_with_turn_context_and_compacted
   Given a rollout containing session_meta, turn_context, response_item, compacted, and event_msg records
   When detect_format runs
   Then the format is CodexJsonl
