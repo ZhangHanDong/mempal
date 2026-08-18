@@ -612,12 +612,75 @@ impl Database {
     /// re-ingesting a physical source may re-route it to a different room, and
     /// a room-scoped delete would miss the stale drawers in the old room and
     /// leave duplicates behind.
+    /// Run `f` inside one IMMEDIATE transaction: commit on Ok, roll back on
+    /// Err (P117). Callables must use `_in_txn` method variants — nesting a
+    /// method that opens its own transaction will fail.
+    pub fn with_immediate_transaction<T, E>(
+        &self,
+        f: impl FnOnce(&Self) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<DbError>,
+    {
+        self.conn
+            .execute_batch("BEGIN IMMEDIATE;")
+            .map_err(DbError::from)
+            .map_err(E::from)?;
+        match f(self) {
+            Ok(value) => {
+                self.conn
+                    .execute_batch("COMMIT;")
+                    .map_err(DbError::from)
+                    .map_err(E::from)?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(error)
+            }
+        }
+    }
+
+    /// Non-transactional variant of [`Self::replace_active_source_drawers`]
+    /// for use inside [`Self::with_immediate_transaction`] (P117).
+    pub fn replace_active_source_drawers_in_txn(
+        &self,
+        source_file: &str,
+        wing: &str,
+        room: Option<&str>,
+    ) -> Result<u64, DbError> {
+        let rows = self.active_source_rows_in_room(source_file, wing, room)?;
+        self.delete_source_drawer_rows_in_txn(&rows)
+    }
+
+    /// Non-transactional variant of
+    /// [`Self::replace_active_source_drawers_across_rooms`] for use inside
+    /// [`Self::with_immediate_transaction`] (P117).
+    pub fn replace_active_source_drawers_across_rooms_in_txn(
+        &self,
+        source_file: &str,
+        wing: &str,
+    ) -> Result<u64, DbError> {
+        let rows = self.active_source_rows_all_rooms(source_file, wing)?;
+        self.delete_source_drawer_rows_in_txn(&rows)
+    }
+
     pub fn replace_active_source_drawers(
         &self,
         source_file: &str,
         wing: &str,
         room: Option<&str>,
     ) -> Result<u64, DbError> {
+        let rows = self.active_source_rows_in_room(source_file, wing, room)?;
+        self.delete_source_drawer_rows(&rows)
+    }
+
+    fn active_source_rows_in_room(
+        &self,
+        source_file: &str,
+        wing: &str,
+        room: Option<&str>,
+    ) -> Result<Vec<(i64, String, String)>, DbError> {
         let mut statement = self.conn.prepare(
             r#"
             SELECT rowid, id, content
@@ -638,9 +701,7 @@ impl Database {
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        drop(statement);
-
-        self.delete_source_drawer_rows(rows)
+        Ok(rows)
     }
 
     /// Hard-delete the active drawers for a source across ALL rooms in a wing.
@@ -655,6 +716,15 @@ impl Database {
         source_file: &str,
         wing: &str,
     ) -> Result<u64, DbError> {
+        let rows = self.active_source_rows_all_rooms(source_file, wing)?;
+        self.delete_source_drawer_rows(&rows)
+    }
+
+    fn active_source_rows_all_rooms(
+        &self,
+        source_file: &str,
+        wing: &str,
+    ) -> Result<Vec<(i64, String, String)>, DbError> {
         let mut statement = self.conn.prepare(
             r#"
             SELECT rowid, id, content
@@ -674,61 +744,57 @@ impl Database {
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        drop(statement);
-
-        self.delete_source_drawer_rows(rows)
+        Ok(rows)
     }
 
     /// Transactionally hard-delete the given (rowid, id, content) drawer rows
     /// along with their FTS and vector entries. Shared by the room-scoped and
     /// across-rooms source replacement paths.
-    fn delete_source_drawer_rows(&self, rows: Vec<(i64, String, String)>) -> Result<u64, DbError> {
+    fn delete_source_drawer_rows(&self, rows: &[(i64, String, String)]) -> Result<u64, DbError> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        self.with_immediate_transaction(|db| db.delete_source_drawer_rows_in_txn(rows))
+    }
+
+    /// Delete body without transaction control — the caller owns the
+    /// transaction (P117).
+    fn delete_source_drawer_rows_in_txn(
+        &self,
+        rows: &[(i64, String, String)],
+    ) -> Result<u64, DbError> {
         if rows.is_empty() {
             return Ok(0);
         }
 
-        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
-        let result = (|| -> Result<u64, DbError> {
-            let fts_exists = self.table_exists("drawers_fts")?;
-            let vectors_exist = self.table_exists("drawer_vectors")?;
+        let fts_exists = self.table_exists("drawers_fts")?;
+        let vectors_exist = self.table_exists("drawer_vectors")?;
 
-            for (rowid, id, content) in &rows {
-                if fts_exists {
-                    self.conn.execute(
-                        "INSERT INTO drawers_fts(drawers_fts, rowid, content) VALUES ('delete', ?1, ?2)",
-                        params![rowid, content],
-                    )?;
-                }
-                if vectors_exist {
-                    self.conn
-                        .execute("DELETE FROM drawer_vectors WHERE id = ?1", [id])?;
-                }
-                // triples.source_drawer is a FK to drawers(id) (RESTRICT). Drop
-                // the dangling provenance link before the hard delete, otherwise
-                // deleting a drawer referenced by a KG triple fails with a
-                // FOREIGN KEY constraint error. The triple (a KG fact) is kept;
-                // only its stale source pointer is cleared.
+        for (rowid, id, content) in rows {
+            if fts_exists {
                 self.conn.execute(
-                    "UPDATE triples SET source_drawer = NULL WHERE source_drawer = ?1",
-                    [id],
+                    "INSERT INTO drawers_fts(drawers_fts, rowid, content) VALUES ('delete', ?1, ?2)",
+                    params![rowid, content],
                 )?;
+            }
+            if vectors_exist {
                 self.conn
-                    .execute("DELETE FROM drawers WHERE rowid = ?1", [rowid])?;
+                    .execute("DELETE FROM drawer_vectors WHERE id = ?1", [id])?;
             }
-
-            Ok(rows.len() as u64)
-        })();
-
-        match result {
-            Ok(count) => {
-                self.conn.execute_batch("COMMIT;")?;
-                Ok(count)
-            }
-            Err(error) => {
-                let _ = self.conn.execute_batch("ROLLBACK;");
-                Err(error)
-            }
+            // triples.source_drawer is a FK to drawers(id) (RESTRICT). Drop
+            // the dangling provenance link before the hard delete, otherwise
+            // deleting a drawer referenced by a KG triple fails with a
+            // FOREIGN KEY constraint error. The triple (a KG fact) is kept;
+            // only its stale source pointer is cleared.
+            self.conn.execute(
+                "UPDATE triples SET source_drawer = NULL WHERE source_drawer = ?1",
+                [id],
+            )?;
+            self.conn
+                .execute("DELETE FROM drawers WHERE rowid = ?1", [rowid])?;
         }
+
+        Ok(rows.len() as u64)
     }
 
     fn table_exists(&self, table_name: &str) -> Result<bool, DbError> {

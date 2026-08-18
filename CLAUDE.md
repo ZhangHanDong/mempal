@@ -169,6 +169,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 | `specs/p114-coarse-workspace-split.spec.md` | 完成 | P114 coarse workspace split：新增公开可发布的 `mempal-store-sqlite` / `mempal-runtime` / `mempal-mcp-server` 三个粗粒度 crate，把 SQLite storage、runtime workflows、MCP server wiring 从 root 拆出，同时保留 root CLI 和 legacy facade paths |
 | `specs/p115-codex-preamble-noise-strip.spec.md` | 完成 | P115 Codex runtime preamble strip：`strip_codex_rollout_noise` 剥离 `<INSTRUCTIONS>` / `<user_instructions>` / `<environment_context>` / `<recommended_plugins>` / `<turn_aborted>` wrapper 块（GitHub #10）；`CURRENT_NORMALIZE_VERSION` 2→3 让 `reindex --stale` 重拾 PR #7 前的旧 source；`is_codex_jsonl` 要求至少一条 `event_msg`/`response_item` |
 | `specs/p116-cowork-pair-delivery-receipts.spec.md` | 完成 | P116 cowork pair-push delivery receipts：pair 通道每条 push 基于确定性 base 生成唯一 `message_id`（`CoworkPushResponse` 返回），push/drain 写有界 receipts event log，`mempal cowork-receipts` / `cowork-status` 汇总 pending/drained/lost，`cowork-drain --hook-runtime` 记录注入 runtime（GitHub #81） |
+| `specs/p117-reindex-atomic-replace.spec.md` | 完成 | P117 atomic reindex replace：source 替换重排为 embed 先行 + 单事务 delete/insert（embed/insert 失败不再丢旧数据），`reindex --stale --dry-run` 补 missing-source 扫描成为真实可行性报告；file-less source（MCP 直录）保持不可重归一化 |
 
 ### 当前 Spec（草稿，未实现）
 
@@ -290,6 +291,7 @@ mempal 借鉴 MemPalace 的设计理念（verbatim 存储、Wing/Room 结构、A
 - `docs/plans/2026-07-09-p114-coarse-workspace-split.md` — P114 coarse workspace split（已完成）
 - `docs/plans/2026-07-26-p115-codex-preamble-noise-strip.md` — P115 Codex runtime preamble strip + normalize version bump（已完成）
 - `docs/plans/2026-07-26-p116-cowork-pair-delivery-receipts.md` — P116 cowork pair-push delivery receipts（已完成）
+- `docs/plans/2026-08-18-p117-reindex-atomic-replace.md` — P117 atomic reindex replace + dry-run feasibility report（已完成）
 
 ### Spec 使用方式
 

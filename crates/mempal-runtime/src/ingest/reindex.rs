@@ -61,24 +61,35 @@ pub async fn reindex_sources<E: Embedder + ?Sized>(
         ..ReindexReport::default()
     };
 
+    // P117: the source-file existence scan runs in dry-run too, so the
+    // report is a real feasibility statement (sources ingested without an
+    // on-disk file — e.g. MCP-ingested content — are not reindexable).
+    let mut reindexable = Vec::new();
+    for source in sources {
+        let has_file = source
+            .source_file
+            .as_deref()
+            .is_some_and(|source_file| PathBuf::from(source_file).is_file());
+        if has_file {
+            reindexable.push(source);
+        } else {
+            report.skipped_missing_sources += 1;
+            report.skipped_missing_drawers += source.drawer_count;
+        }
+    }
+
     if options.dry_run {
         return Ok(report);
     }
 
-    for source in sources {
-        let Some(source_file) = source.source_file.as_deref() else {
-            report.skipped_missing_sources += 1;
-            report.skipped_missing_drawers += source.drawer_count;
-            continue;
-        };
-        let source_path = PathBuf::from(source_file);
-        if !source_path.is_file() {
-            report.skipped_missing_sources += 1;
-            report.skipped_missing_drawers += source.drawer_count;
-            continue;
-        }
-
-        let stats = reindex_one_source(db, embedder, &source, source_file, source_path).await?;
+    for source in reindexable {
+        let source_file = source
+            .source_file
+            .as_deref()
+            .expect("checked Some above")
+            .to_string();
+        let source_path = PathBuf::from(&source_file);
+        let stats = reindex_one_source(db, embedder, &source, &source_file, source_path).await?;
         report.processed_sources += 1;
         report.reingested_files += stats.files;
         report.reingested_chunks += stats.chunks;
