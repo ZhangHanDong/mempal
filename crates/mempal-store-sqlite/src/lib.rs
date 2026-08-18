@@ -163,6 +163,15 @@ pub enum DbError {
     InvalidEnumValue { kind: &'static str, value: String },
     #[error("invalid drawer metadata: {0}")]
     InvalidDrawerMetadata(String),
+    #[error(
+        "source {source_file} in wing {wing} is protected by {references} knowledge references across {referenced_drawers} drawers"
+    )]
+    SourceProtectedByKnowledgeReferences {
+        source_file: String,
+        wing: String,
+        referenced_drawers: u64,
+        references: u64,
+    },
     #[error("invalid tunnel: {0}")]
     InvalidTunnel(String),
     #[error("failed to register sqlite-vec auto extension: {0}")]
@@ -174,6 +183,12 @@ pub enum DbError {
 pub struct Database {
     conn: Connection,
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KnowledgeReferenceSummary {
+    pub referenced_drawers: u64,
+    pub references: u64,
 }
 
 impl Database {
@@ -604,6 +619,58 @@ impl Database {
         Ok(rows)
     }
 
+    /// Count active evidence drawers for one physical source that are protected
+    /// by Stage-1 knowledge reference arrays or Phase-2 evidence links.
+    ///
+    /// Source replacement must not hard-delete these drawers without an
+    /// explicit old-to-new reference mapping. P117 therefore uses this as a
+    /// conservative preflight and skips the whole source when the summary is
+    /// non-empty.
+    pub fn source_knowledge_reference_summary(
+        &self,
+        source_file: &str,
+        wing: &str,
+    ) -> Result<KnowledgeReferenceSummary, DbError> {
+        let (referenced_drawers, references) = self.conn.query_row(
+            r#"
+            WITH stage1_refs(evidence_id) AS (
+                SELECT ref.value
+                FROM drawers AS knowledge, json_each(knowledge.supporting_refs) AS ref
+                WHERE knowledge.deleted_at IS NULL AND knowledge.memory_kind = 'knowledge'
+                UNION ALL
+                SELECT ref.value
+                FROM drawers AS knowledge, json_each(knowledge.counterexample_refs) AS ref
+                WHERE knowledge.deleted_at IS NULL AND knowledge.memory_kind = 'knowledge'
+                UNION ALL
+                SELECT ref.value
+                FROM drawers AS knowledge, json_each(knowledge.teaching_refs) AS ref
+                WHERE knowledge.deleted_at IS NULL AND knowledge.memory_kind = 'knowledge'
+                UNION ALL
+                SELECT ref.value
+                FROM drawers AS knowledge, json_each(knowledge.verification_refs) AS ref
+                WHERE knowledge.deleted_at IS NULL AND knowledge.memory_kind = 'knowledge'
+            ),
+            all_refs(evidence_id) AS (
+                SELECT evidence_id FROM stage1_refs
+                UNION ALL
+                SELECT evidence_drawer_id FROM knowledge_evidence_links
+            )
+            SELECT COUNT(DISTINCT evidence.id), COUNT(*)
+            FROM all_refs
+            JOIN drawers AS evidence ON evidence.id = all_refs.evidence_id
+            WHERE evidence.deleted_at IS NULL
+              AND evidence.source_file = ?1
+              AND evidence.wing = ?2
+            "#,
+            (source_file, wing),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        Ok(KnowledgeReferenceSummary {
+            referenced_drawers: referenced_drawers as u64,
+            references: references as u64,
+        })
+    }
+
     /// Hard-delete the active drawers for a source scoped to a specific room
     /// (NULL room matches NULL room), removing their FTS and vector rows too.
     ///
@@ -628,10 +695,15 @@ impl Database {
             .map_err(E::from)?;
         match f(self) {
             Ok(value) => {
-                self.conn
+                if let Err(error) = self
+                    .conn
                     .execute_batch("COMMIT;")
                     .map_err(DbError::from)
-                    .map_err(E::from)?;
+                    .map_err(E::from)
+                {
+                    let _ = self.conn.execute_batch("ROLLBACK;");
+                    return Err(error);
+                }
                 Ok(value)
             }
             Err(error) => {
@@ -649,6 +721,7 @@ impl Database {
         wing: &str,
         room: Option<&str>,
     ) -> Result<u64, DbError> {
+        self.ensure_source_is_not_knowledge_referenced(source_file, wing)?;
         let rows = self.active_source_rows_in_room(source_file, wing, room)?;
         self.delete_source_drawer_rows_in_txn(&rows)
     }
@@ -661,6 +734,7 @@ impl Database {
         source_file: &str,
         wing: &str,
     ) -> Result<u64, DbError> {
+        self.ensure_source_is_not_knowledge_referenced(source_file, wing)?;
         let rows = self.active_source_rows_all_rooms(source_file, wing)?;
         self.delete_source_drawer_rows_in_txn(&rows)
     }
@@ -671,8 +745,9 @@ impl Database {
         wing: &str,
         room: Option<&str>,
     ) -> Result<u64, DbError> {
-        let rows = self.active_source_rows_in_room(source_file, wing, room)?;
-        self.delete_source_drawer_rows(&rows)
+        self.with_immediate_transaction(|db| {
+            db.replace_active_source_drawers_in_txn(source_file, wing, room)
+        })
     }
 
     fn active_source_rows_in_room(
@@ -716,8 +791,9 @@ impl Database {
         source_file: &str,
         wing: &str,
     ) -> Result<u64, DbError> {
-        let rows = self.active_source_rows_all_rooms(source_file, wing)?;
-        self.delete_source_drawer_rows(&rows)
+        self.with_immediate_transaction(|db| {
+            db.replace_active_source_drawers_across_rooms_in_txn(source_file, wing)
+        })
     }
 
     fn active_source_rows_all_rooms(
@@ -745,16 +821,6 @@ impl Database {
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
-    }
-
-    /// Transactionally hard-delete the given (rowid, id, content) drawer rows
-    /// along with their FTS and vector entries. Shared by the room-scoped and
-    /// across-rooms source replacement paths.
-    fn delete_source_drawer_rows(&self, rows: &[(i64, String, String)]) -> Result<u64, DbError> {
-        if rows.is_empty() {
-            return Ok(0);
-        }
-        self.with_immediate_transaction(|db| db.delete_source_drawer_rows_in_txn(rows))
     }
 
     /// Delete body without transaction control — the caller owns the
@@ -795,6 +861,23 @@ impl Database {
         }
 
         Ok(rows.len() as u64)
+    }
+
+    fn ensure_source_is_not_knowledge_referenced(
+        &self,
+        source_file: &str,
+        wing: &str,
+    ) -> Result<(), DbError> {
+        let summary = self.source_knowledge_reference_summary(source_file, wing)?;
+        if summary.referenced_drawers == 0 {
+            return Ok(());
+        }
+        Err(DbError::SourceProtectedByKnowledgeReferences {
+            source_file: source_file.to_string(),
+            wing: wing.to_string(),
+            referenced_drawers: summary.referenced_drawers,
+            references: summary.references,
+        })
     }
 
     fn table_exists(&self, table_name: &str) -> Result<bool, DbError> {

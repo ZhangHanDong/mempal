@@ -104,6 +104,12 @@ pub enum IngestError {
         #[source]
         source: EmbedError,
     },
+    #[error("embedding count mismatch for {path}: expected {expected}, got {actual}")]
+    EmbeddingCountMismatch {
+        path: PathBuf,
+        expected: usize,
+        actual: usize,
+    },
     #[error("failed to check drawer {drawer_id}")]
     CheckDrawer {
         drawer_id: String,
@@ -116,6 +122,8 @@ pub enum IngestError {
         #[source]
         source: crate::core::db::DbError,
     },
+    #[error("replacement drawer id collision for {drawer_id}")]
+    ReplacementDrawerCollision { drawer_id: String },
     #[error("failed to replace source drawers for {source_file}")]
     ReplaceSource {
         source_file: String,
@@ -356,6 +364,13 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
             path: path.to_path_buf(),
             source,
         })?;
+    if vectors.len() != pending.len() {
+        return Err(IngestError::EmbeddingCountMismatch {
+            path: path.to_path_buf(),
+            expected: pending.len(),
+            actual: vectors.len(),
+        });
+    }
 
     let rows: Vec<(usize, &str, String, Vec<f32>)> = pending
         .into_iter()
@@ -398,6 +413,10 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
                         }
                     })?;
                     stats.chunks += 1;
+                } else if replacing {
+                    return Err(IngestError::ReplacementDrawerCollision {
+                        drawer_id: drawer.id,
+                    });
                 } else {
                     stats.skipped += 1;
                 }

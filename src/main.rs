@@ -3149,16 +3149,27 @@ fn print_reindex_report(report: ReindexReport, dry_run: bool) {
                 report.skipped_missing_drawers, report.skipped_missing_sources
             );
         }
+        if report.skipped_protected_drawers > 0 {
+            println!(
+                "would skip {} drawers from {} governance-protected sources ({} knowledge references)",
+                report.skipped_protected_drawers,
+                report.skipped_protected_sources,
+                report.protecting_references
+            );
+        }
         return;
     }
 
     println!(
-        "reindex complete: processed {} sources, {} drawers selected, {} chunks written, skipped {} existing chunks, skipped {} missing-source drawers",
+        "reindex complete: processed {} sources, {} drawers selected, {} chunks written, skipped {} existing chunks, skipped {} missing-source drawers, skipped {} governance-protected drawers from {} sources ({} knowledge references)",
         report.processed_sources,
         report.candidate_drawers,
         report.reingested_chunks,
         report.skipped_existing_chunks,
-        report.skipped_missing_drawers
+        report.skipped_missing_drawers,
+        report.skipped_protected_drawers,
+        report.skipped_protected_sources,
+        report.protecting_references
     );
 }
 
