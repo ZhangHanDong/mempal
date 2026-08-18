@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
 
 use thiserror::Error;
 
@@ -31,6 +34,9 @@ pub struct ReindexReport {
     pub skipped_existing_chunks: usize,
     pub skipped_missing_sources: u64,
     pub skipped_missing_drawers: u64,
+    pub skipped_protected_sources: u64,
+    pub skipped_protected_drawers: u64,
+    pub protecting_references: u64,
 }
 
 #[derive(Debug, Error)]
@@ -61,24 +67,56 @@ pub async fn reindex_sources<E: Embedder + ?Sized>(
         ..ReindexReport::default()
     };
 
-    if options.dry_run {
-        return Ok(report);
-    }
-
+    // P117: the source-file existence scan runs in dry-run too, so the
+    // report is a real feasibility statement (sources ingested without an
+    // on-disk file — e.g. MCP-ingested content — are not reindexable).
+    let mut reindexable = Vec::new();
+    let mut reference_summaries = HashMap::new();
+    let mut counted_protected_sources = HashSet::new();
     for source in sources {
         let Some(source_file) = source.source_file.as_deref() else {
             report.skipped_missing_sources += 1;
             report.skipped_missing_drawers += source.drawer_count;
             continue;
         };
-        let source_path = PathBuf::from(source_file);
-        if !source_path.is_file() {
+        if !PathBuf::from(source_file).is_file() {
             report.skipped_missing_sources += 1;
             report.skipped_missing_drawers += source.drawer_count;
             continue;
         }
 
-        let stats = reindex_one_source(db, embedder, &source, source_file, source_path).await?;
+        let source_key = (source_file.to_string(), source.wing.clone());
+        let reference_summary = if let Some(summary) = reference_summaries.get(&source_key) {
+            *summary
+        } else {
+            let summary = db.source_knowledge_reference_summary(source_file, &source.wing)?;
+            reference_summaries.insert(source_key.clone(), summary);
+            summary
+        };
+        if reference_summary.referenced_drawers > 0 {
+            report.skipped_protected_sources += 1;
+            report.skipped_protected_drawers += source.drawer_count;
+            if counted_protected_sources.insert(source_key) {
+                report.protecting_references += reference_summary.references;
+            }
+            continue;
+        }
+
+        reindexable.push(source);
+    }
+
+    if options.dry_run {
+        return Ok(report);
+    }
+
+    for source in reindexable {
+        let source_file = source
+            .source_file
+            .as_deref()
+            .expect("checked Some above")
+            .to_string();
+        let source_path = PathBuf::from(&source_file);
+        let stats = reindex_one_source(db, embedder, &source, &source_file, source_path).await?;
         report.processed_sources += 1;
         report.reingested_files += stats.files;
         report.reingested_chunks += stats.chunks;

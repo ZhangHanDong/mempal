@@ -77,6 +77,9 @@ pub type Result<T> = std::result::Result<T, IngestError>;
 
 #[derive(Debug, Error)]
 pub enum IngestError {
+    /// Transaction bookkeeping error from the store layer (P117).
+    #[error(transparent)]
+    Db(#[from] crate::core::db::DbError),
     #[error("failed to read {path}")]
     ReadFile {
         path: PathBuf,
@@ -101,6 +104,12 @@ pub enum IngestError {
         #[source]
         source: EmbedError,
     },
+    #[error("embedding count mismatch for {path}: expected {expected}, got {actual}")]
+    EmbeddingCountMismatch {
+        path: PathBuf,
+        expected: usize,
+        actual: usize,
+    },
     #[error("failed to check drawer {drawer_id}")]
     CheckDrawer {
         drawer_id: String,
@@ -113,6 +122,8 @@ pub enum IngestError {
         #[source]
         source: crate::core::db::DbError,
     },
+    #[error("replacement drawer id collision for {drawer_id}")]
+    ReplacementDrawerCollision { drawer_id: String },
     #[error("failed to replace source drawers for {source_file}")]
     ReplaceSource {
         source_file: String,
@@ -294,17 +305,11 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
     };
 
     let source_type = source_type_for(format);
-    if options.replace_existing_source && !options.dry_run {
-        let replace_result = if options.replace_across_rooms {
-            db.replace_active_source_drawers_across_rooms(&source_file, wing)
-        } else {
-            db.replace_active_source_drawers(&source_file, wing, Some(resolved_room.as_str()))
-        };
-        replace_result.map_err(|source| IngestError::ReplaceSource {
-            source_file: source_file.clone(),
-            source,
-        })?;
-    }
+    // P117: the destructive source replacement is deferred until AFTER
+    // embeddings exist, and then runs in the same transaction as the
+    // inserts — an embed or insert failure must never leave the source's
+    // old drawers deleted.
+    let replacing = options.replace_existing_source && !options.dry_run;
 
     let mut pending = Vec::new();
     let mut seen_drawer_ids = HashSet::new();
@@ -321,12 +326,16 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
             stats.skipped += 1;
             continue;
         }
-        if db
-            .drawer_exists(&drawer_id)
-            .map_err(|source| IngestError::CheckDrawer {
-                drawer_id: drawer_id.clone(),
-                source,
-            })?
+        // Under replacement the existence check is skipped: drawer ids are
+        // source-aware (P110), so a colliding id can only belong to this
+        // same source, whose rows are deleted in the replace transaction.
+        if !replacing
+            && db
+                .drawer_exists(&drawer_id)
+                .map_err(|source| IngestError::CheckDrawer {
+                    drawer_id: drawer_id.clone(),
+                    source,
+                })?
         {
             stats.skipped += 1;
             continue;
@@ -355,40 +364,92 @@ pub async fn ingest_file_with_options<E: Embedder + ?Sized>(
             path: path.to_path_buf(),
             source,
         })?;
-
-    for ((chunk_index, chunk, drawer_id), vector) in pending.into_iter().zip(vectors) {
-        let drawer = Drawer::new_bootstrap_evidence(BootstrapEvidenceArgs {
-            id: drawer_id.clone(),
-            content: chunk.to_string(),
-            wing: wing.to_string(),
-            room: Some(resolved_room.clone()),
-            source_file: Some(source_file.clone()),
-            source_type: source_type.clone(),
-            added_at: current_timestamp(),
-            chunk_index: Some(chunk_index as i64),
-            importance: 0,
+    if vectors.len() != pending.len() {
+        return Err(IngestError::EmbeddingCountMismatch {
+            path: path.to_path_buf(),
+            expected: pending.len(),
+            actual: vectors.len(),
         });
-        let drawer = Drawer {
-            normalize_version: CURRENT_NORMALIZE_VERSION,
-            ..drawer
+    }
+
+    let rows: Vec<(usize, &str, String, Vec<f32>)> = pending
+        .into_iter()
+        .zip(vectors)
+        .map(|((chunk_index, chunk, drawer_id), vector)| {
+            (chunk_index, chunk.as_ref(), drawer_id, vector)
+        })
+        .collect();
+
+    let insert_rows =
+        |db: &Database, stats: &mut IngestStats| -> std::result::Result<(), IngestError> {
+            for (chunk_index, chunk, drawer_id, vector) in &rows {
+                let drawer = Drawer::new_bootstrap_evidence(BootstrapEvidenceArgs {
+                    id: drawer_id.clone(),
+                    content: (*chunk).to_string(),
+                    wing: wing.to_string(),
+                    room: Some(resolved_room.clone()),
+                    source_file: Some(source_file.clone()),
+                    source_type: source_type.clone(),
+                    added_at: current_timestamp(),
+                    chunk_index: Some(*chunk_index as i64),
+                    importance: 0,
+                });
+                let drawer = Drawer {
+                    normalize_version: CURRENT_NORMALIZE_VERSION,
+                    ..drawer
+                };
+
+                let inserted =
+                    db.insert_drawer(&drawer)
+                        .map_err(|source| IngestError::InsertDrawer {
+                            drawer_id: drawer.id.clone(),
+                            source,
+                        })?;
+                if inserted {
+                    db.insert_vector(drawer_id, vector).map_err(|source| {
+                        IngestError::InsertVector {
+                            drawer_id: drawer.id.clone(),
+                            source,
+                        }
+                    })?;
+                    stats.chunks += 1;
+                } else if replacing {
+                    return Err(IngestError::ReplacementDrawerCollision {
+                        drawer_id: drawer.id,
+                    });
+                } else {
+                    stats.skipped += 1;
+                }
+            }
+            Ok(())
         };
 
-        let inserted = db
-            .insert_drawer(&drawer)
-            .map_err(|source| IngestError::InsertDrawer {
-                drawer_id: drawer.id.clone(),
+    if replacing {
+        // Delete-old + insert-new commit or roll back together.
+        let mut txn_stats = IngestStats::default();
+        db.with_immediate_transaction(|db| -> std::result::Result<(), IngestError> {
+            let replace_result = if options.replace_across_rooms {
+                db.replace_active_source_drawers_across_rooms_in_txn(&source_file, wing)
+            } else {
+                db.replace_active_source_drawers_in_txn(
+                    &source_file,
+                    wing,
+                    Some(resolved_room.as_str()),
+                )
+            };
+            replace_result.map_err(|source| IngestError::ReplaceSource {
+                source_file: source_file.clone(),
                 source,
             })?;
-        if inserted {
-            db.insert_vector(&drawer_id, &vector)
-                .map_err(|source| IngestError::InsertVector {
-                    drawer_id: drawer.id.clone(),
-                    source,
-                })?;
-            stats.chunks += 1;
-        } else {
-            stats.skipped += 1;
-        }
+            insert_rows(db, &mut txn_stats)
+        })?;
+        stats.chunks += txn_stats.chunks;
+        stats.skipped += txn_stats.skipped;
+    } else {
+        let mut direct_stats = IngestStats::default();
+        insert_rows(db, &mut direct_stats)?;
+        stats.chunks += direct_stats.chunks;
+        stats.skipped += direct_stats.skipped;
     }
 
     Ok(stats)
