@@ -9,7 +9,7 @@
 
 Coding agent 的项目记忆工具。单二进制，`cargo install mempal`，10 秒内带出处找回历史决策。
 
-最新版本：**v0.9.0**（2026-07-09）。
+最新版本：**v0.9.1**（2026-08-19）。
 
 ## 做什么
 
@@ -28,7 +28,7 @@ Agent 写代码 → 提交 → mempal 保存决策上下文
 ## 快速开始
 
 ```bash
-cargo install mempal --version 0.9.0 --locked
+cargo install mempal --version 0.9.1 --locked
 
 mempal init ~/code/myapp
 mempal ingest ~/code/myapp --wing myapp
@@ -39,7 +39,7 @@ mempal wake-up
 启用 REST 支持：
 
 ```bash
-cargo install mempal --version 0.9.0 --locked --features rest
+cargo install mempal --version 0.9.1 --locked --features rest
 ```
 
 从源码 checkout 安装：
